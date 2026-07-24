@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -299,11 +300,11 @@ func (r *NormalizedRepository) AttachFile(ctx context.Context, file BookFile) (*
 	}
 	res, err := r.exec(ctx).ExecContext(ctx, `INSERT INTO files
 		(edition_id, media_type, format, file_path, original_path, file_size, content_hash, source_id,
-		 source_type, quality, is_managed, imported_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 source_type, quality, is_managed, imported_at, embedded_metadata_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		file.EditionID, string(file.MediaType), file.Format, nullableString(file.Path), file.OriginalPath,
 		file.Size, file.ContentHash, file.SourceID, file.SourceType, file.Quality, boolInt(file.Managed),
-		nullableTime(file.ImportedAt))
+		nullableTime(file.ImportedAt), metadataJSONString(file.EmbeddedMetadataJSON, file.EmbeddedMetadata))
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +318,7 @@ func (r *NormalizedRepository) AttachFile(ctx context.Context, file BookFile) (*
 func (r *NormalizedRepository) GetBookFiles(ctx context.Context, bookID int64) ([]BookFile, error) {
 	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE e.book_id = ? ORDER BY f.id`, bookID)
 	if err != nil {
 		return nil, err
@@ -329,7 +330,7 @@ func (r *NormalizedRepository) GetBookFiles(ctx context.Context, bookID int64) (
 func (r *NormalizedRepository) ListFiles(ctx context.Context, editionID int64) ([]BookFile, error) {
 	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE f.edition_id = ? ORDER BY f.id`, editionID)
 	if err != nil {
 		return nil, err
@@ -341,7 +342,7 @@ func (r *NormalizedRepository) ListFiles(ctx context.Context, editionID int64) (
 func (r *NormalizedRepository) GetFile(ctx context.Context, id int64) (*BookFile, error) {
 	row := r.exec(ctx).QueryRowContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE f.id = ?`, id)
 	return scanFile(row)
 }
@@ -353,7 +354,7 @@ func (r *NormalizedRepository) FindFileByPath(ctx context.Context, path string) 
 func (r *NormalizedRepository) FindByPath(ctx context.Context, path string) (*BookFile, error) {
 	row := r.exec(ctx).QueryRowContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE f.file_path = ?`, path)
 	return scanFile(row)
 }
@@ -361,7 +362,7 @@ func (r *NormalizedRepository) FindByPath(ctx context.Context, path string) (*Bo
 func (r *NormalizedRepository) FindFileBySourceID(ctx context.Context, sourceID string) (*BookFile, error) {
 	row := r.exec(ctx).QueryRowContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE f.source_id = ? ORDER BY f.id LIMIT 1`, sourceID)
 	return scanFile(row)
 }
@@ -369,7 +370,7 @@ func (r *NormalizedRepository) FindFileBySourceID(ctx context.Context, sourceID 
 func (r *NormalizedRepository) FindFilesByContentHash(ctx context.Context, hash string) ([]BookFile, error) {
 	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT f.id, e.book_id, f.edition_id, f.media_type, f.format,
 		COALESCE(f.file_path, ''), f.original_path, f.file_size, f.content_hash, f.source_id, f.source_type,
-		f.quality, f.is_managed, f.imported_at, f.created_at, f.updated_at
+		f.quality, f.is_managed, f.imported_at, f.embedded_metadata_json, f.created_at, f.updated_at
 		FROM files f JOIN editions e ON e.id = f.edition_id WHERE f.content_hash = ? ORDER BY f.id`, hash)
 	if err != nil {
 		return nil, err
@@ -732,8 +733,15 @@ func (r *NormalizedRepository) clearPrimaryCover(ctx context.Context, bookID, ed
 	return nil
 }
 
-func (r *NormalizedRepository) SaveEmbeddedMetadata(context.Context, int64, map[string]string) error {
-	return ErrUnsupportedOperation
+func (r *NormalizedRepository) SaveEmbeddedMetadata(ctx context.Context, fileID int64, metadata map[string]string) error {
+	res, err := r.exec(ctx).ExecContext(ctx, `UPDATE files SET embedded_metadata_json = ?, updated_at = datetime('now') WHERE id = ?`, metadataJSON(metadata), fileID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *NormalizedRepository) SaveProviderMetadata(context.Context, int64, string, map[string]string) error {
@@ -809,10 +817,11 @@ func scanEditions(rows *sql.Rows) ([]Edition, error) {
 func scanFile(scanner interface{ Scan(...any) error }) (*BookFile, error) {
 	var f BookFile
 	var media, imported, created, updated string
+	var metadata string
 	var managed int
 	var importedNull sql.NullString
 	err := scanner.Scan(&f.ID, &f.BookID, &f.EditionID, &media, &f.Format, &f.Path, &f.OriginalPath,
-		&f.Size, &f.ContentHash, &f.SourceID, &f.SourceType, &f.Quality, &managed, &importedNull, &created, &updated)
+		&f.Size, &f.ContentHash, &f.SourceID, &f.SourceType, &f.Quality, &managed, &importedNull, &metadata, &created, &updated)
 	if err != nil {
 		return nil, mapSQLError(err)
 	}
@@ -821,6 +830,8 @@ func scanFile(scanner interface{ Scan(...any) error }) (*BookFile, error) {
 	}
 	f.MediaType = MediaType(media)
 	f.Managed = managed != 0
+	f.EmbeddedMetadataJSON = metadata
+	f.EmbeddedMetadata = parseMetadataJSON(metadata)
 	f.ImportedAt = parseTime(imported)
 	f.CreatedAt = parseTime(created)
 	f.UpdatedAt = parseTime(updated)
@@ -1082,6 +1093,37 @@ func nullableTime(v time.Time) any {
 		return nil
 	}
 	return v.UTC().Format("2006-01-02 15:04:05")
+}
+
+func metadataJSON(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func metadataJSONString(raw string, metadata map[string]string) string {
+	raw = strings.TrimSpace(raw)
+	if raw != "" && json.Valid([]byte(raw)) {
+		return raw
+	}
+	return metadataJSON(metadata)
+}
+
+func parseMetadataJSON(value string) map[string]string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "{}" {
+		return nil
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal([]byte(value), &metadata); err != nil {
+		return nil
+	}
+	return metadata
 }
 
 func parseInt64(v string) int64 {

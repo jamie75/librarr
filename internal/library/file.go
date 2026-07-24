@@ -8,23 +8,24 @@ import (
 )
 
 type BookFile struct {
-	ID               int64
-	BookID           int64
-	EditionID        int64
-	MediaType        MediaType
-	Format           string
-	Path             string
-	OriginalPath     string
-	Size             int64
-	ContentHash      string
-	SourceID         string
-	SourceType       string
-	Quality          string
-	Managed          bool
-	EmbeddedMetadata map[string]string
-	ImportedAt       time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                   int64
+	BookID               int64
+	EditionID            int64
+	MediaType            MediaType
+	Format               string
+	Path                 string
+	OriginalPath         string
+	Size                 int64
+	ContentHash          string
+	SourceID             string
+	SourceType           string
+	Quality              string
+	Managed              bool
+	EmbeddedMetadata     map[string]string
+	EmbeddedMetadataJSON string
+	ImportedAt           time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func (f BookFile) Validate() error {

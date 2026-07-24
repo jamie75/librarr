@@ -353,6 +353,7 @@ var normalizedTestSchema = []string{
 		quality TEXT NOT NULL DEFAULT '',
 		is_managed INTEGER NOT NULL DEFAULT 1,
 		imported_at DATETIME,
+		embedded_metadata_json TEXT NOT NULL DEFAULT '{}',
 		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
 		FOREIGN KEY (edition_id) REFERENCES editions(id) ON DELETE CASCADE

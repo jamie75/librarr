@@ -126,6 +126,8 @@ func TestSchemaFoundation_FreshDatabaseCreatesLegacyAndNormalizedTables(t *testi
 		"identifiers",
 		"covers",
 		"library_item_migration_map",
+		"backfill_runs",
+		"backfill_state",
 	} {
 		if !tableExists(t, d, table) {
 			t.Fatalf("expected table %s to exist", table)

@@ -16,6 +16,7 @@ type schemaMigration struct {
 var versionedMigrations = []schemaMigration{
 	{version: 1, name: "librarr_2_schema_foundation", run: migrateLibrarr2SchemaFoundation},
 	{version: 2, name: "librarr_2_file_metadata_json", run: migrateLibrarr2FileMetadataJSON},
+	{version: 3, name: "librarr_2_backfill_state", run: migrateLibrarr2BackfillState},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -271,6 +272,48 @@ func migrateLibrarr2FileMetadataJSON(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE files ADD COLUMN embedded_metadata_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
 		return fmt.Errorf("add files.embedded_metadata_json: %w", err)
+	}
+	return nil
+}
+
+func migrateLibrarr2BackfillState(tx *sql.Tx) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS backfill_runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version TEXT NOT NULL DEFAULT '',
+			started_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			completed_at DATETIME,
+			status TEXT NOT NULL DEFAULT 'running',
+			dry_run INTEGER NOT NULL DEFAULT 0,
+			rows_processed INTEGER NOT NULL DEFAULT 0,
+			rows_migrated INTEGER NOT NULL DEFAULT 0,
+			rows_skipped INTEGER NOT NULL DEFAULT 0,
+			errors INTEGER NOT NULL DEFAULT 0,
+			resume_checkpoint INTEGER NOT NULL DEFAULT 0,
+			report_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_backfill_runs_status ON backfill_runs(status)`,
+		`CREATE TABLE IF NOT EXISTS backfill_state (
+			legacy_item_id INTEGER PRIMARY KEY,
+			run_id INTEGER,
+			status TEXT NOT NULL DEFAULT 'pending',
+			book_id INTEGER,
+			edition_id INTEGER,
+			file_id INTEGER,
+			error TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			FOREIGN KEY (run_id) REFERENCES backfill_runs(id) ON DELETE SET NULL,
+			FOREIGN KEY (legacy_item_id) REFERENCES library_items(id) ON DELETE CASCADE,
+			FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE SET NULL,
+			FOREIGN KEY (edition_id) REFERENCES editions(id) ON DELETE SET NULL,
+			FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_backfill_state_status ON backfill_state(status)`,
+	}
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("execute statement: %w\nSQL: %s", err, stmt)
+		}
 	}
 	return nil
 }
