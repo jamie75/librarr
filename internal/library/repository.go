@@ -9,6 +9,7 @@ type BookRepository interface {
 	FindBookByIdentifier(context.Context, Identifier) (*Book, error)
 	GetBook(context.Context, int64) (*Book, error)
 	ListBooks(context.Context, ListBooksQuery) ([]Book, error)
+	CountListedBooks(context.Context, ListBooksQuery) (int, error)
 	SearchBooks(context.Context, BookQuery) ([]Book, error)
 	CountBooks(context.Context, BookQuery) (int, error)
 	RecentBooks(context.Context, ListBooksQuery) ([]Book, error)
@@ -86,6 +87,10 @@ type IdentifierMatch struct {
 
 type ListBooksQuery struct {
 	MediaType MediaType
+	Search    string
+	Format    string
+	Sort      string
+	Order     string
 	Limit     int
 	Offset    int
 }

@@ -174,6 +174,39 @@
         }
       }
     },
+    "/api/v1/books": {
+      "get": {
+        "summary": "List normalized Librarr 2.0 books",
+        "description": "Returns one logical book per item. Requires LIBRARR_LIBRARY_REPOSITORY_MODE=normalized.",
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}},
+          {"name": "search", "in": "query", "schema": {"type": "string"}},
+          {"name": "media_type", "in": "query", "schema": {"type": "string", "enum": ["ebook", "audiobook", "comic", "manga"]}},
+          {"name": "format", "in": "query", "schema": {"type": "string"}},
+          {"name": "sort", "in": "query", "schema": {"type": "string", "enum": ["title", "author", "recently_added", "recently_updated"]}},
+          {"name": "order", "in": "query", "schema": {"type": "string", "enum": ["asc", "desc"]}}
+        ]
+      }
+    },
+    "/api/v1/books/{id}": {
+      "get": {
+        "summary": "Get a normalized Librarr 2.0 book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
+    "/api/v1/books/{id}/files": {
+      "get": {
+        "summary": "List all files attached to a normalized book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
+    "/api/v1/books/{id}/editions": {
+      "get": {
+        "summary": "List editions for a normalized book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
     "/api/library/audiobooks": {"get": {"summary": "List audiobooks (proxied from Audiobookshelf when configured)"}},
     "/api/library/manga":      {"get": {"summary": "List manga"}},
     "/api/library/book/{id}":      {"delete": {"summary": "Remove an ebook from the library", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]}},

@@ -273,6 +273,13 @@ func (r *serviceTestRepo) ListBooks(context.Context, ListBooksQuery) ([]Book, er
 	return []Book{r.book}, nil
 }
 
+func (r *serviceTestRepo) CountListedBooks(context.Context, ListBooksQuery) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	return 1, nil
+}
+
 func (r *serviceTestRepo) SearchBooks(context.Context, BookQuery) ([]Book, error) {
 	if r.err != nil {
 		return nil, r.err

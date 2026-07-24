@@ -116,6 +116,25 @@ func (r *LegacyLibraryRepository) ListBooks(ctx context.Context, query ListBooks
 	return books, nil
 }
 
+func (r *LegacyLibraryRepository) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(query.Search) != "" || strings.TrimSpace(query.Format) != "" {
+		books, err := r.ListBooks(ctx, ListBooksQuery{
+			MediaType: query.MediaType,
+			Search:    query.Search,
+			Format:    query.Format,
+			Limit:     100000,
+		})
+		if err != nil {
+			return 0, err
+		}
+		return len(books), nil
+	}
+	return r.CountBooks(ctx, BookQuery{Title: query.Search, MediaType: query.MediaType})
+}
+
 func (r *LegacyLibraryRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
 	if strings.TrimSpace(query.Title) == "" {
 		return r.ListBooks(ctx, ListBooksQuery{MediaType: query.MediaType, Limit: 100000})

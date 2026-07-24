@@ -6,14 +6,55 @@ let currentLang = localStorage.getItem('librarr_lang') || 'en';
 const I18N = {
   en: {
     // Navigation
+    nav_home: 'Home',
     nav_search: 'Search',
+    nav_discover: 'Discover',
     nav_library: 'Library',
     nav_downloads: 'Downloads',
     nav_wishlist: 'Wishlist',
+    nav_activity: 'Activity',
+    nav_devices: 'Devices',
     nav_settings: 'Settings',
     sign_out: 'Sign out',
     // Header
     header_subtitle: 'Self-hosted book manager',
+    home_kicker: 'Librarr 2.0',
+    home_title: 'A warmer, book-first library experience.',
+    home_subtitle: 'Browse your collection like a personal bookshelf, not a file inventory.',
+    home_open_library: 'Open Library',
+    home_discover: 'Discover Books',
+    dashboard_recent: 'Recently Added',
+    dashboard_downloading: 'Currently Downloading',
+    dashboard_wishlist: 'Wishlist',
+    dashboard_activity: 'Recent Activity',
+    dashboard_totals: 'Library Totals',
+    dashboard_formats: 'Format Distribution',
+    dashboard_empty: 'Nothing here yet.',
+    library_kicker: 'Bookshelf',
+    library_title: 'Your Library',
+    library_formats: 'Formats',
+    quick_details: 'Details',
+    quick_send: 'Send',
+    quick_more: 'More',
+    details_kicker: 'Book Details',
+    details_metadata: 'Metadata',
+    details_formats: 'Available Formats',
+    details_history: 'History',
+    details_description_placeholder: 'A richer description will appear here once normalized metadata and cover services are fully connected.',
+    details_placeholder_value: 'Not available yet',
+    metadata_source: 'Metadata source',
+    metadata_confidence: 'Confidence',
+    metadata_identifiers: 'Identifiers',
+    metadata_series: 'Series',
+    activity_kicker: 'Timeline',
+    activity_title: 'Recent Activity',
+    activity_open_downloads: 'Open Downloads',
+    devices_kicker: 'Delivery',
+    devices_title: 'Devices & Destinations',
+    devices_empty: 'No delivery targets configured yet.',
+    devices_cta: 'Device delivery is a future Librarr 2.0 milestone.',
+    details_send_placeholder: 'Send to device is planned for a later Librarr 2.0 milestone.',
+    open_external: 'Open',
     // Login modal
     login_subtitle: 'Sign in to continue',
     login_sign_in: 'Sign In',
@@ -207,14 +248,55 @@ const I18N = {
   },
   ru: {
     // Navigation
+    nav_home: 'Главная',
     nav_search: 'Поиск',
+    nav_discover: 'Обзор',
     nav_library: 'Библиотека',
     nav_downloads: 'Загрузки',
     nav_wishlist: 'Желаемое',
+    nav_activity: 'Активность',
+    nav_devices: 'Устройства',
     nav_settings: 'Настройки',
     sign_out: 'Выйти',
     // Header
     header_subtitle: 'Менеджер книг для самохостинга',
+    home_kicker: 'Librarr 2.0',
+    home_title: 'Более тёплый, книжный интерфейс.',
+    home_subtitle: 'Просматривайте коллекцию как личную библиотеку, а не как список файлов.',
+    home_open_library: 'Открыть библиотеку',
+    home_discover: 'Искать книги',
+    dashboard_recent: 'Недавно добавлено',
+    dashboard_downloading: 'Текущие загрузки',
+    dashboard_wishlist: 'Желаемое',
+    dashboard_activity: 'Недавняя активность',
+    dashboard_totals: 'Итоги библиотеки',
+    dashboard_formats: 'Распределение форматов',
+    dashboard_empty: 'Пока ничего нет.',
+    library_kicker: 'Книжная полка',
+    library_title: 'Ваша библиотека',
+    library_formats: 'Форматы',
+    quick_details: 'Подробнее',
+    quick_send: 'Отправить',
+    quick_more: 'Ещё',
+    details_kicker: 'О книге',
+    details_metadata: 'Метаданные',
+    details_formats: 'Доступные форматы',
+    details_history: 'История',
+    details_description_placeholder: 'Более подробное описание появится, когда сервисы нормализованных метаданных и обложек будут полностью подключены.',
+    details_placeholder_value: 'Пока недоступно',
+    metadata_source: 'Источник метаданных',
+    metadata_confidence: 'Уверенность',
+    metadata_identifiers: 'Идентификаторы',
+    metadata_series: 'Серия',
+    activity_kicker: 'Лента',
+    activity_title: 'Недавняя активность',
+    activity_open_downloads: 'Открыть загрузки',
+    devices_kicker: 'Доставка',
+    devices_title: 'Устройства и назначения',
+    devices_empty: 'Пока не настроены цели доставки.',
+    devices_cta: 'Отправка на устройство — будущий этап Librarr 2.0.',
+    details_send_placeholder: 'Отправка на устройство запланирована на одном из следующих этапов Librarr 2.0.',
+    open_external: 'Открыть',
     // Login modal
     login_subtitle: 'Войдите для продолжения',
     login_sign_in: 'Войти',
@@ -450,7 +532,9 @@ function toggleLanguage() {
 function refreshDynamicContent() {
   // Re-render current tab content with new language
   const tab = state.currentTab;
-  if (tab === 'search' && state.searchResults.length > 0) {
+  if (tab === 'home') {
+    loadHomeDashboard();
+  } else if (tab === 'search' && state.searchResults.length > 0) {
     renderSearchResults();
   } else if (tab === 'downloads') {
     refreshDownloads();
@@ -458,6 +542,10 @@ function refreshDynamicContent() {
     loadLibrary();
   } else if (tab === 'wishlist') {
     loadWishlist();
+  } else if (tab === 'activity') {
+    loadActivityTab();
+  } else if (tab === 'devices') {
+    loadDevicesTab();
   } else if (tab === 'settings') {
     loadConfig();
     loadSources();
@@ -468,10 +556,13 @@ function refreshDynamicContent() {
 // STATE
 // ============================================================
 const state = {
-  currentTab: 'search',
+  currentTab: 'home',
   searchTab: 'ebooks',
   libraryTab: 'ebooks',
   searchResults: [],
+  libraryBooks: [],
+  homeBooks: [],
+  homeData: null,
   pendingDownloads: new Set(),
   trackedDownloadJobs: new Map(),
   downloadOutcomes: new Map(),
@@ -923,10 +1014,13 @@ function switchTab(tab) {
   });
 
   // Load data for the tab
+  if (tab === 'home') loadHomeDashboard();
   if (tab === 'library') loadLibrary();
   if (tab === 'downloads') { refreshDownloads(); startDownloadPolling(); }
   else stopDownloadPolling();
   if (tab === 'wishlist') loadWishlist();
+  if (tab === 'activity') loadActivityTab();
+  if (tab === 'devices') loadDevicesTab();
   if (tab === 'settings') loadSettings();
 }
 
@@ -955,6 +1049,124 @@ function switchLibraryTab(tab) {
     el.classList.toggle('active', el.dataset.ltab === tab);
   });
   loadLibrary();
+}
+
+function setupLibrarr2Shell() {
+  document.body.classList.remove('bg-slate-950');
+  document.body.classList.add('librarr-2-body');
+
+  const header = document.querySelector('header');
+  if (header) header.classList.add('librarr-2-header');
+
+  const app = document.getElementById('app');
+  if (app) app.classList.add('librarr-2-shell');
+
+  const nav = document.getElementById('main-nav');
+  if (nav) {
+    nav.innerHTML = `
+      <button data-action="switchTab" data-arg="home" class="nav-tab active px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="home">
+        <span data-i18n="nav_home">Home</span>
+      </button>
+      <button data-action="switchTab" data-arg="library" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="library">
+        <span data-i18n="nav_library">Library</span>
+      </button>
+      <button data-action="switchTab" data-arg="search" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="search">
+        <span data-i18n="nav_discover">Discover</span>
+      </button>
+      <button data-action="switchTab" data-arg="wishlist" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="wishlist">
+        <span data-i18n="nav_wishlist">Wishlist</span>
+      </button>
+      <button data-action="switchTab" data-arg="activity" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="activity">
+        <span data-i18n="nav_activity">Activity</span>
+      </button>
+      <button data-action="switchTab" data-arg="devices" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="devices">
+        <span data-i18n="nav_devices">Devices</span>
+      </button>
+      <button data-action="switchTab" data-arg="settings" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="settings">
+        <span data-i18n="nav_settings">Settings</span>
+      </button>
+    `;
+  }
+
+  const main = document.querySelector('main');
+  const searchTab = document.getElementById('tab-search');
+  if (main && searchTab && !document.getElementById('tab-home')) {
+    const home = document.createElement('div');
+    home.id = 'tab-home';
+    home.className = 'tab-content active';
+    home.innerHTML = `
+      <section class="home-hero rounded-[2rem] p-6 sm:p-8 mb-8">
+        <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+          <div class="max-w-2xl">
+            <p class="text-xs uppercase tracking-[0.28em] text-amber-300/80 mb-3" data-i18n="home_kicker">Librarr 2.0</p>
+            <h2 class="text-3xl sm:text-4xl font-semibold tracking-tight text-white mb-3" data-i18n="home_title">A warmer, book-first library experience.</h2>
+            <p class="text-stone-300/80 leading-7" data-i18n="home_subtitle">Browse your collection like a personal bookshelf, not a file inventory.</p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <button data-action="switchTab" data-arg="library" class="px-4 py-2.5 rounded-2xl bg-amber-500 text-stone-950 font-medium hover:bg-amber-400 transition-colors" data-i18n="home_open_library">Open Library</button>
+            <button data-action="switchTab" data-arg="search" class="px-4 py-2.5 rounded-2xl bg-white/10 text-white font-medium hover:bg-white/15 transition-colors" data-i18n="home_discover">Discover Books</button>
+          </div>
+        </div>
+      </section>
+      <div id="home-dashboard" class="grid gap-5 lg:grid-cols-12"></div>
+    `;
+    main.insertBefore(home, searchTab);
+
+    const activity = document.createElement('div');
+    activity.id = 'tab-activity';
+    activity.className = 'tab-content';
+    activity.innerHTML = `
+      <div class="flex items-end justify-between mb-6 gap-4 flex-wrap">
+        <div>
+          <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-2" data-i18n="activity_kicker">Timeline</p>
+          <h2 class="text-3xl font-semibold tracking-tight text-white" data-i18n="activity_title">Recent Activity</h2>
+        </div>
+        <button data-action="switchTab" data-arg="downloads" class="px-4 py-2.5 rounded-2xl bg-stone-800 text-stone-200 hover:bg-stone-700 transition-colors" data-i18n="activity_open_downloads">Open Downloads</button>
+      </div>
+      <div id="activity-feed" class="space-y-3"></div>
+    `;
+    main.insertBefore(activity, document.getElementById('tab-settings'));
+
+    const devices = document.createElement('div');
+    devices.id = 'tab-devices';
+    devices.className = 'tab-content';
+    devices.innerHTML = `
+      <div class="flex items-end justify-between mb-6 gap-4 flex-wrap">
+        <div>
+          <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-2" data-i18n="devices_kicker">Delivery</p>
+          <h2 class="text-3xl font-semibold tracking-tight text-white" data-i18n="devices_title">Devices & Destinations</h2>
+        </div>
+      </div>
+      <div id="devices-grid" class="grid gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
+    `;
+    main.insertBefore(devices, document.getElementById('tab-settings'));
+  }
+
+  if (!document.getElementById('book-detail-modal')) {
+    const modal = document.createElement('div');
+    modal.id = 'book-detail-modal';
+    modal.className = 'fixed inset-0 z-50 hidden items-stretch justify-end bg-black/70 backdrop-blur-sm';
+    modal.innerHTML = `
+      <div class="w-full max-w-4xl h-full overflow-y-auto bg-[#171412] border-l border-stone-800 shadow-2xl">
+        <div class="sticky top-0 z-10 px-5 py-4 border-b border-stone-800 bg-[#171412]/95 backdrop-blur flex items-center justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-1" data-i18n="details_kicker">Book Details</p>
+            <h3 id="detail-heading" class="text-xl font-semibold text-white">Book</h3>
+          </div>
+          <button data-action="closeBookDetails" class="rounded-2xl p-2 text-stone-400 hover:text-white hover:bg-stone-800 transition-colors" aria-label="Close">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div id="book-detail-content" class="p-5 sm:p-8"></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  const libraryResults = document.getElementById('library-results');
+  if (libraryResults) {
+    libraryResults.className = 'grid gap-5 sm:grid-cols-2 xl:grid-cols-3';
+  }
 }
 
 // ============================================================
@@ -1223,10 +1435,10 @@ function renderBookCard(result, index) {
   `;
 }
 
-function makePlaceholderHtml(title, index) {
+function makePlaceholderHtml(title, index, heightClass = 'h-48') {
   const gradient = COVER_GRADIENTS[index % COVER_GRADIENTS.length];
   const letter = (title || '?').charAt(0).toUpperCase();
-  return `<div class="w-full h-48 bg-gradient-to-br ${gradient} cover-placeholder">${escapeHtml(letter)}</div>`;
+  return `<div class="w-full ${heightClass} bg-gradient-to-br ${gradient} cover-placeholder">${escapeHtml(letter)}</div>`;
 }
 
 // Global function for img onerror fallback
@@ -1615,6 +1827,7 @@ async function loadLibrary() {
   const tab = state.libraryTab;
   const q = document.getElementById('library-search').value.trim();
   const page = state.libraryPage;
+  const normalizedBooks = normalizedLibraryMode() && tab === 'ebooks';
 
   const endpoints = {
     ebooks: `/api/library?page=${page}${q ? '&q=' + encodeURIComponent(q) : ''}`,
@@ -1627,11 +1840,24 @@ async function loadLibrary() {
   const paginationEl = document.getElementById('library-pagination');
 
   try {
-    const data = await apiJson(endpoints[tab]);
-    const items = data.items || [];
-    state.libraryPages = data.pages || 1;
+    let books = [];
+    if (normalizedBooks) {
+      const limit = 24;
+      const offset = (page - 1) * limit;
+      const data = await apiJson(`/api/v1/books?media_type=ebook&limit=${limit}&offset=${offset}&sort=title&order=asc${q ? '&search=' + encodeURIComponent(q) : ''}`);
+      const total = data.pagination?.total || 0;
+      state.libraryPages = Math.max(1, Math.ceil(total / limit));
+      books = (data.items || []).map(mapV1BookToUIBook);
+    } else {
+      const data = await apiJson(endpoints[tab]);
+      const rawItems = data.items || [];
+      state.libraryPages = data.pages || 1;
+      const items = filterLibraryItems(rawItems, q);
+      books = groupLibraryItems(items, tab);
+    }
+    state.libraryBooks = books;
 
-    if (items.length === 0) {
+    if (books.length === 0) {
       container.innerHTML = '';
       emptyEl.classList.remove('hidden');
       paginationEl.classList.add('hidden');
@@ -1639,10 +1865,7 @@ async function loadLibrary() {
     }
 
     emptyEl.classList.add('hidden');
-
-    // Group items by series and render with section headers
-    const renderFn = tab === 'ebooks' ? renderLibraryEbook : tab === 'audiobooks' ? renderLibraryAudiobook : renderLibraryManga;
-    container.innerHTML = renderGroupedBySeries(items, renderFn);
+    container.innerHTML = books.map((book, index) => renderLibraryBookCard(book, index)).join('');
 
     // Pagination
     if (state.libraryPages > 1) {
@@ -1658,142 +1881,138 @@ async function loadLibrary() {
   }
 }
 
-function seriesBaseName(series) {
-  // Strip "#N", "Book N", "(N)", "Vol N", "Volume N" suffixes to get the base series name
-  if (!series) return '';
-  return series
-    .replace(/\s*#\s*[\d.]+.*$/, '')
-    .replace(/\s*Book\s+[\d.]+.*$/i, '')
-    .replace(/\s*Vol(ume)?\s*\.?\s*[\d.]+.*$/i, '')
-    .replace(/\s*\([\d.]+\).*$/, '')
-    .replace(/\s*,\s*$/, '')
-    .trim();
+function normalizedLibraryMode() {
+  return (state.config?.library_repository_mode || '').toLowerCase() === 'normalized';
 }
 
-function renderGroupedBySeries(items, renderFn) {
-  const groups = new Map(); // base series name → items
-  const standalone = [];
-  let idx = 0;
-
-  for (const item of items) {
-    const raw = item.series || '';
-    const base = seriesBaseName(raw);
-    if (base) {
-      if (!groups.has(base)) groups.set(base, []);
-      groups.get(base).push(item);
-    } else {
-      standalone.push(item);
-    }
-  }
-
-  let html = '';
-  for (const [series, groupItems] of groups) {
-    if (groupItems.length > 1) {
-      // Series header
-      html += `<div class="col-span-full mt-4 mb-2 first:mt-0">
-        <div class="flex items-center gap-3">
-          <h3 class="text-sm font-semibold text-indigo-400">${escapeHtml(series)}</h3>
-          <span class="text-xs text-slate-600">${t('n_items', {n: groupItems.length})}</span>
-          <div class="flex-1 border-t border-slate-800"></div>
-        </div>
-      </div>`;
-    }
-    for (const item of groupItems) {
-      html += renderFn(item, idx++);
-    }
-    if (groupItems.length > 1) {
-      // Spacer after series group
-      html += `<div class="col-span-full h-2"></div>`;
-    }
-  }
-
-  // Standalone items (no series)
-  if (standalone.length > 0 && groups.size > 0) {
-    html += `<div class="col-span-full mt-4 mb-2">
-      <div class="flex items-center gap-3">
-        <h3 class="text-sm font-semibold text-slate-500">${t('other')}</h3>
-        <div class="flex-1 border-t border-slate-800"></div>
-      </div>
-    </div>`;
-  }
-  for (const item of standalone) {
-    html += renderFn(item, idx++);
-  }
-
-  return html;
+function mapV1BookToUIBook(book) {
+  return {
+    id: book.id,
+    title: book.title || t('unknown_title'),
+    author: book.primary_author?.name || (book.contributors?.find(c => c.role === 'author')?.name || ''),
+    series: book.series?.name || '',
+    coverUrl: book.cover?.url || '',
+    mediaType: book.media_type || 'ebook',
+    formats: (book.formats || []).map(format => String(format).toUpperCase()),
+    files: [],
+    sourceRows: [],
+    size: 0,
+    description: book.description || '',
+    externalUrl: '',
+    placeholderIndex: 0,
+    nativeV1: true,
+  };
 }
 
-function renderLibraryEbook(item, index) {
-  const coverHtml = item.cover_url
-    ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="w-full h-48 object-cover" loading="lazy" data-ph-title="${escapeHtml(item.title || '')}" data-ph-idx="${index}">`
-    : makePlaceholderHtml(item.title || '?', index);
+function filterLibraryItems(items, query) {
+  if (!query) return items;
+  const needle = query.toLowerCase();
+  return items.filter(item => {
+    const text = [
+      item.title,
+      item.name,
+      item.author,
+      item.series,
+      item.library,
+      item.file_format,
+      item.format,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return text.includes(needle);
+  });
+}
 
-  const format = item.format || (item.file_path || '').split('.').pop() || '';
+function groupLibraryItems(items, tab) {
+  const groups = new Map();
+  items.forEach((item, index) => {
+    const title = item.title || item.name || t('unknown_title');
+    const author = item.author || '';
+    const key = `${tab}::${(title || '').trim().toLowerCase()}::${(author || '').trim().toLowerCase()}`;
+    const format = (item.file_format || item.format || inferFormatFromPath(item.file_path || item.original_path || '') || '').toUpperCase();
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: item.id,
+        title,
+        author,
+        series: item.series || '',
+        coverUrl: item.cover_url || '',
+        mediaType: tab,
+        formats: new Set(),
+        files: [],
+        sourceRows: [],
+        size: 0,
+        description: item.metadata?.description || item.metadata?.summary || '',
+        externalUrl: item.abs_url || item.kavita_url || '',
+        pages: item.pages || 0,
+        durationHours: item.duration_hours || 0,
+        numFiles: item.num_files || 0,
+        placeholderIndex: index,
+      });
+    }
+    const group = groups.get(key);
+    if (format) group.formats.add(format);
+    group.files.push({
+      id: item.id,
+      path: item.file_path || '',
+      originalPath: item.original_path || '',
+      format,
+      source: item.source || '',
+      sourceID: item.source_id || '',
+      addedAt: item.added_at || '',
+      size: item.file_size || 0,
+    });
+    group.sourceRows.push(item);
+    group.size += item.file_size || 0;
+  });
 
-  const seriesBadge = item.series ? `<p class="text-xs text-indigo-400 line-clamp-1 mb-1">${escapeHtml(item.series)}</p>` : '';
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    formats: Array.from(group.formats).sort(),
+  }));
+}
+
+function renderLibraryBookCard(book, index) {
+  const coverHtml = renderBookCover(book, index, 'h-64');
+  const subtitle = book.author || book.series || t('details_placeholder_value');
+  const meta = [];
+  if (book.series) meta.push(book.series);
+  if (book.size) meta.push(formatSize(book.size));
 
   return `
-    <div class="book-card bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 relative group">
-      ${coverHtml}
-      <button data-action="deleteLibraryItem" data-id="${escapeHtml(item.id || '')}" data-type="book" data-title="${escapeHtml(item.title || '')}"
-        class="absolute top-2 right-2 w-7 h-7 bg-red-600/80 hover:bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center" title="Remove from library">&#x2715;</button>
-      <div class="p-3">
-        <h3 class="text-sm font-semibold text-white line-clamp-2 mb-1">${escapeHtml(item.title || 'Unknown')}</h3>
-        <p class="text-xs text-slate-400 line-clamp-1 mb-1">${escapeHtml(item.author || '')}</p>
-        ${seriesBadge}
-        <div class="flex items-center gap-2 text-xs text-slate-500">
-          ${format ? `<span class="uppercase">${escapeHtml(format)}</span>` : ''}
-          ${item.size ? `<span>${escapeHtml(formatSize(item.size))}</span>` : ''}
+    <article class="shelf-card group overflow-hidden rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
+      <div class="relative">${coverHtml}</div>
+      <div class="p-5">
+        <div class="mb-4">
+          <h3 class="text-xl font-semibold tracking-tight text-white line-clamp-2">${escapeHtml(book.title)}</h3>
+          <p class="mt-1 text-sm text-stone-300 line-clamp-1">${escapeHtml(subtitle)}</p>
+          ${meta.length ? `<p class="mt-2 text-xs uppercase tracking-[0.18em] text-stone-500">${escapeHtml(meta.join(' • '))}</p>` : ''}
+        </div>
+        <div class="mb-4 flex flex-wrap gap-2">
+          ${book.formats.map(renderFormatBadge).join('')}
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-amber-500 text-stone-950 text-sm font-medium hover:bg-amber-400 transition-colors">${t('quick_details')}</button>
+          <button data-action="sendBookToDevices" data-index="${index}" class="px-3 py-2 rounded-xl bg-stone-800 text-stone-200 text-sm font-medium hover:bg-stone-700 transition-colors">${t('quick_send')}</button>
+          ${book.externalUrl ? `<a href="${escapeHtml(book.externalUrl)}" target="_blank" rel="noreferrer" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('open_external')}</a>` : `<button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('quick_more')}</button>`}
         </div>
       </div>
-    </div>
+    </article>
   `;
 }
 
-function renderLibraryAudiobook(item, index) {
-  const coverHtml = item.cover_url
-    ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="w-full h-48 object-cover" loading="lazy" data-ph-title="${escapeHtml(item.title || '')}" data-ph-idx="${index}">`
-    : makePlaceholderHtml(item.title || '?', index);
-
-  const duration = item.duration_hours ? `${item.duration_hours.toFixed(1)}h` : '';
-
-  return `
-    <div class="book-card bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 relative group">
-      ${coverHtml}
-      <button data-action="deleteLibraryItem" data-id="${escapeHtml(item.id || '')}" data-type="audiobook" data-title="${escapeHtml(item.title || '')}"
-        class="absolute top-2 right-2 w-7 h-7 bg-red-600/80 hover:bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center" title="Remove from library">&#x2715;</button>
-      <div class="p-3">
-        <h3 class="text-sm font-semibold text-white line-clamp-2 mb-1">${escapeHtml(item.title || 'Unknown')}</h3>
-        <p class="text-xs text-slate-400 line-clamp-1 mb-1">${escapeHtml(item.author || '')}</p>
-        ${item.series ? `<p class="text-xs text-indigo-400 line-clamp-1 mb-1">${escapeHtml(item.series)}</p>` : ''}
-        <div class="flex items-center gap-2 text-xs text-slate-500 mb-2">
-          ${duration ? `<span>${duration}</span>` : ''}
-          ${item.num_files ? `<span>${t('n_files', {n: item.num_files})}</span>` : ''}
-        </div>
-        ${item.abs_url ? `<a href="${escapeHtml(item.abs_url)}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">${t('open_in_abs')}</a>` : ''}
-      </div>
-    </div>
-  `;
+function renderBookCover(book, index, heightClass = 'h-56') {
+  if (book.coverUrl) {
+    return `<img src="${escapeHtml(book.coverUrl)}" alt="" class="w-full ${heightClass} object-cover" loading="lazy" data-ph-title="${escapeHtml(book.title || '')}" data-ph-idx="${index}">`;
+  }
+  return makePlaceholderHtml(book.title || '?', index, heightClass);
 }
 
-function renderLibraryManga(item, index) {
-  const coverHtml = item.cover_url
-    ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="w-full h-48 object-cover" loading="lazy" data-ph-title="${escapeHtml(item.name || '')}" data-ph-idx="${index}">`
-    : makePlaceholderHtml(item.name || '?', index);
+function renderFormatBadge(format) {
+  return `<span class="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-amber-200">${escapeHtml(format)}</span>`;
+}
 
-  return `
-    <div class="book-card bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600">
-      ${coverHtml}
-      <div class="p-3">
-        <h3 class="text-sm font-semibold text-white line-clamp-2 mb-1">${escapeHtml(item.name || 'Unknown')}</h3>
-        <div class="flex items-center gap-2 text-xs text-slate-500 mb-2">
-          ${item.pages ? `<span>${t('n_pages', {n: item.pages})}</span>` : ''}
-          ${item.library ? `<span>${escapeHtml(item.library)}</span>` : ''}
-        </div>
-        ${item.kavita_url ? `<a href="${escapeHtml(item.kavita_url)}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">${t('open_in_kavita')}</a>` : ''}
-      </div>
-    </div>
-  `;
+function inferFormatFromPath(path) {
+  if (!path || !path.includes('.')) return '';
+  return path.split('.').pop();
 }
 
 async function deleteLibraryItem(id, type, title) {
@@ -1847,6 +2066,329 @@ function goLibraryPage(page) {
   state.libraryPage = page;
   loadLibrary();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function loadHomeDashboard() {
+  const container = document.getElementById('home-dashboard');
+  if (!container) return;
+  try {
+    const recentLibraryRequest = normalizedLibraryMode()
+      ? apiJson('/api/v1/books?media_type=ebook&limit=4&offset=0&sort=recently_added&order=desc')
+      : apiJson('/api/library?limit=8');
+    const [statsRes, downloadsRes, wishlistRes, activityRes, libraryRes] = await Promise.allSettled([
+      apiJson('/api/stats'),
+      apiJson('/api/downloads'),
+      apiJson('/api/wishlist'),
+      apiJson('/api/activity?limit=6'),
+      recentLibraryRequest,
+    ]);
+
+    const stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
+    const downloads = downloadsRes.status === 'fulfilled' ? downloadsRes.value : [];
+    const wishlist = wishlistRes.status === 'fulfilled' ? (wishlistRes.value.items || []) : [];
+    const activity = activityRes.status === 'fulfilled' ? (activityRes.value.events || []) : [];
+    const recentBooks = libraryRes.status === 'fulfilled'
+      ? (normalizedLibraryMode()
+          ? (libraryRes.value.items || []).map(mapV1BookToUIBook)
+          : groupLibraryItems(libraryRes.value.items || [], 'ebooks').slice(0, 4))
+      : [];
+    state.homeBooks = recentBooks;
+    const formatCounts = buildFormatCounts(recentBooks);
+
+    container.innerHTML = `
+      <section class="dashboard-panel lg:col-span-7 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">${t('dashboard_recent')}</h3>
+          <button data-action="switchTab" data-arg="library" class="text-sm text-amber-300 hover:text-amber-200">${t('quick_details')}</button>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          ${recentBooks.length ? recentBooks.map((book, index) => renderCompactBookCard(book, index)).join('') : renderDashboardEmpty()}
+        </div>
+      </section>
+      <section class="dashboard-panel lg:col-span-5 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_totals')}</h3>
+        <div class="grid grid-cols-2 gap-3">
+          ${renderMetricCard('Books', stats.total_items ?? 0)}
+          ${renderMetricCard('Ebooks', stats.ebooks ?? 0)}
+          ${renderMetricCard('Audiobooks', stats.audiobooks ?? 0)}
+          ${renderMetricCard('Manga', stats.manga ?? 0)}
+        </div>
+        <div class="mt-6">
+          <h4 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-400 mb-3">${t('dashboard_formats')}</h4>
+          <div class="flex flex-wrap gap-2">
+            ${Object.entries(formatCounts).length ? Object.entries(formatCounts).map(([format, count]) => `<span class="inline-flex items-center gap-2 rounded-full bg-stone-800 px-3 py-1.5 text-xs text-stone-200"><span class="text-amber-300">${escapeHtml(format)}</span><span class="text-stone-500">${count}</span></span>`).join('') : `<span class="text-sm text-stone-500">${t('dashboard_empty')}</span>`}
+          </div>
+        </div>
+      </section>
+      <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">${t('dashboard_downloading')}</h3>
+          <button data-action="switchTab" data-arg="downloads" class="text-sm text-amber-300 hover:text-amber-200">${t('activity_open_downloads')}</button>
+        </div>
+        <div class="space-y-3">${(downloads || []).slice(0, 4).map(renderCompactDownload).join('') || renderDashboardEmpty()}</div>
+      </section>
+      <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">${t('dashboard_wishlist')}</h3>
+          <button data-action="switchTab" data-arg="wishlist" class="text-sm text-amber-300 hover:text-amber-200">${t('quick_more')}</button>
+        </div>
+        <div class="space-y-3">${wishlist.slice(0, 4).map(renderCompactWishlist).join('') || renderDashboardEmpty()}</div>
+      </section>
+      <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">${t('dashboard_activity')}</h3>
+          <button data-action="switchTab" data-arg="activity" class="text-sm text-amber-300 hover:text-amber-200">${t('quick_more')}</button>
+        </div>
+        <div class="space-y-3">${activity.slice(0, 4).map(renderActivityRow).join('') || renderDashboardEmpty()}</div>
+      </section>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="dashboard-panel rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
+  }
+}
+
+async function loadActivityTab() {
+  const container = document.getElementById('activity-feed');
+  if (!container) return;
+  try {
+    const data = await apiJson('/api/activity?limit=30');
+    const events = data.events || [];
+    container.innerHTML = events.length ? events.map(renderActivityRow).join('') : `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      container.innerHTML = `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
+function loadDevicesTab() {
+  const container = document.getElementById('devices-grid');
+  if (!container) return;
+  const cfg = state.config || {};
+  const devices = [
+    { name: 'Audiobookshelf', configured: !!cfg.abs_url, detail: cfg.abs_url || t('devices_cta') },
+    { name: 'Kavita', configured: !!cfg.kavita_url, detail: cfg.kavita_url || t('devices_cta') },
+    { name: 'Komga', configured: !!cfg.komga_url, detail: cfg.komga_url || t('devices_cta') },
+    { name: 'Calibre', configured: !!cfg.calibre_url, detail: cfg.calibre_url || t('devices_cta') },
+  ];
+  container.innerHTML = devices.map(device => `
+    <article class="rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-lg font-semibold text-white">${escapeHtml(device.name)}</h3>
+        <span class="rounded-full px-3 py-1 text-xs ${device.configured ? 'bg-emerald-500/15 text-emerald-300' : 'bg-stone-800 text-stone-400'}">${device.configured ? t('connected') : t('not_configured')}</span>
+      </div>
+      <p class="text-sm text-stone-400 leading-6">${escapeHtml(device.detail)}</p>
+    </article>
+  `).join('') || `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('devices_empty')}</div>`;
+}
+
+function renderCompactBookCard(book, index) {
+  return `
+    <button data-action="openHomeBookDetails" data-index="${index}" class="text-left rounded-[1.5rem] border border-stone-800 bg-stone-900/70 p-3 hover:border-amber-500/40 transition-colors">
+      <div class="flex gap-4">
+        <div class="w-20 shrink-0 overflow-hidden rounded-2xl">${renderBookCover(book, index, 'h-28')}</div>
+        <div class="min-w-0">
+          <h4 class="text-base font-semibold text-white line-clamp-2">${escapeHtml(book.title)}</h4>
+          <p class="mt-1 text-sm text-stone-300 line-clamp-1">${escapeHtml(book.author || book.series || '')}</p>
+          <div class="mt-3 flex flex-wrap gap-2">${book.formats.slice(0, 3).map(renderFormatBadge).join('')}</div>
+        </div>
+      </div>
+    </button>
+  `;
+}
+
+function renderMetricCard(label, value) {
+  return `<div class="rounded-[1.5rem] bg-stone-900/70 p-4"><p class="text-xs uppercase tracking-[0.18em] text-stone-500">${escapeHtml(label)}</p><p class="mt-2 text-3xl font-semibold text-white">${escapeHtml(String(value))}</p></div>`;
+}
+
+function renderCompactDownload(item) {
+  return `<div class="rounded-[1.25rem] bg-stone-900/70 p-3"><p class="text-sm font-medium text-white line-clamp-1">${escapeHtml(item.title || t('unknown_title'))}</p><p class="mt-1 text-xs text-stone-400">${escapeHtml(item.status || '')}</p></div>`;
+}
+
+function renderCompactWishlist(item) {
+  return `<div class="rounded-[1.25rem] bg-stone-900/70 p-3"><p class="text-sm font-medium text-white line-clamp-1">${escapeHtml(item.title || '')}</p><p class="mt-1 text-xs text-stone-400 line-clamp-1">${escapeHtml(item.author || item.media_type || '')}</p></div>`;
+}
+
+function renderActivityRow(event) {
+  const timestamp = event.created_at || event.timestamp || '';
+  const label = event.action || event.event || '';
+  const detail = event.detail || event.message || '';
+  const title = event.title || event.subject || '';
+  return `<div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 p-4">
+    <div class="flex items-center justify-between gap-4">
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-white line-clamp-1">${escapeHtml(title || label || 'Activity')}</p>
+        <p class="mt-1 text-xs text-stone-400 line-clamp-2">${escapeHtml(detail || label || '')}</p>
+      </div>
+      <span class="shrink-0 text-xs text-stone-500">${escapeHtml(formatRelativeTime(timestamp))}</span>
+    </div>
+  </div>`;
+}
+
+function renderDashboardEmpty() {
+  return `<div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-5 text-sm text-stone-500">${t('dashboard_empty')}</div>`;
+}
+
+function buildFormatCounts(books) {
+  const counts = {};
+  books.forEach(book => {
+    book.formats.forEach(format => {
+      counts[format] = (counts[format] || 0) + 1;
+    });
+  });
+  return counts;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return 'now';
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  const diffDay = Math.round(diffHr / 24);
+  return `${diffDay}d`;
+}
+
+async function openBookDetails(index, collection = 'libraryBooks') {
+  const source = Array.isArray(state[collection]) ? state[collection] : [];
+  const book = source[index];
+  if (!book) return;
+  const modal = document.getElementById('book-detail-modal');
+  const content = document.getElementById('book-detail-content');
+  const heading = document.getElementById('detail-heading');
+  if (!modal || !content || !heading) return;
+  let detailBook = book;
+  let detailFiles = book.files || [];
+  if (normalizedLibraryMode() && book.id) {
+    try {
+      const [detail, files] = await Promise.all([
+        apiJson(`/api/v1/books/${book.id}`),
+        apiJson(`/api/v1/books/${book.id}/files`),
+      ]);
+      detailBook = {
+        ...mapV1BookToUIBook(detail),
+        description: detail.description || '',
+        identifiers: detail.identifiers || [],
+        editions: detail.editions || [],
+        series: detail.series?.name || '',
+        metadataConfidence: 'Native',
+      };
+      detailFiles = (files.items || []).map(file => ({
+        id: file.id,
+        path: file.path || '',
+        originalPath: file.original_path || '',
+        format: (file.format || '').toUpperCase(),
+        sourceID: file.source_id || '',
+        size: file.size || 0,
+        editionID: file.edition_id || 0,
+      }));
+      detailBook.files = detailFiles;
+    } catch (err) {
+      detailFiles = book.files || [];
+    }
+  }
+  heading.textContent = book.title;
+  content.innerHTML = `
+    <div class="grid gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <div>
+              <div class="overflow-hidden rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.35)]">${renderBookCover(detailBook, index, 'h-[24rem]')}</div>
+      </div>
+      <div>
+        <header class="mb-8">
+          <h2 class="text-4xl font-semibold tracking-tight text-white">${escapeHtml(detailBook.title)}</h2>
+          <p class="mt-2 text-lg text-stone-300">${escapeHtml(detailBook.author || t('details_placeholder_value'))}</p>
+          ${detailBook.series ? `<p class="mt-3 text-sm uppercase tracking-[0.18em] text-amber-300/80">${escapeHtml(detailBook.series)}</p>` : ''}
+          <p class="mt-5 text-stone-400 leading-7">${escapeHtml(detailBook.description || t('details_description_placeholder'))}</p>
+        </header>
+        <section class="mb-8">
+          <h3 class="text-lg font-semibold text-white mb-4">${t('details_metadata')}</h3>
+          <div class="grid gap-4 sm:grid-cols-2">
+            ${renderDetailMetaCard(t('metadata_series'), detailBook.series || t('details_placeholder_value'))}
+            ${renderDetailMetaCard(t('metadata_source'), guessMetadataSource(detailBook))}
+            ${renderDetailMetaCard(t('metadata_confidence'), detailBook.metadataConfidence || 'Compatibility')}
+            ${renderDetailMetaCard(t('metadata_identifiers'), formatIdentifierList(detailBook.identifiers || []))}
+          </div>
+        </section>
+        <section class="mb-8">
+          <h3 class="text-lg font-semibold text-white mb-4">${t('details_formats')}</h3>
+          <div class="space-y-3">
+            ${detailFiles.map(file => `
+              <div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 px-4 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-sm font-medium text-white">${escapeHtml(file.format || 'FILE')}</p>
+                  <p class="text-xs text-stone-500 line-clamp-1">${escapeHtml(file.path || file.originalPath || '')}</p>
+                </div>
+                <span class="text-xs text-stone-400">${escapeHtml(formatSize(file.size || 0))}</span>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+        <section>
+          <h3 class="text-lg font-semibold text-white mb-4">${t('details_history')}</h3>
+          <div id="detail-history" class="space-y-3">
+            <div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-4 text-sm text-stone-500">${t('dashboard_empty')}</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  loadBookHistory(detailBook);
+}
+
+function closeBookDetails() {
+  const modal = document.getElementById('book-detail-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+function openHomeBookDetails(index) {
+  openBookDetails(index, 'homeBooks');
+}
+
+function sendBookToDevices(index) {
+  const book = state.libraryBooks[index];
+  if (!book) return;
+  showToast(`${book.title}: ${t('details_send_placeholder')}`, 'info');
+  switchTab('devices');
+}
+
+function renderDetailMetaCard(label, value) {
+  return `<div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 p-4"><p class="text-xs uppercase tracking-[0.18em] text-stone-500 mb-2">${escapeHtml(label)}</p><p class="text-sm text-stone-200">${escapeHtml(value)}</p></div>`;
+}
+
+function guessMetadataSource(book) {
+  if (book.nativeV1) return 'Normalized library';
+  if (book.coverUrl) return 'External library';
+  if (book.files.some(file => file.source)) return 'Imported file';
+  return t('details_placeholder_value');
+}
+
+function formatIdentifierList(identifiers) {
+  if (!identifiers.length) return t('details_placeholder_value');
+  return identifiers.map(identifier => `${identifier.type}: ${identifier.value}`).join(', ');
+}
+
+async function loadBookHistory(book) {
+  const container = document.getElementById('detail-history');
+  if (!container) return;
+  try {
+    const data = await apiJson('/api/activity?limit=100');
+    const title = (book.title || '').toLowerCase();
+    const matches = (data.events || []).filter(event => {
+      const haystack = `${event.title || ''} ${event.detail || ''} ${event.subject || ''}`.toLowerCase();
+      return title && haystack.includes(title);
+    }).slice(0, 6);
+    container.innerHTML = matches.length ? matches.map(renderActivityRow).join('') : `<div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-4 text-sm text-stone-500">${t('dashboard_empty')}</div>`;
+  } catch (err) {
+    container.innerHTML = `<div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-4 text-sm text-stone-500">${t('dashboard_empty')}</div>`;
+  }
 }
 
 // ============================================================
@@ -2574,6 +3116,7 @@ document.addEventListener('keydown', (e) => {
   // Escape → close modals, clear search
   if (e.key === 'Escape') {
     hideWishlistForm();
+    closeBookDetails();
   }
 });
 
@@ -2585,6 +3128,7 @@ async function init() {
     // Test auth by hitting config
     const cfg = await apiJson('/api/config');
     state.config = cfg;
+    setupLibrarr2Shell();
 
     // Update user header.
     if (cfg.current_user) {
@@ -2593,10 +3137,10 @@ async function init() {
 
     // Auth OK
     loadStats();
-    // Show default tab
-    document.getElementById('search-empty').classList.remove('hidden');
     // Apply language on load
     applyLanguage();
+    document.getElementById('search-empty').classList.remove('hidden');
+    switchTab('home');
   } catch (err) {
     if (err.message === 'Unauthorized') {
       // Login modal already shown by api()
@@ -2633,6 +3177,10 @@ const CLICK_ACTIONS = {
   clearCompleted: () => clearCompleted(),
   addUser: () => addUser(),
   refreshDownloads: () => refreshDownloads(true), // toolbar button forces a refresh
+  openBookDetails: el => openBookDetails(+el.dataset.index),
+  openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),
+  closeBookDetails: () => closeBookDetails(),
+  sendBookToDevices: el => sendBookToDevices(+el.dataset.index),
   // Dynamically rendered rows/cards:
   startDownload: el => {
     // data-idx indexes the *rendered* (sorted) list, not state.searchResults.

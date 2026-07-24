@@ -14,6 +14,7 @@ import (
 	"github.com/JeremiahM37/librarr/internal/db"
 	"github.com/JeremiahM37/librarr/internal/download"
 	"github.com/JeremiahM37/librarr/internal/library"
+	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
 	"github.com/JeremiahM37/librarr/internal/metadata"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/scheduler"
@@ -31,6 +32,7 @@ type Server struct {
 	cfg            *config.Config
 	db             *db.DB
 	libraryService *library.LibraryService
+	importEngine   libraryimport.ImportEngine
 	searchMgr      *search.Manager
 	downloadMgr    *download.Manager
 	qb             *download.QBittorrentClient
@@ -58,10 +60,14 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 	if err != nil {
 		panic(err)
 	}
-	return NewServerWithLibraryService(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySvc)
+	return NewServerWithServices(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySvc, libraryimport.NewLegacyImportEngine(database))
 }
 
 func NewServerWithLibraryService(cfg *config.Config, database *db.DB, searchMgr *search.Manager, downloadMgr *download.Manager, qb *download.QBittorrentClient, transmission *download.TransmissionClient, sab *download.SABnzbdClient, organizer *organize.Organizer, targets *organize.LibraryTargets, librarySvc *library.LibraryService) *Server {
+	return NewServerWithServices(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySvc, nil)
+}
+
+func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *search.Manager, downloadMgr *download.Manager, qb *download.QBittorrentClient, transmission *download.TransmissionClient, sab *download.SABnzbdClient, organizer *organize.Organizer, targets *organize.LibraryTargets, librarySvc *library.LibraryService, importEngine libraryimport.ImportEngine) *Server {
 	if librarySvc == nil {
 		panic("api.NewServerWithLibraryService requires an explicit LibraryService")
 	}
@@ -118,6 +124,7 @@ func NewServerWithLibraryService(cfg *config.Config, database *db.DB, searchMgr 
 		cfg:            cfg,
 		db:             database,
 		libraryService: librarySvc,
+		importEngine:   importEngine,
 		searchMgr:      searchMgr,
 		downloadMgr:    downloadMgr,
 		qb:             qb,
@@ -174,6 +181,24 @@ func (s *Server) library() *library.LibraryService {
 	}
 	s.libraryService = librarySvc
 	return s.libraryService
+}
+
+func (s *Server) importer() libraryimport.ImportEngine {
+	if s.importEngine != nil {
+		return s.importEngine
+	}
+	if s.cfg != nil {
+		mode, err := s.cfg.ImportEngineMode()
+		if err == nil && mode == libraryimport.EngineModeV2 {
+			panic("api.Server missing ImportEngine while LIBRARR_IMPORT_ENGINE=v2 is configured")
+		}
+	}
+	if s.db == nil {
+		return nil
+	}
+	slog.Warn("api.Server missing ImportEngine; lazily using legacy import engine fallback")
+	s.importEngine = libraryimport.NewLegacyImportEngine(s.db)
+	return s.importEngine
 }
 
 // StartScheduler starts the background scheduler loop.
@@ -339,6 +364,12 @@ func (s *Server) registerDownloadRoutes() {
 // registerLibraryRoutes wires the library, wishlist, tags, reading history,
 // series tracking, and monitored authors.
 func (s *Server) registerLibraryRoutes() {
+	// Librarr 2.0 native normalized read API.
+	s.mux.HandleFunc("GET /api/v1/books", s.handleV1Books)
+	s.mux.HandleFunc("GET /api/v1/books/{id}", s.handleV1Book)
+	s.mux.HandleFunc("GET /api/v1/books/{id}/files", s.handleV1BookFiles)
+	s.mux.HandleFunc("GET /api/v1/books/{id}/editions", s.handleV1BookEditions)
+
 	// Library.
 	s.mux.HandleFunc("GET /api/library", s.handleLibrary)
 	s.mux.HandleFunc("GET /api/library/audiobooks", s.handleLibraryAudiobooks)

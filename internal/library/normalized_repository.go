@@ -161,33 +161,55 @@ func (r *NormalizedRepository) FindBookByIdentifier(ctx context.Context, identif
 }
 
 func (r *NormalizedRepository) ListBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
-	return r.queryBooks(ctx, ``, query.MediaType, query.Limit, query.Offset)
+	return r.queryBooks(ctx, query)
 }
 
-func (r *NormalizedRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
-	return r.queryBooks(ctx, query.Title, query.MediaType, 100, 0)
-}
-
-func (r *NormalizedRepository) CountBooks(ctx context.Context, query BookQuery) (int, error) {
-	clauses, args := bookWhere(query.Title, query.MediaType)
+func (r *NormalizedRepository) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
+	where, args := r.listBooksWhere(query)
 	var count int
-	err := r.exec(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM books`+clauses, args...).Scan(&count)
+	err := r.exec(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM books b`+where, args...).Scan(&count)
 	return count, err
 }
 
-func (r *NormalizedRepository) RecentBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
-	return r.queryBooks(ctx, ``, query.MediaType, query.Limit, query.Offset)
+func (r *NormalizedRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
+	return r.queryBooks(ctx, ListBooksQuery{
+		MediaType: query.MediaType,
+		Search:    query.Title,
+		Sort:      "title",
+		Order:     "asc",
+		Limit:     100,
+	})
 }
 
-func (r *NormalizedRepository) queryBooks(ctx context.Context, title string, mediaType MediaType, limit, offset int) ([]Book, error) {
+func (r *NormalizedRepository) CountBooks(ctx context.Context, query BookQuery) (int, error) {
+	return r.CountListedBooks(ctx, ListBooksQuery{
+		MediaType: query.MediaType,
+		Search:    query.Title,
+	})
+}
+
+func (r *NormalizedRepository) RecentBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
+	if strings.TrimSpace(query.Sort) == "" {
+		query.Sort = "recently_added"
+	}
+	if strings.TrimSpace(query.Order) == "" {
+		query.Order = "desc"
+	}
+	return r.queryBooks(ctx, query)
+}
+
+func (r *NormalizedRepository) queryBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
+	limit := query.Limit
+	offset := query.Offset
 	if limit <= 0 {
 		limit = 100
 	}
-	clauses, args := bookWhere(title, mediaType)
+	where, args := r.listBooksWhere(query)
+	orderBy := r.listBooksOrderBy(query)
 	args = append(args, limit, offset)
 	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT id, title, sort_title, description, publication_year,
-		language, media_type, monitored, status, created_at, updated_at FROM books`+clauses+`
-		ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?`, args...)
+		language, media_type, monitored, status, created_at, updated_at FROM books b`+where+`
+		ORDER BY `+orderBy+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -195,22 +217,73 @@ func (r *NormalizedRepository) queryBooks(ctx context.Context, title string, med
 	return scanBooks(rows)
 }
 
-func bookWhere(title string, mediaType MediaType) (string, []any) {
+func (r *NormalizedRepository) listBooksWhere(query ListBooksQuery) (string, []any) {
 	var clauses []string
 	var args []any
-	if strings.TrimSpace(title) != "" {
-		clauses = append(clauses, `(title LIKE ? COLLATE NOCASE OR sort_title LIKE ? COLLATE NOCASE)`)
-		like := "%" + strings.TrimSpace(title) + "%"
-		args = append(args, like, like)
+	search := strings.TrimSpace(query.Search)
+	if search != "" {
+		like := "%" + search + "%"
+		clauses = append(clauses, `(b.title LIKE ? COLLATE NOCASE OR b.sort_title LIKE ? COLLATE NOCASE OR EXISTS (
+			SELECT 1
+			FROM editions e
+			JOIN edition_contributors ec ON ec.edition_id = e.id
+			JOIN contributors c ON c.id = ec.contributor_id
+			WHERE e.book_id = b.id AND c.name LIKE ? COLLATE NOCASE
+		))`)
+		args = append(args, like, like, like)
 	}
-	if mediaType != "" {
-		clauses = append(clauses, `media_type = ?`)
-		args = append(args, string(mediaType))
+	if query.MediaType != "" {
+		clauses = append(clauses, `b.media_type = ?`)
+		args = append(args, string(query.MediaType))
+	}
+	if format := strings.TrimSpace(query.Format); format != "" {
+		clauses = append(clauses, `EXISTS (
+			SELECT 1
+			FROM editions e
+			JOIN files f ON f.edition_id = e.id
+			WHERE e.book_id = b.id AND f.format = ? COLLATE NOCASE
+		)`)
+		args = append(args, format)
 	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func (r *NormalizedRepository) listBooksOrderBy(query ListBooksQuery) string {
+	sort := strings.ToLower(strings.TrimSpace(query.Sort))
+	order := strings.ToUpper(strings.TrimSpace(query.Order))
+	if order != "ASC" {
+		order = "DESC"
+	}
+	switch sort {
+	case "title":
+		return fmt.Sprintf("b.sort_title %s, b.id %s", order, order)
+	case "author":
+		return fmt.Sprintf(`COALESCE((
+			SELECT MIN(c.sort_name)
+			FROM editions e
+			JOIN edition_contributors ec ON ec.edition_id = e.id
+			JOIN contributors c ON c.id = ec.contributor_id
+			WHERE e.book_id = b.id AND ec.role = 'author'
+		), '') %s, b.sort_title ASC, b.id ASC`, order)
+	case "recently_updated":
+		return fmt.Sprintf(`MAX(
+			b.updated_at,
+			COALESCE((SELECT MAX(e.updated_at) FROM editions e WHERE e.book_id = b.id), b.updated_at),
+			COALESCE((
+				SELECT MAX(f.updated_at)
+				FROM files f
+				JOIN editions e ON e.id = f.edition_id
+				WHERE e.book_id = b.id
+			), b.updated_at)
+		) %s, b.id %s`, order, order)
+	case "", "recently_added":
+		return fmt.Sprintf("datetime(b.created_at) %s, b.id %s", order, order)
+	default:
+		return fmt.Sprintf("datetime(b.created_at) DESC, b.id DESC")
+	}
 }
 
 func (r *NormalizedRepository) CreateEdition(ctx context.Context, edition Edition) (*Edition, error) {

@@ -163,6 +163,11 @@ func (s *LibraryService) ListBooks(ctx context.Context, query ListBooksQuery) ([
 	return books, translateLibraryError(err)
 }
 
+func (s *LibraryService) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
+	count, err := s.books.CountListedBooks(ctx, query)
+	return count, translateLibraryError(err)
+}
+
 func (s *LibraryService) ListRecent(ctx context.Context, mediaType MediaType, limit, offset int) ([]Book, error) {
 	books, err := s.books.RecentBooks(ctx, ListBooksQuery{MediaType: mediaType, Limit: limit, Offset: offset})
 	return books, translateLibraryError(err)
