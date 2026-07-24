@@ -38,6 +38,9 @@ const I18N = {
     quick_more: 'More',
     details_kicker: 'Book Details',
     details_metadata: 'Metadata',
+    metadata_edit: 'Edit Metadata',
+    metadata_save: 'Save',
+    metadata_cancel: 'Cancel',
     details_formats: 'Available Formats',
     details_history: 'History',
     details_description_placeholder: 'A richer description will appear here once normalized metadata and cover services are fully connected.',
@@ -46,6 +49,14 @@ const I18N = {
     metadata_confidence: 'Confidence',
     metadata_identifiers: 'Identifiers',
     metadata_series: 'Series',
+    metadata_title: 'Title',
+    metadata_edition_title: 'Edition Title',
+    metadata_subtitle: 'Subtitle',
+    metadata_description: 'Description',
+    metadata_genres: 'Genres',
+    metadata_language: 'Language',
+    metadata_publication_date: 'Publication Date',
+    metadata_publisher: 'Publisher',
     activity_kicker: 'Timeline',
     activity_title: 'Recent Activity',
     activity_open_downloads: 'Open Downloads',
@@ -2278,11 +2289,15 @@ async function openBookDetails(index, collection = 'libraryBooks') {
   if (!modal || !content || !heading) return;
   let detailBook = book;
   let detailFiles = book.files || [];
+  let detailMetadata = null;
+  let detailProvenance = null;
   if (normalizedLibraryMode() && book.id) {
     try {
-      const [detail, files] = await Promise.all([
+      const [detail, files, metadata, provenance] = await Promise.all([
         apiJson(`/api/v1/books/${book.id}`),
         apiJson(`/api/v1/books/${book.id}/files`),
+        apiJson(`/api/v1/books/${book.id}/metadata`),
+        apiJson(`/api/v1/books/${book.id}/provenance`),
       ]);
       detailBook = {
         ...mapV1BookToUIBook(detail),
@@ -2302,11 +2317,18 @@ async function openBookDetails(index, collection = 'libraryBooks') {
         editionID: file.edition_id || 0,
       }));
       detailBook.files = detailFiles;
+      detailMetadata = metadata;
+      detailProvenance = provenance;
     } catch (err) {
       detailFiles = book.files || [];
     }
   }
-  heading.textContent = book.title;
+  detailBook.metadata = detailMetadata;
+  detailBook.provenance = detailProvenance;
+  state.activeDetailBook = detailBook;
+  const preferredTitle = detailMetadata?.fields?.title?.value || detailBook.title || book.title;
+  const preferredDescription = detailMetadata?.fields?.description?.value || detailBook.description || '';
+  heading.textContent = preferredTitle;
   content.innerHTML = `
     <div class="grid gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <div>
@@ -2314,17 +2336,19 @@ async function openBookDetails(index, collection = 'libraryBooks') {
       </div>
       <div>
         <header class="mb-8">
-          <h2 class="text-4xl font-semibold tracking-tight text-white">${escapeHtml(detailBook.title)}</h2>
+          <h2 class="text-4xl font-semibold tracking-tight text-white">${escapeHtml(preferredTitle)}</h2>
           <p class="mt-2 text-lg text-stone-300">${escapeHtml(detailBook.author || t('details_placeholder_value'))}</p>
           ${detailBook.series ? `<p class="mt-3 text-sm uppercase tracking-[0.18em] text-amber-300/80">${escapeHtml(detailBook.series)}</p>` : ''}
-          <p class="mt-5 text-stone-400 leading-7">${escapeHtml(detailBook.description || t('details_description_placeholder'))}</p>
+          <p class="mt-5 text-stone-400 leading-7">${escapeHtml(preferredDescription || t('details_description_placeholder'))}</p>
         </header>
         <section class="mb-8">
-          <h3 class="text-lg font-semibold text-white mb-4">${t('details_metadata')}</h3>
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h3 class="text-lg font-semibold text-white">${t('details_metadata')}</h3>
+            ${detailBook.id && normalizedLibraryMode() ? `<button onclick="openMetadataEditor()" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">${t('metadata_edit')}</button>` : ''}
+          </div>
           <div class="grid gap-4 sm:grid-cols-2">
+            ${renderMetadataFieldCards(detailMetadata)}
             ${renderDetailMetaCard(t('metadata_series'), detailBook.series || t('details_placeholder_value'))}
-            ${renderDetailMetaCard(t('metadata_source'), guessMetadataSource(detailBook))}
-            ${renderDetailMetaCard(t('metadata_confidence'), detailBook.metadataConfidence || 'Compatibility')}
             ${renderDetailMetaCard(t('metadata_identifiers'), formatIdentifierList(detailBook.identifiers || []))}
           </div>
         </section>
@@ -2376,6 +2400,97 @@ function sendBookToDevices(index) {
 
 function renderDetailMetaCard(label, value) {
   return `<div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 p-4"><p class="text-xs uppercase tracking-[0.18em] text-stone-500 mb-2">${escapeHtml(label)}</p><p class="text-sm text-stone-200">${escapeHtml(value)}</p></div>`;
+}
+
+function renderMetadataFieldCards(metadata) {
+  if (!metadata?.fields) {
+    return `
+      ${renderDetailMetaCard(t('metadata_source'), t('details_placeholder_value'))}
+      ${renderDetailMetaCard(t('metadata_confidence'), t('details_placeholder_value'))}
+    `;
+  }
+  const fields = [
+    ['title', t('metadata_title')],
+    ['edition_title', t('metadata_edition_title')],
+    ['subtitle', t('metadata_subtitle')],
+    ['language', t('metadata_language')],
+    ['publication_date', t('metadata_publication_date')],
+    ['publisher', t('metadata_publisher')],
+    ['genres', t('metadata_genres')],
+  ];
+  return fields.map(([key, label]) => renderMetadataFieldCard(label, metadata.fields[key])).join('');
+}
+
+function renderMetadataFieldCard(label, field) {
+  if (!field || !field.value) {
+    return renderDetailMetaCard(label, t('details_placeholder_value'));
+  }
+  const badge = field.manual_override ? '<span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-amber-200">Manual</span>' : '';
+  return `
+    <div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 p-4">
+      <div class="flex items-start justify-between gap-3 mb-2">
+        <p class="text-xs uppercase tracking-[0.18em] text-stone-500">${escapeHtml(label)}</p>
+        ${badge}
+      </div>
+      <p class="text-sm text-stone-100 mb-3">${escapeHtml(field.value)}</p>
+      <div class="flex flex-wrap gap-2 text-[11px] text-stone-400">
+        <span>${escapeHtml(field.source || t('details_placeholder_value'))}</span>
+        <span>•</span>
+        <span>${escapeHtml(formatConfidence(field))}</span>
+      </div>
+    </div>
+  `;
+}
+
+function formatConfidence(field) {
+  if (!field) return t('details_placeholder_value');
+  if (typeof field.confidence_score === 'number' && field.confidence_score > 0) {
+    return `${field.confidence_score}%`;
+  }
+  return field.confidence || t('details_placeholder_value');
+}
+
+async function openMetadataEditor() {
+  const book = state.activeDetailBook;
+  if (!book?.id || !book.metadata?.fields) return;
+  const current = book.metadata.fields;
+  const title = window.prompt(t('metadata_title'), current.title?.value || '');
+  if (title === null) return;
+  const subtitle = window.prompt(t('metadata_subtitle'), current.subtitle?.value || '');
+  if (subtitle === null) return;
+  const publisher = window.prompt(t('metadata_publisher'), current.publisher?.value || '');
+  if (publisher === null) return;
+  const publicationDate = window.prompt(t('metadata_publication_date'), current.publication_date?.value || '');
+  if (publicationDate === null) return;
+  const language = window.prompt(t('metadata_language'), current.language?.value || '');
+  if (language === null) return;
+  const genres = window.prompt(t('metadata_genres'), current.genres?.value || '');
+  if (genres === null) return;
+
+  try {
+    await apiJson(`/api/v1/books/${book.id}/metadata`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          title,
+          subtitle,
+          publisher,
+          publication_date: publicationDate,
+          language,
+          genres,
+        },
+      }),
+    });
+    showToast(t('metadata_edit'), 'success');
+    const currentIndex = state.libraryBooks.findIndex(item => item.id === book.id);
+    if (currentIndex >= 0) {
+      await loadLibrary();
+      await openBookDetails(currentIndex, 'libraryBooks');
+    }
+  } catch (err) {
+    showToast(err.message || 'Failed to update metadata', 'error');
+  }
 }
 
 function guessMetadataSource(book) {

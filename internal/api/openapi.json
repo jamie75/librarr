@@ -195,6 +195,22 @@
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
       }
     },
+    "/api/v1/books/{id}/metadata": {
+      "get": {
+        "summary": "Get normalized metadata for a Librarr 2.0 book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      },
+      "patch": {
+        "summary": "Apply manual metadata overrides for a Librarr 2.0 book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
+    "/api/v1/books/{id}/provenance": {
+      "get": {
+        "summary": "Get metadata provenance and competing evidence for a Librarr 2.0 book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
     "/api/v1/books/{id}/files": {
       "get": {
         "summary": "List all files attached to a normalized book",

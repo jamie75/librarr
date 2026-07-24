@@ -952,12 +952,422 @@ func (r *NormalizedRepository) SaveEmbeddedMetadata(ctx context.Context, fileID 
 	return nil
 }
 
-func (r *NormalizedRepository) SaveProviderMetadata(context.Context, int64, string, map[string]string) error {
-	return ErrUnsupportedOperation
+func (r *NormalizedRepository) GetBookMetadata(ctx context.Context, bookID int64) (*BookMetadata, error) {
+	book, err := r.GetBook(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	edition, err := r.primaryEditionForBook(ctx, bookID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
+	result := &BookMetadata{
+		BookID: bookID,
+		Fields: make(map[MetadataField]MetadataEntry),
+	}
+	if edition != nil {
+		result.EffectiveEditionID = edition.ID
+	}
+	r.seedBookMetadataFields(result.Fields, *book, edition)
+
+	rows, err := r.queryContext(ctx, `SELECT scope_type, scope_id, field, value, source, confidence, manual_override, updated_at
+		FROM metadata_values
+		WHERE (scope_type = 'book' AND scope_id = ?)
+		   OR (scope_type = 'edition' AND scope_id = ?)
+		ORDER BY updated_at DESC, id DESC`, bookID, result.EffectiveEditionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var scopeType string
+		var scopeID int64
+		var fieldName, value, source, confidence, updatedAt string
+		var manual int
+		if err := rows.Scan(&scopeType, &scopeID, &fieldName, &value, &source, &confidence, &manual, &updatedAt); err != nil {
+			return nil, mapSQLError(err)
+		}
+		field := MetadataField(fieldName)
+		if !field.Valid() {
+			continue
+		}
+		result.Fields[field] = MetadataEntry{
+			Field:          field,
+			Value:          value,
+			Source:         source,
+			Confidence:     Confidence(confidence),
+			UpdatedAt:      parseTime(updatedAt),
+			ManualOverride: manual != 0,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result.Contributors, err = r.bookMetadataContributors(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	result.Identifiers, err = r.bookMetadataIdentifiers(ctx, bookID, result.EffectiveEditionID)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-func (r *NormalizedRepository) SaveUserOverride(context.Context, int64, string, string) error {
-	return ErrUnsupportedOperation
+func (r *NormalizedRepository) GetBookProvenance(ctx context.Context, bookID int64) (*BookMetadataProvenance, error) {
+	metadata, err := r.GetBookMetadata(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	result := &BookMetadataProvenance{
+		BookID:             metadata.BookID,
+		EffectiveEditionID: metadata.EffectiveEditionID,
+		Fields:             make(map[MetadataField][]MetadataEvidence),
+		Contributors:       metadata.Contributors,
+		Identifiers:        metadata.Identifiers,
+	}
+
+	rows, err := r.queryContext(ctx, `SELECT scope_type, scope_id, field, value, source, confidence, manual_override, selected, updated_at
+		FROM metadata_evidence
+		WHERE (scope_type = 'book' AND scope_id = ?)
+		   OR (scope_type = 'edition' AND scope_id = ?)
+		ORDER BY field, updated_at DESC, id DESC`, bookID, metadata.EffectiveEditionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var scopeType, fieldName, value, source, confidence, updatedAt string
+		var scopeID int64
+		var manual, selected int
+		if err := rows.Scan(&scopeType, &scopeID, &fieldName, &value, &source, &confidence, &manual, &selected, &updatedAt); err != nil {
+			return nil, mapSQLError(err)
+		}
+		field := MetadataField(fieldName)
+		if !field.Valid() {
+			continue
+		}
+		result.Fields[field] = append(result.Fields[field], MetadataEvidence{
+			Field:          field,
+			Value:          value,
+			Source:         source,
+			Confidence:     Confidence(confidence),
+			UpdatedAt:      parseTime(updatedAt),
+			ManualOverride: manual != 0,
+			Selected:       selected != 0,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, field := range sortMetadataFields(metadata.Fields) {
+		if len(result.Fields[field]) > 0 {
+			continue
+		}
+		entry := metadata.Fields[field]
+		result.Fields[field] = []MetadataEvidence{{
+			Field:          field,
+			Value:          entry.Value,
+			Source:         entry.Source,
+			Confidence:     entry.Confidence,
+			UpdatedAt:      entry.UpdatedAt,
+			ManualOverride: entry.ManualOverride,
+			Selected:       true,
+		}}
+	}
+	return result, nil
+}
+
+func (r *NormalizedRepository) PatchBookMetadata(ctx context.Context, bookID int64, patch BookMetadataPatch) (*BookMetadata, error) {
+	if len(patch.Fields) == 0 {
+		return r.GetBookMetadata(ctx, bookID)
+	}
+	if err := r.WithinTransaction(ctx, func(txCtx context.Context) error {
+		current, err := r.GetBookMetadata(txCtx, bookID)
+		if err != nil {
+			return err
+		}
+		for field, value := range patch.Fields {
+			value = sanitizeMetadataValue(field, value)
+			if value == "" {
+				continue
+			}
+			scopeType, scopeID, err := r.metadataScopeTarget(current, field)
+			if err != nil {
+				return err
+			}
+			if err := r.upsertMetadataValue(txCtx, scopeType, scopeID, field, value, "manual", ConfidenceExact, true); err != nil {
+				return err
+			}
+			if err := r.clearSelectedMetadataEvidence(txCtx, scopeType, scopeID, field); err != nil {
+				return err
+			}
+			if err := r.upsertMetadataEvidence(txCtx, scopeType, scopeID, field, value, "manual", ConfidenceExact, true, true); err != nil {
+				return err
+			}
+			if err := r.syncEffectiveMetadataField(txCtx, scopeType, scopeID, field, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return r.GetBookMetadata(ctx, bookID)
+}
+
+func (r *NormalizedRepository) ApplyBookMetadataSource(ctx context.Context, update MetadataUpdate) (*BookMetadata, error) {
+	if len(update.Fields) == 0 {
+		return r.GetBookMetadata(ctx, update.BookID)
+	}
+	if err := r.WithinTransaction(ctx, func(txCtx context.Context) error {
+		current, err := r.GetBookMetadata(txCtx, update.BookID)
+		if err != nil {
+			return err
+		}
+		for field, value := range update.Fields {
+			value = sanitizeMetadataValue(field, value)
+			if value == "" {
+				continue
+			}
+			scopeType, scopeID, err := r.metadataScopeTarget(current, field)
+			if err != nil {
+				return err
+			}
+			if err := r.upsertMetadataEvidence(txCtx, scopeType, scopeID, field, value, update.Source, update.Confidence, false, false); err != nil {
+				return err
+			}
+			currentEntry, hasCurrent := current.Fields[field]
+			if hasCurrent && currentEntry.ManualOverride {
+				continue
+			}
+			if !hasCurrent || shouldPromoteMetadataValue(currentEntry, update.Source, update.Confidence, value) {
+				if err := r.upsertMetadataValue(txCtx, scopeType, scopeID, field, value, update.Source, update.Confidence, false); err != nil {
+					return err
+				}
+				if err := r.clearSelectedMetadataEvidence(txCtx, scopeType, scopeID, field); err != nil {
+					return err
+				}
+				if err := r.upsertMetadataEvidence(txCtx, scopeType, scopeID, field, value, update.Source, update.Confidence, false, true); err != nil {
+					return err
+				}
+				if err := r.syncEffectiveMetadataField(txCtx, scopeType, scopeID, field, value); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return r.GetBookMetadata(ctx, update.BookID)
+}
+
+func shouldPromoteMetadataValue(current MetadataEntry, source string, confidence Confidence, value string) bool {
+	if strings.TrimSpace(current.Value) == "" {
+		return true
+	}
+	if current.Source == "library_record" {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(current.Source), strings.TrimSpace(source)) {
+		return true
+	}
+	return MetadataConfidenceScore(confidence) > MetadataConfidenceScore(current.Confidence)
+}
+
+func (r *NormalizedRepository) primaryEditionForBook(ctx context.Context, bookID int64) (*Edition, error) {
+	rows, err := r.queryContext(ctx, `SELECT id, book_id, title, subtitle, publisher, publication_date,
+		language, page_count, edition_name, created_at, updated_at
+		FROM editions WHERE book_id = ? ORDER BY id LIMIT 1`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, ErrNotFound
+	}
+	edition, err := scanEdition(rows)
+	if err != nil {
+		return nil, err
+	}
+	return edition, nil
+}
+
+func (r *NormalizedRepository) seedBookMetadataFields(fields map[MetadataField]MetadataEntry, book Book, edition *Edition) {
+	now := time.Now().UTC()
+	if strings.TrimSpace(book.Title) != "" {
+		fields[MetadataFieldTitle] = MetadataEntry{Field: MetadataFieldTitle, Value: book.Title, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: book.UpdatedAt}
+	}
+	if strings.TrimSpace(book.Description) != "" {
+		fields[MetadataFieldDescription] = MetadataEntry{Field: MetadataFieldDescription, Value: book.Description, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: book.UpdatedAt}
+	}
+	if strings.TrimSpace(book.Language) != "" {
+		fields[MetadataFieldLanguage] = MetadataEntry{Field: MetadataFieldLanguage, Value: book.Language, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: book.UpdatedAt}
+	}
+	if edition != nil {
+		if strings.TrimSpace(edition.Title) != "" {
+			fields[MetadataFieldEditionTitle] = MetadataEntry{Field: MetadataFieldEditionTitle, Value: edition.Title, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: edition.UpdatedAt}
+		}
+		if strings.TrimSpace(edition.Subtitle) != "" {
+			fields[MetadataFieldSubtitle] = MetadataEntry{Field: MetadataFieldSubtitle, Value: edition.Subtitle, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: edition.UpdatedAt}
+		}
+		if strings.TrimSpace(edition.PublicationDate) != "" {
+			fields[MetadataFieldPublicationDate] = MetadataEntry{Field: MetadataFieldPublicationDate, Value: edition.PublicationDate, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: edition.UpdatedAt}
+		}
+		if strings.TrimSpace(edition.Publisher) != "" {
+			fields[MetadataFieldPublisher] = MetadataEntry{Field: MetadataFieldPublisher, Value: edition.Publisher, Source: "library_record", Confidence: ConfidenceHigh, UpdatedAt: edition.UpdatedAt}
+		}
+	}
+	for field, entry := range fields {
+		if entry.UpdatedAt.IsZero() {
+			entry.UpdatedAt = now
+			fields[field] = entry
+		}
+	}
+}
+
+func (r *NormalizedRepository) bookMetadataContributors(ctx context.Context, bookID int64) ([]MetadataContributor, error) {
+	rows, err := r.queryContext(ctx, `SELECT c.name, ec.role, c.updated_at
+		FROM editions e
+		JOIN edition_contributors ec ON ec.edition_id = e.id
+		JOIN contributors c ON c.id = ec.contributor_id
+		WHERE e.book_id = ?
+		ORDER BY ec.position, c.name`, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]MetadataContributor, 0)
+	seen := map[string]struct{}{}
+	for rows.Next() {
+		var name, role, updatedAt string
+		if err := rows.Scan(&name, &role, &updatedAt); err != nil {
+			return nil, mapSQLError(err)
+		}
+		key := strings.ToLower(strings.TrimSpace(role)) + "\x00" + strings.ToLower(strings.TrimSpace(name))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		items = append(items, MetadataContributor{
+			Name:           name,
+			Role:           ContributorRole(role),
+			Source:         "library_record",
+			Confidence:     ConfidenceHigh,
+			UpdatedAt:      parseTime(updatedAt),
+			ManualOverride: false,
+		})
+	}
+	return items, rows.Err()
+}
+
+func (r *NormalizedRepository) bookMetadataIdentifiers(ctx context.Context, bookID, editionID int64) ([]MetadataIdentifier, error) {
+	rows, err := r.queryContext(ctx, `SELECT provider, identifier, created_at
+		FROM identifiers
+		WHERE book_id = ? OR edition_id = ?
+		ORDER BY provider, identifier`, bookID, editionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]MetadataIdentifier, 0)
+	for rows.Next() {
+		var provider, identifier, createdAt string
+		if err := rows.Scan(&provider, &identifier, &createdAt); err != nil {
+			return nil, mapSQLError(err)
+		}
+		items = append(items, MetadataIdentifier{
+			Type:           provider,
+			Value:          identifier,
+			Source:         "library_record",
+			Confidence:     ConfidenceHigh,
+			UpdatedAt:      parseTime(createdAt),
+			ManualOverride: false,
+		})
+	}
+	return items, rows.Err()
+}
+
+func (r *NormalizedRepository) metadataScopeTarget(current *BookMetadata, field MetadataField) (MetadataScope, int64, error) {
+	scope := MetadataFieldScope(field)
+	switch scope {
+	case MetadataScopeBook:
+		return scope, current.BookID, nil
+	case MetadataScopeEdition:
+		if current.EffectiveEditionID == 0 {
+			return "", 0, ErrUnsupportedOperation
+		}
+		return scope, current.EffectiveEditionID, nil
+	default:
+		return "", 0, ErrUnsupportedOperation
+	}
+}
+
+func (r *NormalizedRepository) upsertMetadataValue(ctx context.Context, scopeType MetadataScope, scopeID int64, field MetadataField, value, source string, confidence Confidence, manualOverride bool) error {
+	_, err := r.exec(ctx).ExecContext(ctx, `INSERT INTO metadata_values
+		(scope_type, scope_id, field, value, source, confidence, manual_override, updated_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		ON CONFLICT(scope_type, scope_id, field)
+		DO UPDATE SET value = excluded.value, source = excluded.source, confidence = excluded.confidence,
+			manual_override = excluded.manual_override, updated_at = datetime('now')`,
+		string(scopeType), scopeID, string(field), value, source, string(confidence), boolInt(manualOverride))
+	return err
+}
+
+func (r *NormalizedRepository) upsertMetadataEvidence(ctx context.Context, scopeType MetadataScope, scopeID int64, field MetadataField, value, source string, confidence Confidence, manualOverride, selected bool) error {
+	_, err := r.exec(ctx).ExecContext(ctx, `INSERT INTO metadata_evidence
+		(scope_type, scope_id, field, value, source, confidence, manual_override, selected, updated_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		ON CONFLICT(scope_type, scope_id, field, value, source)
+		DO UPDATE SET confidence = excluded.confidence, manual_override = excluded.manual_override,
+			selected = excluded.selected, updated_at = datetime('now')`,
+		string(scopeType), scopeID, string(field), value, source, string(confidence), boolInt(manualOverride), boolInt(selected))
+	return err
+}
+
+func (r *NormalizedRepository) clearSelectedMetadataEvidence(ctx context.Context, scopeType MetadataScope, scopeID int64, field MetadataField) error {
+	_, err := r.exec(ctx).ExecContext(ctx, `UPDATE metadata_evidence SET selected = 0
+		WHERE scope_type = ? AND scope_id = ? AND field = ?`, string(scopeType), scopeID, string(field))
+	return err
+}
+
+func (r *NormalizedRepository) syncEffectiveMetadataField(ctx context.Context, scopeType MetadataScope, scopeID int64, field MetadataField, value string) error {
+	switch scopeType {
+	case MetadataScopeBook:
+		switch field {
+		case MetadataFieldTitle:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE books SET title = ?, sort_title = ?, updated_at = datetime('now') WHERE id = ?`, value, NormalizeKey(value), scopeID)
+			return err
+		case MetadataFieldDescription:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE books SET description = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		case MetadataFieldLanguage:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE books SET language = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		}
+	case MetadataScopeEdition:
+		switch field {
+		case MetadataFieldEditionTitle:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE editions SET title = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		case MetadataFieldSubtitle:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE editions SET subtitle = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		case MetadataFieldPublicationDate:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE editions SET publication_date = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		case MetadataFieldPublisher:
+			_, err := r.exec(ctx).ExecContext(ctx, `UPDATE editions SET publisher = ?, updated_at = datetime('now') WHERE id = ?`, value, scopeID)
+			return err
+		}
+	}
+	return nil
 }
 
 func scanBook(scanner interface{ Scan(...any) error }) (*Book, error) {

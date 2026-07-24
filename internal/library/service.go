@@ -53,6 +53,7 @@ type LibraryService struct {
 	editions     EditionRepository
 	files        FileRepository
 	metadata     MetadataRepository
+	metadataOps  *MetadataEngine
 	series       SeriesRepository
 	contributors ContributorRepository
 	identifiers  IdentifierRepository
@@ -73,6 +74,9 @@ func NewLibraryService(opts ServiceOptions) (*LibraryService, error) {
 	if opts.SeriesRepository == nil {
 		return nil, fmt.Errorf("series repository is required")
 	}
+	if opts.MetadataRepository == nil {
+		return nil, fmt.Errorf("metadata repository is required")
+	}
 	if opts.ContributorRepository == nil {
 		return nil, fmt.Errorf("contributor repository is required")
 	}
@@ -85,11 +89,16 @@ func NewLibraryService(opts ServiceOptions) (*LibraryService, error) {
 	if opts.TransactionManager == nil {
 		opts.TransactionManager = NoopTransactionManager{}
 	}
+	metadataOps, err := NewMetadataEngine(opts.MetadataRepository)
+	if err != nil {
+		return nil, err
+	}
 	return &LibraryService{
 		books:        opts.BookRepository,
 		editions:     opts.EditionRepository,
 		files:        opts.FileRepository,
 		metadata:     opts.MetadataRepository,
+		metadataOps:  metadataOps,
 		series:       opts.SeriesRepository,
 		contributors: opts.ContributorRepository,
 		identifiers:  opts.IdentifierRepository,
@@ -106,6 +115,7 @@ func NewLegacyLibraryService(database *db.DB) (*LibraryService, error) {
 	return NewLibraryService(ServiceOptions{
 		BookRepository:        repo,
 		FileRepository:        repo,
+		MetadataRepository:    repo,
 		SeriesRepository:      repo,
 		ContributorRepository: repo,
 		IdentifierRepository:  repo,
@@ -271,6 +281,38 @@ func (s *LibraryService) FindIdentifierMatches(ctx context.Context, identifier I
 
 func (s *LibraryService) SaveEmbeddedMetadata(ctx context.Context, fileID int64, metadata map[string]string) error {
 	return translateLibraryError(s.metadata.SaveEmbeddedMetadata(ctx, fileID, metadata))
+}
+
+func (s *LibraryService) GetBookMetadata(ctx context.Context, bookID int64) (*BookMetadata, error) {
+	if s.metadataOps == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	metadata, err := s.metadataOps.GetBookMetadata(ctx, bookID)
+	return metadata, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetBookProvenance(ctx context.Context, bookID int64) (*BookMetadataProvenance, error) {
+	if s.metadataOps == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	provenance, err := s.metadataOps.GetBookProvenance(ctx, bookID)
+	return provenance, translateLibraryError(err)
+}
+
+func (s *LibraryService) PatchBookMetadata(ctx context.Context, bookID int64, patch BookMetadataPatch) (*BookMetadata, error) {
+	if s.metadataOps == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	metadata, err := s.metadataOps.PatchBookMetadata(ctx, bookID, patch)
+	return metadata, translateLibraryError(err)
+}
+
+func (s *LibraryService) ApplyBookMetadataSource(ctx context.Context, update MetadataUpdate) (*BookMetadata, error) {
+	if s.metadataOps == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	metadata, err := s.metadataOps.ApplyBookMetadataSource(ctx, update)
+	return metadata, translateLibraryError(err)
 }
 
 func (s *LibraryService) DeleteBook(ctx context.Context, id int64) error {

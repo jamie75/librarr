@@ -288,6 +288,108 @@ func TestNormalizedRepositoryListBookReadModelsUsesBoundedQueries(t *testing.T) 
 	}
 }
 
+func TestNormalizedRepositoryBookMetadataPatchAndProvenance(t *testing.T) {
+	repo, cleanup := newNormalizedRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	book, err := repo.CreateBook(ctx, Book{Title: "Project Hail Mary", MediaType: MediaTypeEbook, Description: "Old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edition, err := repo.CreateEdition(ctx, Edition{BookID: book.ID, Title: "Project Hail Mary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := repo.PatchBookMetadata(ctx, book.ID, BookMetadataPatch{
+		Fields: map[MetadataField]string{
+			MetadataFieldTitle:       "Project Hail Mary (Edited)",
+			MetadataFieldSubtitle:    "A Novel",
+			MetadataFieldDescription: "A better description",
+			MetadataFieldGenres:      "Science Fiction, Space Opera, Science Fiction",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Fields[MetadataFieldTitle].Value != "Project Hail Mary (Edited)" || !updated.Fields[MetadataFieldTitle].ManualOverride {
+		t.Fatalf("title metadata = %+v", updated.Fields[MetadataFieldTitle])
+	}
+	if updated.Fields[MetadataFieldGenres].Value != "Science Fiction, Space Opera" {
+		t.Fatalf("genres metadata = %+v", updated.Fields[MetadataFieldGenres])
+	}
+
+	reloadedBook, err := repo.GetBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedBook.Title != "Project Hail Mary (Edited)" || reloadedBook.Description != "A better description" {
+		t.Fatalf("book sync = %+v", reloadedBook)
+	}
+	reloadedEdition, err := repo.GetEdition(ctx, edition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedEdition.Subtitle != "A Novel" {
+		t.Fatalf("edition sync = %+v", reloadedEdition)
+	}
+
+	provenance, err := repo.GetBookProvenance(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provenance.Fields[MetadataFieldTitle]) != 1 || !provenance.Fields[MetadataFieldTitle][0].Selected {
+		t.Fatalf("title provenance = %+v", provenance.Fields[MetadataFieldTitle])
+	}
+}
+
+func TestNormalizedRepositoryApplyBookMetadataSourcePreservesManualOverrides(t *testing.T) {
+	repo, cleanup := newNormalizedRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	book, err := repo.CreateBook(ctx, Book{Title: "The Martian", MediaType: MediaTypeEbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEdition(ctx, Edition{BookID: book.ID, Title: "The Martian"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PatchBookMetadata(ctx, book.ID, BookMetadataPatch{
+		Fields: map[MetadataField]string{MetadataFieldTitle: "The Martian (Manual)"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, err := repo.ApplyBookMetadataSource(ctx, MetadataUpdate{
+		BookID:     book.ID,
+		Source:     "OpenLibrary",
+		Confidence: ConfidenceHigh,
+		Fields: map[MetadataField]string{
+			MetadataFieldTitle:       "The Martian",
+			MetadataFieldDescription: "Mars survival story",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Fields[MetadataFieldTitle].Value != "The Martian (Manual)" {
+		t.Fatalf("manual override was replaced: %+v", metadata.Fields[MetadataFieldTitle])
+	}
+	if metadata.Fields[MetadataFieldDescription].Value != "Mars survival story" {
+		t.Fatalf("provider description not applied: %+v", metadata.Fields[MetadataFieldDescription])
+	}
+
+	provenance, err := repo.GetBookProvenance(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provenance.Fields[MetadataFieldTitle]) < 2 {
+		t.Fatalf("expected competing title evidence, got %+v", provenance.Fields[MetadataFieldTitle])
+	}
+}
+
 func newNormalizedRepo(t *testing.T) (*NormalizedRepository, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "normalized.db")+"?_busy_timeout=10000")
@@ -421,6 +523,33 @@ var normalizedTestSchema = []string{
 	)`,
 	`CREATE UNIQUE INDEX idx_identifiers_book_unique ON identifiers(book_id, provider, identifier) WHERE book_id IS NOT NULL`,
 	`CREATE UNIQUE INDEX idx_identifiers_edition_unique ON identifiers(edition_id, provider, identifier) WHERE edition_id IS NOT NULL`,
+	`CREATE TABLE metadata_values (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		scope_type TEXT NOT NULL,
+		scope_id INTEGER NOT NULL,
+		field TEXT NOT NULL,
+		value TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT '',
+		confidence TEXT NOT NULL DEFAULT 'none',
+		manual_override INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(scope_type, scope_id, field)
+	)`,
+	`CREATE TABLE metadata_evidence (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		scope_type TEXT NOT NULL,
+		scope_id INTEGER NOT NULL,
+		field TEXT NOT NULL,
+		value TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT '',
+		confidence TEXT NOT NULL DEFAULT 'none',
+		manual_override INTEGER NOT NULL DEFAULT 0,
+		selected INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(scope_type, scope_id, field, value, source)
+	)`,
 	`CREATE TABLE covers (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		book_id INTEGER,

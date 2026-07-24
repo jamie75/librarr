@@ -53,8 +53,10 @@ type ContributorRepository interface {
 
 type MetadataRepository interface {
 	SaveEmbeddedMetadata(context.Context, int64, map[string]string) error
-	SaveProviderMetadata(context.Context, int64, string, map[string]string) error
-	SaveUserOverride(context.Context, int64, string, string) error
+	GetBookMetadata(context.Context, int64) (*BookMetadata, error)
+	GetBookProvenance(context.Context, int64) (*BookMetadataProvenance, error)
+	PatchBookMetadata(context.Context, int64, BookMetadataPatch) (*BookMetadata, error)
+	ApplyBookMetadataSource(context.Context, MetadataUpdate) (*BookMetadata, error)
 }
 
 type CoverRepository interface {

@@ -17,6 +17,7 @@ var versionedMigrations = []schemaMigration{
 	{version: 1, name: "librarr_2_schema_foundation", run: migrateLibrarr2SchemaFoundation},
 	{version: 2, name: "librarr_2_file_metadata_json", run: migrateLibrarr2FileMetadataJSON},
 	{version: 3, name: "librarr_2_backfill_state", run: migrateLibrarr2BackfillState},
+	{version: 4, name: "librarr_2_metadata_provenance", run: migrateLibrarr2MetadataProvenance},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -279,6 +280,48 @@ func migrateLibrarr2FileMetadataJSON(tx *sql.Tx) error {
 	_, err = tx.Exec(`ALTER TABLE files ADD COLUMN embedded_metadata_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
 		return fmt.Errorf("add files.embedded_metadata_json: %w", err)
+	}
+	return nil
+}
+
+func migrateLibrarr2MetadataProvenance(tx *sql.Tx) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS metadata_values (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope_type TEXT NOT NULL,
+			scope_id INTEGER NOT NULL,
+			field TEXT NOT NULL,
+			value TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			confidence TEXT NOT NULL DEFAULT 'none',
+			manual_override INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(scope_type, scope_id, field)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_metadata_values_scope ON metadata_values(scope_type, scope_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_metadata_values_field ON metadata_values(field)`,
+		`CREATE TABLE IF NOT EXISTS metadata_evidence (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope_type TEXT NOT NULL,
+			scope_id INTEGER NOT NULL,
+			field TEXT NOT NULL,
+			value TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			confidence TEXT NOT NULL DEFAULT 'none',
+			manual_override INTEGER NOT NULL DEFAULT 0,
+			selected INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(scope_type, scope_id, field, value, source)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_metadata_evidence_scope ON metadata_evidence(scope_type, scope_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_metadata_evidence_field ON metadata_evidence(field)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
 	}
 	return nil
 }

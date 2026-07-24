@@ -20,6 +20,7 @@ func TestNewLibraryServiceRequiresRepositories(t *testing.T) {
 		BookRepository:        repo,
 		EditionRepository:     repo,
 		FileRepository:        repo,
+		MetadataRepository:    repo,
 		SeriesRepository:      repo,
 		ContributorRepository: repo,
 		IdentifierRepository:  repo,
@@ -90,6 +91,7 @@ func TestLibraryServiceUsesLegacyCompatibilityRepository(t *testing.T) {
 	svc, err := NewLibraryService(ServiceOptions{
 		BookRepository:        legacy,
 		FileRepository:        legacy,
+		MetadataRepository:    legacy,
 		SeriesRepository:      legacy,
 		ContributorRepository: legacy,
 		IdentifierRepository:  legacy,
@@ -168,6 +170,37 @@ func TestLibraryServiceEditionOperationsDelegate(t *testing.T) {
 	}
 }
 
+func TestLibraryServiceMetadataOperationsDelegate(t *testing.T) {
+	repo := &serviceTestRepo{
+		book: Book{ID: 42, Title: "Dune", MediaType: MediaTypeEbook},
+		metadata: &BookMetadata{
+			BookID: 42,
+			Fields: map[MetadataField]MetadataEntry{
+				MetadataFieldTitle: {Field: MetadataFieldTitle, Value: "Dune", Source: "manual", Confidence: ConfidenceExact, ManualOverride: true},
+			},
+		},
+	}
+	svc := mustService(t, repo)
+
+	metadata, err := svc.GetBookMetadata(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Fields[MetadataFieldTitle].Value != "Dune" {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+
+	updated, err := svc.PatchBookMetadata(context.Background(), 42, BookMetadataPatch{
+		Fields: map[MetadataField]string{MetadataFieldTitle: "Dune Messiah"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BookID != 42 {
+		t.Fatalf("updated metadata = %+v", updated)
+	}
+}
+
 func TestNewLibraryServiceNormalizedConstructionSupportsEditionOperations(t *testing.T) {
 	repo, cleanup := newNormalizedRepo(t)
 	defer cleanup()
@@ -210,6 +243,7 @@ func mustService(t *testing.T, repo *serviceTestRepo) *LibraryService {
 		BookRepository:        repo,
 		EditionRepository:     repo,
 		FileRepository:        repo,
+		MetadataRepository:    repo,
 		SeriesRepository:      repo,
 		ContributorRepository: repo,
 		IdentifierRepository:  repo,
@@ -225,6 +259,7 @@ type serviceTestRepo struct {
 	book           Book
 	edition        Edition
 	files          []BookFile
+	metadata       *BookMetadata
 	err            error
 	findBookCalls  int
 	getFilesBookID int64
@@ -557,4 +592,45 @@ func (r *serviceTestRepo) FindByIdentifier(context.Context, Identifier) ([]Ident
 		return nil, r.err
 	}
 	return []IdentifierMatch{{BookID: r.book.ID}}, nil
+}
+
+func (r *serviceTestRepo) SaveEmbeddedMetadata(context.Context, int64, map[string]string) error {
+	return r.err
+}
+
+func (r *serviceTestRepo) GetBookMetadata(context.Context, int64) (*BookMetadata, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.metadata != nil {
+		return r.metadata, nil
+	}
+	return &BookMetadata{BookID: r.book.ID, Fields: map[MetadataField]MetadataEntry{}}, nil
+}
+
+func (r *serviceTestRepo) GetBookProvenance(context.Context, int64) (*BookMetadataProvenance, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &BookMetadataProvenance{BookID: r.book.ID, Fields: map[MetadataField][]MetadataEvidence{}}, nil
+}
+
+func (r *serviceTestRepo) PatchBookMetadata(context.Context, int64, BookMetadataPatch) (*BookMetadata, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.metadata != nil {
+		return r.metadata, nil
+	}
+	return &BookMetadata{BookID: r.book.ID, Fields: map[MetadataField]MetadataEntry{}}, nil
+}
+
+func (r *serviceTestRepo) ApplyBookMetadataSource(context.Context, MetadataUpdate) (*BookMetadata, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.metadata != nil {
+		return r.metadata, nil
+	}
+	return &BookMetadata{BookID: r.book.ID, Fields: map[MetadataField]MetadataEntry{}}, nil
 }

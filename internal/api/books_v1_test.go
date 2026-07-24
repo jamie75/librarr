@@ -297,6 +297,86 @@ func TestV1BookCoverSuccessAndNotFound(t *testing.T) {
 	}
 }
 
+func TestV1BookMetadataAndProvenanceHandlers(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/metadata", ids.projectHailMaryID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookMetadata(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		BookID int64                             `json:"book_id"`
+		Fields map[string]v1MetadataFieldSummary `json:"fields"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.BookID != ids.projectHailMaryID || body.Fields["title"].Value != "Project Hail Mary" {
+		t.Fatalf("metadata body = %+v", body)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/books/%d/metadata", ids.projectHailMaryID), strings.NewReader(`{"fields":{"title":"Project Hail Mary (Edited)","genres":["Science Fiction","Space Opera"]}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr = httptest.NewRecorder()
+	s.handleV1BookMetadataPatch(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/provenance", ids.projectHailMaryID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr = httptest.NewRecorder()
+	s.handleV1BookProvenance(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provenance status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var provenance struct {
+		Fields map[string][]v1MetadataEvidenceSummary `json:"fields"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &provenance); err != nil {
+		t.Fatal(err)
+	}
+	if len(provenance.Fields["title"]) == 0 || !provenance.Fields["title"][0].Selected {
+		t.Fatalf("provenance = %+v", provenance)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d", ids.projectHailMaryID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr = httptest.NewRecorder()
+	s.handleV1Book(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var detail v1BookDetailResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Title != "Project Hail Mary (Edited)" {
+		t.Fatalf("detail title after patch = %+v", detail)
+	}
+}
+
+func TestV1BookMetadataRejectsInvalidPatchBody(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/books/%d/metadata", ids.projectHailMaryID), strings.NewReader(`{"fields":{"unknown":"value"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookMetadataPatch(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 type normalizedBookAPIIDs struct {
 	projectHailMaryID int64
 	darkMatterID      int64

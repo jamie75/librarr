@@ -402,12 +402,20 @@ func (r *LegacyLibraryRepository) SaveEmbeddedMetadata(context.Context, int64, m
 	return ErrReadOnlyRepository
 }
 
-func (r *LegacyLibraryRepository) SaveProviderMetadata(context.Context, int64, string, map[string]string) error {
-	return ErrReadOnlyRepository
+func (r *LegacyLibraryRepository) GetBookMetadata(context.Context, int64) (*BookMetadata, error) {
+	return nil, ErrUnsupportedOperation
 }
 
-func (r *LegacyLibraryRepository) SaveUserOverride(context.Context, int64, string, string) error {
-	return ErrReadOnlyRepository
+func (r *LegacyLibraryRepository) GetBookProvenance(context.Context, int64) (*BookMetadataProvenance, error) {
+	return nil, ErrUnsupportedOperation
+}
+
+func (r *LegacyLibraryRepository) PatchBookMetadata(context.Context, int64, BookMetadataPatch) (*BookMetadata, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) ApplyBookMetadataSource(context.Context, MetadataUpdate) (*BookMetadata, error) {
+	return nil, ErrReadOnlyRepository
 }
 
 func (r *LegacyLibraryRepository) findLegacyItem(ctx context.Context, match func(models.LibraryItem) bool) (models.LibraryItem, error) {

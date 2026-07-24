@@ -121,7 +121,7 @@ func CheckNormalizedReadiness(ctx context.Context, db *sql.DB) NormalizedReadine
 }
 
 func requiredSchemaMigrationsApplied(ctx context.Context, db *sql.DB, readiness *NormalizedReadiness) bool {
-	required := []int{1, 2, 3}
+	required := []int{1, 2, 3, 4}
 	for _, version := range required {
 		var found int
 		err := db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&found)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -118,6 +119,45 @@ type v1FileSummary struct {
 	ContentHash  string `json:"content_hash,omitempty"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+}
+
+type v1MetadataFieldSummary struct {
+	Value           string `json:"value"`
+	Source          string `json:"source"`
+	Confidence      string `json:"confidence"`
+	ConfidenceScore int    `json:"confidence_score"`
+	UpdatedAt       string `json:"updated_at"`
+	ManualOverride  bool   `json:"manual_override"`
+}
+
+type v1MetadataEvidenceSummary struct {
+	Value           string `json:"value"`
+	Source          string `json:"source"`
+	Confidence      string `json:"confidence"`
+	ConfidenceScore int    `json:"confidence_score"`
+	UpdatedAt       string `json:"updated_at"`
+	ManualOverride  bool   `json:"manual_override"`
+	Selected        bool   `json:"selected"`
+}
+
+type v1MetadataContributorSummary struct {
+	Name            string `json:"name"`
+	Role            string `json:"role"`
+	Source          string `json:"source"`
+	Confidence      string `json:"confidence"`
+	ConfidenceScore int    `json:"confidence_score"`
+	UpdatedAt       string `json:"updated_at"`
+	ManualOverride  bool   `json:"manual_override"`
+}
+
+type v1MetadataIdentifierSummary struct {
+	Type            string `json:"type"`
+	Value           string `json:"value"`
+	Source          string `json:"source"`
+	Confidence      string `json:"confidence"`
+	ConfidenceScore int    `json:"confidence_score"`
+	UpdatedAt       string `json:"updated_at"`
+	ManualOverride  bool   `json:"manual_override"`
 }
 
 func (s *Server) handleV1Books(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +404,81 @@ func (s *Server) handleV1BookCover(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "cover", info.ModTime(), file)
 }
 
+func (s *Server) handleV1BookMetadata(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureNormalizedReadAPI(w) {
+		return
+	}
+	bookID, ok := parseIDPathValue(w, r, "id", "Invalid book ID")
+	if !ok {
+		return
+	}
+	metadata, err := s.library().GetBookMetadata(r.Context(), bookID)
+	if errors.Is(err, library.ErrBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Book not found"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load book metadata", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, mapV1BookMetadata(metadata))
+}
+
+func (s *Server) handleV1BookMetadataPatch(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureNormalizedReadAPI(w) {
+		return
+	}
+	bookID, ok := parseIDPathValue(w, r, "id", "Invalid book ID")
+	if !ok {
+		return
+	}
+	var req struct {
+		Fields map[string]any `json:"fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid request body"})
+		return
+	}
+	patch, err := parseBookMetadataPatch(req.Fields)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	metadata, err := s.library().PatchBookMetadata(r.Context(), bookID, patch)
+	if errors.Is(err, library.ErrBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Book not found"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update book metadata", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"metadata": mapV1BookMetadata(metadata),
+	})
+}
+
+func (s *Server) handleV1BookProvenance(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureNormalizedReadAPI(w) {
+		return
+	}
+	bookID, ok := parseIDPathValue(w, r, "id", "Invalid book ID")
+	if !ok {
+		return
+	}
+	provenance, err := s.library().GetBookProvenance(r.Context(), bookID)
+	if errors.Is(err, library.ErrBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Book not found"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load book provenance", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, mapV1BookProvenance(provenance))
+}
+
 func (s *Server) ensureNormalizedReadAPI(w http.ResponseWriter) bool {
 	mode, err := s.cfg.NormalizedLibraryRepositoryMode()
 	if err != nil || mode != "normalized" {
@@ -592,4 +707,121 @@ func formatAPITime(value time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+func parseBookMetadataPatch(fields map[string]any) (library.BookMetadataPatch, error) {
+	patch := library.BookMetadataPatch{Fields: map[library.MetadataField]string{}}
+	for key, raw := range fields {
+		field := library.MetadataField(strings.TrimSpace(key))
+		if !field.Valid() {
+			return library.BookMetadataPatch{}, fmt.Errorf("unsupported metadata field %q", key)
+		}
+		switch typed := raw.(type) {
+		case string:
+			patch.Fields[field] = typed
+		case []any:
+			if field != library.MetadataFieldGenres {
+				return library.BookMetadataPatch{}, fmt.Errorf("metadata field %q must be a string", key)
+			}
+			values := make([]string, 0, len(typed))
+			for _, item := range typed {
+				str, ok := item.(string)
+				if !ok {
+					return library.BookMetadataPatch{}, fmt.Errorf("metadata field %q must contain strings", key)
+				}
+				values = append(values, strings.TrimSpace(str))
+			}
+			patch.Fields[field] = strings.Join(values, ", ")
+		default:
+			return library.BookMetadataPatch{}, fmt.Errorf("metadata field %q has an unsupported value", key)
+		}
+	}
+	return patch, nil
+}
+
+func mapV1BookMetadata(metadata *library.BookMetadata) map[string]any {
+	fields := make(map[string]v1MetadataFieldSummary, len(metadata.Fields))
+	for _, field := range library.BookMetadataFieldOrder() {
+		entry, ok := metadata.Fields[field]
+		if !ok {
+			continue
+		}
+		fields[string(field)] = v1MetadataFieldSummary{
+			Value:           entry.Value,
+			Source:          entry.Source,
+			Confidence:      string(entry.Confidence),
+			ConfidenceScore: library.MetadataConfidenceScore(entry.Confidence),
+			UpdatedAt:       formatAPITime(entry.UpdatedAt),
+			ManualOverride:  entry.ManualOverride,
+		}
+	}
+	return map[string]any{
+		"book_id":              metadata.BookID,
+		"effective_edition_id": metadata.EffectiveEditionID,
+		"fields":               fields,
+		"contributors":         mapV1MetadataContributors(metadata.Contributors),
+		"identifiers":          mapV1MetadataIdentifiers(metadata.Identifiers),
+	}
+}
+
+func mapV1BookProvenance(provenance *library.BookMetadataProvenance) map[string]any {
+	fields := make(map[string][]v1MetadataEvidenceSummary, len(provenance.Fields))
+	for _, field := range library.BookMetadataFieldOrder() {
+		entries, ok := provenance.Fields[field]
+		if !ok {
+			continue
+		}
+		mapped := make([]v1MetadataEvidenceSummary, 0, len(entries))
+		for _, entry := range entries {
+			mapped = append(mapped, v1MetadataEvidenceSummary{
+				Value:           entry.Value,
+				Source:          entry.Source,
+				Confidence:      string(entry.Confidence),
+				ConfidenceScore: library.MetadataConfidenceScore(entry.Confidence),
+				UpdatedAt:       formatAPITime(entry.UpdatedAt),
+				ManualOverride:  entry.ManualOverride,
+				Selected:        entry.Selected,
+			})
+		}
+		fields[string(field)] = mapped
+	}
+	return map[string]any{
+		"book_id":              provenance.BookID,
+		"effective_edition_id": provenance.EffectiveEditionID,
+		"fields":               fields,
+		"contributors":         mapV1MetadataContributors(provenance.Contributors),
+		"identifiers":          mapV1MetadataIdentifiers(provenance.Identifiers),
+	}
+}
+
+func mapV1MetadataContributors(items []library.MetadataContributor) []v1MetadataContributorSummary {
+	result := make([]v1MetadataContributorSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, v1MetadataContributorSummary{
+			Name:            item.Name,
+			Role:            string(item.Role),
+			Source:          item.Source,
+			Confidence:      string(item.Confidence),
+			ConfidenceScore: library.MetadataConfidenceScore(item.Confidence),
+			UpdatedAt:       formatAPITime(item.UpdatedAt),
+			ManualOverride:  item.ManualOverride,
+		})
+	}
+	return result
+}
+
+func mapV1MetadataIdentifiers(items []library.MetadataIdentifier) []v1MetadataIdentifierSummary {
+	result := make([]v1MetadataIdentifierSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, v1MetadataIdentifierSummary{
+			Type:            item.Type,
+			Value:           item.Value,
+			Source:          item.Source,
+			Confidence:      string(item.Confidence),
+			ConfidenceScore: library.MetadataConfidenceScore(item.Confidence),
+			UpdatedAt:       formatAPITime(item.UpdatedAt),
+			ManualOverride:  item.ManualOverride,
+		})
+	}
+	return result
 }
