@@ -269,11 +269,38 @@ func migrateLibrarr2SchemaFoundation(tx *sql.Tx) error {
 }
 
 func migrateLibrarr2FileMetadataJSON(tx *sql.Tx) error {
-	_, err := tx.Exec(`ALTER TABLE files ADD COLUMN embedded_metadata_json TEXT NOT NULL DEFAULT '{}'`)
+	exists, err := columnExistsInTx(tx, "files", "embedded_metadata_json")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = tx.Exec(`ALTER TABLE files ADD COLUMN embedded_metadata_json TEXT NOT NULL DEFAULT '{}'`)
 	if err != nil {
 		return fmt.Errorf("add files.embedded_metadata_json: %w", err)
 	}
 	return nil
+}
+
+func columnExistsInTx(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func migrateLibrarr2BackfillState(tx *sql.Tx) error {

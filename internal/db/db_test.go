@@ -137,6 +137,12 @@ func TestSchemaFoundation_FreshDatabaseCreatesLegacyAndNormalizedTables(t *testi
 	if !indexExists(t, d, "idx_files_file_path_unique") {
 		t.Fatal("expected file path unique index")
 	}
+	if !indexExists(t, d, "idx_backfill_runs_status") {
+		t.Fatal("expected backfill runs status index")
+	}
+	if !indexExists(t, d, "idx_backfill_state_status") {
+		t.Fatal("expected backfill state status index")
+	}
 	if !columnExists(t, d, "files", "embedded_metadata_json") {
 		t.Fatal("expected files.embedded_metadata_json column")
 	}
