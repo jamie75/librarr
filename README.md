@@ -20,11 +20,13 @@ Librarr is evolving into its own book-centric library platform, focused on:
 - Media Assistant integration
 - long-term API stability
 
-Existing users continue using the proven legacy storage model while the Librarr 2.0 migration engine is completed.
+Existing users continue using the proven legacy storage model while the Librarr 2.0 migration, validation, and repository-switch process is completed.
 
 Today, Librarr remains a self-hosted book, audiobook, and manga search and download manager. It searches configured indexers in parallel, scores results by confidence, and auto-imports into your Calibre, Audiobookshelf, Kavita, or Komga library. Single ~17MB Go binary, no runtime dependencies — **~14MB RSS idle** in a real homelab[^1], typically 10-20× lower than the .NET-based *arr apps.
 
 Originally inspired by Readarr.
+
+> **Release note:** Librarr 2.0 development is taking place in this repository. Until the 2.0 release pipeline is established, published 1.x release artifacts, containers, and some badges may continue to reference the upstream project.
 
 [^1]: Measured on v1.1.0 in an LXC on Debian 12 (Mar 2026). Reference: Sonarr 4.x ≈ 240MB, Radarr 5.x ≈ 220MB on the same host.
 
@@ -57,7 +59,7 @@ Originally inspired by Readarr.
 - ✅ Domain Layer
 - ✅ Repository Interfaces
 - ✅ LibraryService
-- ✅ Repository Cutover
+- ✅ Service and Repository Integration
 - ✅ Normalized Repository
 - ✅ Migration Design
 - ✅ Backfill Engine
