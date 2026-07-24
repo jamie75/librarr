@@ -35,6 +35,7 @@ type LegacyCompatibilityRepository interface {
 
 type ServiceOptions struct {
 	BookRepository        BookRepository
+	EditionRepository     EditionRepository
 	FileRepository        FileRepository
 	MetadataRepository    MetadataRepository
 	SeriesRepository      SeriesRepository
@@ -49,6 +50,7 @@ type ServiceOptions struct {
 
 type LibraryService struct {
 	books        BookRepository
+	editions     EditionRepository
 	files        FileRepository
 	metadata     MetadataRepository
 	series       SeriesRepository
@@ -85,6 +87,7 @@ func NewLibraryService(opts ServiceOptions) (*LibraryService, error) {
 	}
 	return &LibraryService{
 		books:        opts.BookRepository,
+		editions:     opts.EditionRepository,
 		files:        opts.FileRepository,
 		metadata:     opts.MetadataRepository,
 		series:       opts.SeriesRepository,
@@ -116,9 +119,30 @@ func (s *LibraryService) FindBook(ctx context.Context, query BookQuery) (*Book, 
 	return book, translateLibraryError(err)
 }
 
+func (s *LibraryService) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
+	if s.transactions == nil {
+		return NoopTransactionManager{}.WithinTransaction(ctx, fn)
+	}
+	return s.transactions.WithinTransaction(ctx, fn)
+}
+
+func (s *LibraryService) CreateBook(ctx context.Context, book Book) (*Book, error) {
+	created, err := s.books.CreateBook(ctx, book)
+	return created, translateLibraryError(err)
+}
+
+func (s *LibraryService) SaveBook(ctx context.Context, book Book) (*Book, error) {
+	saved, err := s.books.SaveBook(ctx, book)
+	return saved, translateLibraryError(err)
+}
+
 func (s *LibraryService) FindBookByID(ctx context.Context, id int64) (*Book, error) {
 	book, err := s.books.GetBook(ctx, id)
 	return book, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetBook(ctx context.Context, id int64) (*Book, error) {
+	return s.FindBookByID(ctx, id)
 }
 
 func (s *LibraryService) FindBookByIdentifier(ctx context.Context, identifier Identifier) (*Book, error) {
@@ -149,9 +173,84 @@ func (s *LibraryService) GetBookFiles(ctx context.Context, bookID int64) ([]Book
 	return files, translateLibraryError(err)
 }
 
+func (s *LibraryService) FindFileByPath(ctx context.Context, path string) (*BookFile, error) {
+	file, err := s.files.FindFileByPath(ctx, path)
+	return file, translateLibraryError(err)
+}
+
+func (s *LibraryService) FindFileBySourceID(ctx context.Context, sourceID string) (*BookFile, error) {
+	file, err := s.files.FindFileBySourceID(ctx, sourceID)
+	return file, translateLibraryError(err)
+}
+
+func (s *LibraryService) FindFilesByContentHash(ctx context.Context, hash string) ([]BookFile, error) {
+	files, err := s.files.FindFilesByContentHash(ctx, hash)
+	return files, translateLibraryError(err)
+}
+
+func (s *LibraryService) CreateEdition(ctx context.Context, edition Edition) (*Edition, error) {
+	if s.editions == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	created, err := s.editions.CreateEdition(ctx, edition)
+	return created, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetEdition(ctx context.Context, id int64) (*Edition, error) {
+	if s.editions == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	edition, err := s.editions.GetEdition(ctx, id)
+	return edition, translateLibraryError(err)
+}
+
+func (s *LibraryService) FindEdition(ctx context.Context, bookID int64, title string) (*Edition, error) {
+	if s.editions == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	edition, err := s.editions.FindEdition(ctx, bookID, title)
+	return edition, translateLibraryError(err)
+}
+
+func (s *LibraryService) ListBookEditions(ctx context.Context, bookID int64) ([]Edition, error) {
+	if s.editions == nil {
+		return nil, ErrUnsupportedOperation
+	}
+	editions, err := s.editions.ListBookEditions(ctx, bookID)
+	return editions, translateLibraryError(err)
+}
+
 func (s *LibraryService) GetSeries(ctx context.Context, name string) (*Series, error) {
 	series, err := s.series.GetSeries(ctx, name)
 	return series, translateLibraryError(err)
+}
+
+func (s *LibraryService) MergeContributor(ctx context.Context, contributor Contributor) (*Contributor, error) {
+	merged, err := s.contributors.MergeContributor(ctx, contributor)
+	return merged, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetEditionContributors(ctx context.Context, editionID int64) ([]Contributor, error) {
+	contributors, err := s.contributors.GetEditionContributors(ctx, editionID)
+	return contributors, translateLibraryError(err)
+}
+
+func (s *LibraryService) AttachContributor(ctx context.Context, editionID int64, contributor Contributor) error {
+	return translateLibraryError(s.contributors.AttachContributor(ctx, editionID, contributor))
+}
+
+func (s *LibraryService) AddIdentifier(ctx context.Context, identifier Identifier) (*Identifier, error) {
+	added, err := s.identifiers.AddIdentifier(ctx, identifier)
+	return added, translateLibraryError(err)
+}
+
+func (s *LibraryService) FindIdentifierMatches(ctx context.Context, identifier Identifier) ([]IdentifierMatch, error) {
+	matches, err := s.identifiers.FindByIdentifier(ctx, identifier)
+	return matches, translateLibraryError(err)
+}
+
+func (s *LibraryService) SaveEmbeddedMetadata(ctx context.Context, fileID int64, metadata map[string]string) error {
+	return translateLibraryError(s.metadata.SaveEmbeddedMetadata(ctx, fileID, metadata))
 }
 
 func (s *LibraryService) DeleteBook(ctx context.Context, id int64) error {

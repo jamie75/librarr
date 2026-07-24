@@ -3,8 +3,10 @@ package library
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	librarrdb "github.com/JeremiahM37/librarr/internal/db"
 	"github.com/JeremiahM37/librarr/internal/models"
 )
 
@@ -16,6 +18,7 @@ func TestNewLibraryServiceRequiresRepositories(t *testing.T) {
 	repo := &serviceTestRepo{}
 	svc, err := NewLibraryService(ServiceOptions{
 		BookRepository:        repo,
+		EditionRepository:     repo,
 		FileRepository:        repo,
 		SeriesRepository:      repo,
 		ContributorRepository: repo,
@@ -114,10 +117,98 @@ func TestLibraryServiceUsesLegacyCompatibilityRepository(t *testing.T) {
 	}
 }
 
+func TestNewLegacyLibraryServiceKeepsEditionOperationsExplicitlyUnsupported(t *testing.T) {
+	database, err := librarrdb.New(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	svc, err := NewLegacyLibraryService(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetEdition(context.Background(), 1); !errors.Is(err, ErrUnsupportedOperation) {
+		t.Fatalf("GetEdition error = %v", err)
+	}
+	if _, err := svc.CreateEdition(context.Background(), Edition{BookID: 1, Title: "Legacy Edition"}); !errors.Is(err, ErrUnsupportedOperation) {
+		t.Fatalf("CreateEdition error = %v", err)
+	}
+}
+
+func TestLibraryServiceEditionOperationsDelegate(t *testing.T) {
+	repo := &serviceTestRepo{
+		book:    Book{ID: 42, Title: "Dune", MediaType: MediaTypeEbook},
+		edition: Edition{ID: 10, BookID: 42, Title: "Dune"},
+	}
+	svc := mustService(t, repo)
+
+	created, err := svc.CreateEdition(context.Background(), Edition{BookID: 42, Title: "Dune"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != 10 {
+		t.Fatalf("created edition = %+v", created)
+	}
+
+	found, err := svc.FindEdition(context.Background(), 42, "Dune")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.ID != 10 {
+		t.Fatalf("found edition = %+v", found)
+	}
+
+	listed, err := svc.ListBookEditions(context.Background(), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != 10 {
+		t.Fatalf("listed editions = %+v", listed)
+	}
+}
+
+func TestNewLibraryServiceNormalizedConstructionSupportsEditionOperations(t *testing.T) {
+	repo, cleanup := newNormalizedRepo(t)
+	defer cleanup()
+
+	svc, err := NewLibraryService(ServiceOptions{
+		BookRepository:        repo,
+		EditionRepository:     repo,
+		FileRepository:        repo,
+		MetadataRepository:    repo,
+		SeriesRepository:      repo,
+		ContributorRepository: repo,
+		IdentifierRepository:  repo,
+		CoverRepository:       repo,
+		TransactionManager:    repo,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	book, err := svc.CreateBook(context.Background(), Book{Title: "Normalized", MediaType: MediaTypeEbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edition, err := svc.CreateEdition(context.Background(), Edition{BookID: book.ID, Title: "Normalized"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := svc.GetEdition(context.Background(), edition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.ID != edition.ID {
+		t.Fatalf("found edition = %+v, want %+v", found, edition)
+	}
+}
+
 func mustService(t *testing.T, repo *serviceTestRepo) *LibraryService {
 	t.Helper()
 	svc, err := NewLibraryService(ServiceOptions{
 		BookRepository:        repo,
+		EditionRepository:     repo,
 		FileRepository:        repo,
 		SeriesRepository:      repo,
 		ContributorRepository: repo,
@@ -132,6 +223,7 @@ func mustService(t *testing.T, repo *serviceTestRepo) *LibraryService {
 
 type serviceTestRepo struct {
 	book           Book
+	edition        Edition
 	files          []BookFile
 	err            error
 	findBookCalls  int
@@ -207,6 +299,57 @@ func (r *serviceTestRepo) SaveBook(context.Context, Book) (*Book, error) {
 		return nil, r.err
 	}
 	return &r.book, nil
+}
+
+func (r *serviceTestRepo) CreateEdition(context.Context, Edition) (*Edition, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.edition.ID == 0 {
+		r.edition = Edition{ID: 10, BookID: r.book.ID, Title: r.book.Title}
+	}
+	return &r.edition, nil
+}
+
+func (r *serviceTestRepo) GetEdition(context.Context, int64) (*Edition, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.edition.ID == 0 {
+		r.edition = Edition{ID: 10, BookID: r.book.ID, Title: r.book.Title}
+	}
+	return &r.edition, nil
+}
+
+func (r *serviceTestRepo) FindEdition(context.Context, int64, string) (*Edition, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.edition.ID == 0 {
+		r.edition = Edition{ID: 10, BookID: r.book.ID, Title: r.book.Title}
+	}
+	return &r.edition, nil
+}
+
+func (r *serviceTestRepo) ListBookEditions(context.Context, int64) ([]Edition, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.edition.ID == 0 {
+		r.edition = Edition{ID: 10, BookID: r.book.ID, Title: r.book.Title}
+	}
+	return []Edition{r.edition}, nil
+}
+
+func (r *serviceTestRepo) UpdateEdition(context.Context, Edition) (*Edition, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &r.edition, nil
+}
+
+func (r *serviceTestRepo) DeleteEdition(context.Context, int64) error {
+	return r.err
 }
 
 func (r *serviceTestRepo) DeleteBook(context.Context, int64) error {

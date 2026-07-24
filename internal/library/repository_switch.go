@@ -225,8 +225,13 @@ func logNormalizedReadiness(readiness NormalizedReadiness) {
 }
 
 func serviceForRepository(repo LibraryRepository, compat LegacyCompatibilityRepository) (*LibraryService, error) {
+	var editions EditionRepository
+	if editionRepo, ok := repo.(EditionRepository); ok {
+		editions = editionRepo
+	}
 	return NewLibraryService(ServiceOptions{
 		BookRepository:        repo,
+		EditionRepository:     editions,
 		FileRepository:        repo,
 		MetadataRepository:    repo,
 		SeriesRepository:      repo,
