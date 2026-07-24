@@ -10,6 +10,9 @@ import (
 type PlanningContext struct {
 	Source   library.ImportSource `json:"source"`
 	RootPath string               `json:"root_path"`
+	OriginalPath string           `json:"original_path,omitempty"`
+	TitleHint string              `json:"title_hint,omitempty"`
+	AuthorHint string             `json:"author_hint,omitempty"`
 	Now      time.Time            `json:"now,omitempty"`
 }
 
@@ -35,6 +38,9 @@ type CandidateMetadata struct {
 type ImportCandidate struct {
 	Path         string             `json:"path"`
 	RelativePath string             `json:"relative_path"`
+	OriginalPath string             `json:"original_path,omitempty"`
+	TitleHint    string             `json:"title_hint,omitempty"`
+	AuthorHint   string             `json:"author_hint,omitempty"`
 	MediaType    library.MediaType  `json:"media_type"`
 	Format       string             `json:"format"`
 	Size         int64              `json:"size"`

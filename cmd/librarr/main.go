@@ -17,6 +17,7 @@ import (
 	"github.com/JeremiahM37/librarr/internal/db"
 	"github.com/JeremiahM37/librarr/internal/download"
 	"github.com/JeremiahM37/librarr/internal/library"
+	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
 	"github.com/JeremiahM37/librarr/internal/netutil"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/search"
@@ -120,13 +121,19 @@ func main() {
 		slog.Info("ebook metadata backfill complete", "updated", updated)
 	}
 	targets := organize.NewLibraryTargets(cfg)
-	downloadMgr := download.NewManager(cfg, database, torrentClient, sab, directDL, organizer, targets, health)
 
 	librarySelection, err := library.NewConfiguredLibraryService(ctx, cfg, database)
 	if err != nil {
 		slog.Error("failed to configure library repository", "error", err)
 		os.Exit(1)
 	}
+	importSelection, err := libraryimport.NewConfiguredImportEngine(cfg, database, librarySelection.LibraryService, librarySelection.Mode)
+	if err != nil {
+		slog.Error("failed to configure import engine", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("import engine selected", "mode", importSelection.Mode)
+	downloadMgr := download.NewManagerWithImportEngine(cfg, database, torrentClient, sab, directDL, organizer, targets, health, librarySelection.LibraryService, importSelection.Engine, importSelection.Mode)
 
 	// Try to connect to qBittorrent on startup (Transmission has no persistent
 	// login — it handshakes a session id lazily on first request).
@@ -137,7 +144,7 @@ func main() {
 	}
 
 	// Start torrent completion watcher.
-	watcher := download.NewWatcher(cfg, database, torrentClient, organizer, targets, health)
+	watcher := download.NewWatcherWithImportEngine(cfg, database, torrentClient, organizer, targets, health, importSelection.Engine)
 	go watcher.Start(ctx)
 
 	// Start audiobook folder scanner (Feature 21).
@@ -145,7 +152,7 @@ func main() {
 	go scanner.Start(ctx)
 
 	// Create HTTP server (also initializes webhook sender, scheduler, series detector).
-	server := api.NewServerWithLibraryService(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySelection.LibraryService)
+	server := api.NewServerWithServices(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySelection.LibraryService, importSelection.Engine)
 
 	// Start scheduled search goroutine.
 	go server.StartScheduler(ctx)

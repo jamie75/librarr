@@ -87,6 +87,16 @@ func TestLoad_Defaults(t *testing.T) {
 			t.Errorf("expected legacy repository mode, got %q", mode)
 		}
 	})
+
+	t.Run("import engine defaults to legacy", func(t *testing.T) {
+		mode, err := cfg.ImportEngineMode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode != "legacy" {
+			t.Errorf("expected legacy import engine, got %q", mode)
+		}
+	})
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
@@ -98,11 +108,12 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	os.Setenv("MIN_TORRENT_SIZE_BYTES", "50000")
 	os.Setenv("OIDC_PROXY_HEADERS_ENABLED", "true")
 	os.Setenv("LIBRARR_LIBRARY_REPOSITORY_MODE", "normalized")
+	os.Setenv("LIBRARR_IMPORT_ENGINE", "v2")
 	defer func() {
 		for _, key := range []string{
 			"LIBRARR_PORT", "LIBRARR_DB_PATH", "QB_URL",
 			"FILE_ORG_ENABLED", "ANNAS_ARCHIVE_DOMAIN", "MIN_TORRENT_SIZE_BYTES",
-			"OIDC_PROXY_HEADERS_ENABLED", "LIBRARR_LIBRARY_REPOSITORY_MODE",
+			"OIDC_PROXY_HEADERS_ENABLED", "LIBRARR_LIBRARY_REPOSITORY_MODE", "LIBRARR_IMPORT_ENGINE",
 		} {
 			os.Unsetenv(key)
 		}
@@ -134,12 +145,22 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if cfg.LibraryRepositoryMode != "normalized" {
 		t.Errorf("expected normalized repository mode, got %q", cfg.LibraryRepositoryMode)
 	}
+	if cfg.ImportEngine != "v2" {
+		t.Errorf("expected v2 import engine, got %q", cfg.ImportEngine)
+	}
 }
 
 func TestNormalizedLibraryRepositoryModeRejectsInvalidValue(t *testing.T) {
 	cfg := &Config{LibraryRepositoryMode: "weird"}
 	if _, err := cfg.NormalizedLibraryRepositoryMode(); err == nil {
 		t.Fatal("expected invalid repository mode error")
+	}
+}
+
+func TestImportEngineModeRejectsInvalidValue(t *testing.T) {
+	cfg := &Config{ImportEngine: "weird"}
+	if _, err := cfg.ImportEngineMode(); err == nil {
+		t.Fatal("expected invalid import engine error")
 	}
 }
 

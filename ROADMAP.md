@@ -85,11 +85,13 @@ Replace the file-centric library core with a normalized domain model while prese
 
 ### 2.0.5 Repository and import cutover
 
-- [ ] Add repositories for books, editions, contributors, series, and files.
-- [ ] Update imports to resolve or create logical domain records.
-- [ ] Preserve file-level path/hash duplicate prevention.
-- [ ] Make repeated completed-download events idempotent.
-- [ ] Coordinate filesystem and database failure recovery.
+- [x] Add repositories for books, editions, contributors, series, and files.
+- [x] Build the planner/executor import path behind a feature flag.
+- [x] Update completed torrent imports, direct downloads, and manual import to support the normalized engine.
+- [x] Preserve file-level path/hash duplicate prevention.
+- [x] Make repeated completed-download events idempotent.
+- [x] Coordinate filesystem and database failure recovery.
+- [x] Add rollback-by-configuration through `LIBRARR_IMPORT_ENGINE=legacy`.
 - [ ] Switch new writes to the normalized model.
 
 ### 2.0.6 Compatibility API

@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/JeremiahM37/librarr/internal/library"
+	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
 )
 
 func TestRecordTorrentItemIsIdempotentAcrossWatcherPolls(t *testing.T) {
@@ -437,4 +440,57 @@ func TestNormalizeTorrentPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWatcherUsesConfiguredImportEngine(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(filepath.Join(dir, "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	sourceFile := filepath.Join(dir, "source.epub")
+	destFile := filepath.Join(dir, "organized.epub")
+	if err := os.WriteFile(sourceFile, []byte("book"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destFile, []byte("book"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := &watcherSpyImportEngine{result: &libraryimport.EngineResult{InsertedCount: 1}}
+	w := &Watcher{db: database, importer: engine}
+
+	inserted, err := w.importTorrentItem(context.Background(), TorrentInfo{Name: "Torrent Book", Hash: "torrent-1"}, library.MediaTypeEbook, sourceFile, destFile, "Torrent Book", "Jane Doe", "Torrent Book", "Jane Doe", "epub", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("expected inserted result")
+	}
+	if len(engine.requests) != 1 {
+		t.Fatalf("engine requests = %d, want 1", len(engine.requests))
+	}
+	got := engine.requests[0]
+	if got.Source.Name != "torrent" || got.Source.SourceID != "torrent-1" || got.Source.MediaType != library.MediaTypeEbook {
+		t.Fatalf("request source = %+v", got.Source)
+	}
+	if got.RootPath != destFile || got.OriginalPath != sourceFile {
+		t.Fatalf("request paths = %+v", got)
+	}
+}
+
+type watcherSpyImportEngine struct {
+	requests []libraryimport.ImportRequest
+	result   *libraryimport.EngineResult
+	err      error
+}
+
+func (s *watcherSpyImportEngine) Import(_ context.Context, request libraryimport.ImportRequest) (*libraryimport.EngineResult, error) {
+	s.requests = append(s.requests, request)
+	if s.result == nil {
+		s.result = &libraryimport.EngineResult{InsertedCount: 1}
+	}
+	return s.result, s.err
 }

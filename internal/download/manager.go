@@ -3,15 +3,20 @@
 package download
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/JeremiahM37/librarr/internal/library"
+	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
 	"github.com/JeremiahM37/librarr/internal/models"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/search"
@@ -28,6 +33,9 @@ type Manager struct {
 	organizer     *organize.Organizer
 	targets       *organize.LibraryTargets
 	health        *search.HealthTracker
+	library       *library.LibraryService
+	importEngine  libraryimport.ImportEngine
+	importMode    string
 	webhookSender *webhook.Sender
 
 	mu   sync.Mutex
@@ -41,16 +49,23 @@ func (m *Manager) SetWebhookSender(ws *webhook.Sender) {
 
 // NewManager creates a download manager.
 func NewManager(cfg *config.Config, database *db.DB, torrent TorrentClient, sab *SABnzbdClient, direct *DirectDownloader, organizer *organize.Organizer, targets *organize.LibraryTargets, health *search.HealthTracker) *Manager {
+	return NewManagerWithImportEngine(cfg, database, torrent, sab, direct, organizer, targets, health, nil, nil, "")
+}
+
+func NewManagerWithImportEngine(cfg *config.Config, database *db.DB, torrent TorrentClient, sab *SABnzbdClient, direct *DirectDownloader, organizer *organize.Organizer, targets *organize.LibraryTargets, health *search.HealthTracker, librarySvc *library.LibraryService, importEngine libraryimport.ImportEngine, importMode string) *Manager {
 	m := &Manager{
-		cfg:       cfg,
-		db:        database,
-		torrent:   torrent,
-		sab:       sab,
-		direct:    direct,
-		organizer: organizer,
-		targets:   targets,
-		health:    health,
-		jobs:      make(map[string]*models.DownloadJob),
+		cfg:          cfg,
+		db:           database,
+		torrent:      torrent,
+		sab:          sab,
+		direct:       direct,
+		organizer:    organizer,
+		targets:      targets,
+		health:       health,
+		library:      librarySvc,
+		importEngine: importEngine,
+		importMode:   importMode,
+		jobs:         make(map[string]*models.DownloadJob),
 	}
 
 	// Load existing jobs from database.
@@ -308,21 +323,25 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		destPath = filePath
 	}
 
-	// Record in library.
-	_, _ = m.db.AddItem(&models.LibraryItem{
-		Title:        job.Title,
-		Author:       author,
-		FilePath:     destPath,
+	result, err := m.importIntoLibrary(context.Background(), libraryimport.ImportRequest{
+		Source: library.ImportSource{
+			Name:      "annas",
+			SourceID:  downloadedMD5,
+			MediaType: library.MediaTypeEbook,
+		},
+		RootPath:     destPath,
 		OriginalPath: filePath,
-		FileSize:     fileSize,
-		FileFormat:   "epub",
-		MediaType:    "ebook",
-		Source:       "annas",
-		SourceID:     downloadedMD5,
+		TitleHint:    job.Title,
+		AuthorHint:   author,
 	})
+	if err != nil {
+		slog.Error("library import failed", "title", job.Title, "source", "annas", "error", err)
+		m.updateJob(job, "error", "Library import failed", err.Error())
+		return
+	}
 
 	// Trigger library imports.
-	if m.targets != nil {
+	if m.targets != nil && result.InsertedCount > 0 {
 		m.targets.ImportEbook(destPath, job.Title, author)
 	}
 
@@ -396,20 +415,25 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		destPath = filePath
 	}
 
-	_, _ = m.db.AddItem(&models.LibraryItem{
-		Title:        job.Title,
-		Author:       author,
-		FilePath:     destPath,
+	result, err := m.importIntoLibrary(context.Background(), libraryimport.ImportRequest{
+		Source: library.ImportSource{
+			Name:      job.Source,
+			SourceID:  job.SourceID,
+			MediaType: library.MediaTypeEbook,
+		},
+		RootPath:     destPath,
 		OriginalPath: filePath,
-		FileSize:     fileSize,
-		FileFormat:   "epub",
-		MediaType:    "ebook",
-		Source:       job.Source,
-		SourceID:     job.SourceID,
+		TitleHint:    job.Title,
+		AuthorHint:   author,
 	})
+	if err != nil {
+		slog.Error("library import failed", "title", job.Title, "source", job.Source, "error", err)
+		m.updateJob(job, "error", "Library import failed", err.Error())
+		return
+	}
 
 	// Trigger library imports.
-	if m.targets != nil {
+	if m.targets != nil && result.InsertedCount > 0 {
 		m.targets.ImportEbook(destPath, job.Title, author)
 	}
 
@@ -572,5 +596,63 @@ func (m *Manager) ClearFinished() (int, int, error) {
 
 // HasSourceID checks if a source ID already exists in the library.
 func (m *Manager) HasSourceID(sourceID string) bool {
+	if strings.TrimSpace(sourceID) == "" {
+		return false
+	}
+	if m.importMode == libraryimport.EngineModeV2 && m.library != nil {
+		_, err := m.library.FindFileBySourceID(context.Background(), sourceID)
+		return err == nil
+	}
 	return m.db.HasSourceID(sourceID)
+}
+
+func (m *Manager) importIntoLibrary(ctx context.Context, request libraryimport.ImportRequest) (*libraryimport.EngineResult, error) {
+	if m.importEngine != nil {
+		return m.importEngine.Import(ctx, request)
+	}
+
+	info, _ := os.Stat(request.RootPath)
+	fileSize := int64(0)
+	if info != nil {
+		fileSize = info.Size()
+	}
+	item := &models.LibraryItem{
+		Title:        firstValue(strings.TrimSpace(request.TitleHint), defaultTitleFromPath(request.RootPath)),
+		Author:       strings.TrimSpace(request.AuthorHint),
+		FilePath:     request.RootPath,
+		OriginalPath: firstValue(strings.TrimSpace(request.OriginalPath), request.RootPath),
+		FileSize:     fileSize,
+		FileFormat:   strings.TrimPrefix(strings.ToLower(filepath.Ext(request.RootPath)), "."),
+		MediaType:    string(request.Source.MediaType),
+		Source:       request.Source.Name,
+		SourceID:     request.Source.SourceID,
+	}
+	outcome, err := m.db.AddItemWithOutcome(item)
+	if err != nil {
+		return nil, err
+	}
+	result := &libraryimport.EngineResult{LegacyID: outcome.ID}
+	if outcome.Inserted {
+		result.InsertedCount = 1
+	} else {
+		result.DuplicateCount = 1
+	}
+	return result, nil
+}
+
+func defaultTitleFromPath(path string) string {
+	base := filepath.Base(path)
+	if ext := filepath.Ext(base); ext != "" {
+		return strings.TrimSuffix(base, ext)
+	}
+	return base
+}
+
+func firstValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

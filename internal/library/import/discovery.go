@@ -35,21 +35,25 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 	}
 
 	if info.IsDir() && mediaTypeForContext(pc) == library.MediaTypeAudiobook {
-		candidate, err := newDirectoryCandidate(root, filepath.Base(root), pc.Source.MediaType)
+		candidate, err := newDirectoryCandidate(root, filepath.Base(root), pc.Source.MediaType, firstNonEmptyString(pc.OriginalPath, root))
 		if err != nil {
 			return nil, err
 		}
+		candidate.TitleHint = pc.TitleHint
+		candidate.AuthorHint = pc.AuthorHint
 		return []ImportCandidate{candidate}, nil
 	}
 
 	if !info.IsDir() {
-		candidate, ok, err := newFileCandidate(root, filepath.Base(root), pc.Source.MediaType)
+		candidate, ok, err := newFileCandidate(root, filepath.Base(root), pc.Source.MediaType, firstNonEmptyString(pc.OriginalPath, root))
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", library.ErrUnsupportedFormat, root)
 		}
+		candidate.TitleHint = pc.TitleHint
+		candidate.AuthorHint = pc.AuthorHint
 		return []ImportCandidate{candidate}, nil
 	}
 
@@ -65,13 +69,15 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 		if err != nil {
 			return err
 		}
-		candidate, ok, err := newFileCandidate(path, rel, pc.Source.MediaType)
+		candidate, ok, err := newFileCandidate(path, rel, pc.Source.MediaType, firstNonEmptyString(pc.OriginalPath, path))
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return nil
 		}
+		candidate.TitleHint = pc.TitleHint
+		candidate.AuthorHint = pc.AuthorHint
 		candidates = append(candidates, candidate)
 		return nil
 	})
@@ -81,7 +87,7 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 	return candidates, nil
 }
 
-func newFileCandidate(path, relative string, hinted library.MediaType) (ImportCandidate, bool, error) {
+func newFileCandidate(path, relative string, hinted library.MediaType, originalPath string) (ImportCandidate, bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return ImportCandidate{}, false, err
@@ -101,6 +107,7 @@ func newFileCandidate(path, relative string, hinted library.MediaType) (ImportCa
 	return ImportCandidate{
 		Path:         path,
 		RelativePath: relative,
+		OriginalPath: originalPath,
 		MediaType:    normalizeMediaType(mediaType, ext),
 		Format:       strings.TrimPrefix(ext, "."),
 		Size:         info.Size(),
@@ -115,7 +122,7 @@ func newFileCandidate(path, relative string, hinted library.MediaType) (ImportCa
 	}, true, nil
 }
 
-func newDirectoryCandidate(path, relative string, hinted library.MediaType) (ImportCandidate, error) {
+func newDirectoryCandidate(path, relative string, hinted library.MediaType, originalPath string) (ImportCandidate, error) {
 	size, err := directorySize(path)
 	if err != nil {
 		return ImportCandidate{}, err
@@ -127,6 +134,7 @@ func newDirectoryCandidate(path, relative string, hinted library.MediaType) (Imp
 	return ImportCandidate{
 		Path:         path,
 		RelativePath: relative,
+		OriginalPath: originalPath,
 		MediaType:    mediaType,
 		Format:       "directory",
 		Size:         size,
@@ -191,4 +199,13 @@ func normalizeMediaType(mediaType library.MediaType, ext string) library.MediaTy
 	default:
 		return mediaType
 	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

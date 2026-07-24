@@ -50,6 +50,7 @@ func (r *MetadataResolver) resolveEbook(candidate *ImportCandidate) {
 		SelectedTitle:  strings.TrimSpace(selected.Title),
 		SelectedAuthor: strings.TrimSpace(selected.Author),
 	}
+	r.applyHints(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("embedded_title", candidate.Metadata.EmbeddedTitle, "embedded_metadata"),
 		metadataEvidence("embedded_author", candidate.Metadata.EmbeddedAuthor, "embedded_metadata"),
@@ -67,6 +68,7 @@ func (r *MetadataResolver) resolveFilenameOnly(candidate *ImportCandidate) {
 		FilenameTitle: title,
 		SelectedTitle: title,
 	}
+	r.applyHints(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("filename_title", candidate.Metadata.FilenameTitle, "filename_fallback"),
 		metadataEvidence("selected_title", candidate.Metadata.SelectedTitle, "filename_fallback", "selected filename-derived title for planning"),
@@ -92,6 +94,7 @@ func (r *MetadataResolver) resolveAudiobookDirectory(candidate *ImportCandidate)
 		SelectedTitle:  selectedTitle,
 		SelectedAuthor: selectedAuthor,
 	}
+	r.applyHints(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("filename_title", candidate.Metadata.FilenameTitle, "directory_name"),
 		metadataEvidence("selected_title", candidate.Metadata.SelectedTitle, "audio_metadata", "selected audiobook title for planning"),
@@ -105,6 +108,17 @@ func isEbookFormat(format string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (r *MetadataResolver) applyHints(candidate *ImportCandidate) {
+	if candidate.Metadata.SelectedTitle == "" && strings.TrimSpace(candidate.TitleHint) != "" {
+		candidate.Metadata.SelectedTitle = strings.TrimSpace(candidate.TitleHint)
+		candidate.Evidence = append(candidate.Evidence, metadataEvidence("selected_title_hint", candidate.Metadata.SelectedTitle, "import_request_hint", "selected request title hint for planning"))
+	}
+	if candidate.Metadata.SelectedAuthor == "" && strings.TrimSpace(candidate.AuthorHint) != "" {
+		candidate.Metadata.SelectedAuthor = strings.TrimSpace(candidate.AuthorHint)
+		candidate.Evidence = append(candidate.Evidence, metadataEvidence("selected_author_hint", candidate.Metadata.SelectedAuthor, "import_request_hint", "selected request author hint for planning"))
 	}
 }
 

@@ -64,7 +64,10 @@ Originally inspired by Readarr.
 - ✅ Migration Design
 - ✅ Backfill Engine
 - ✅ Repository Switch
-- ⬜ Import Pipeline v2
+- ✅ Import Pipeline v2 Planning
+- ✅ Import Pipeline v2 Executor
+- ✅ Import Engine Feature Flag
+- ⬜ Import Pipeline v2 Default Cutover
 - ⬜ UI Enhancements
 - ⬜ Metadata Engine
 - ⬜ Media Assistant Integration
@@ -81,6 +84,20 @@ The long-term direction is:
 - **Deterministic upgrades** -- schema and data migrations should be ordered, repeatable, resumable, and safe to validate.
 - **API-first design** -- REST, OPDS, automation, and future integrations should have stable contracts even as internals improve.
 - **Migration compatibility** -- existing installations keep working while normalized storage is built, backfilled, validated, and eventually switched on.
+
+### Librarr 2.0 visual direction
+
+The frontend is also moving away from the inherited *arr dashboard feel.
+
+The new UI direction emphasizes:
+
+- a warmer bookshelf aesthetic instead of a server-control-panel layout
+- larger cover art and card-based browsing
+- typography-forward hierarchy
+- book-first grouping over file-first listing
+- reusable book, format, and detail components that match the normalized architecture
+
+This milestone establishes the application shell and book-card foundation while existing APIs continue to provide compatibility data underneath.
 
 ## Architecture Overview
 
@@ -151,6 +168,33 @@ Public 2.0
 ```
 
 The migration engine is deterministic, repeatable, and idempotent. It records migration state separately from production reads, validates normalized records, and preserves the legacy model. The repository switch is explicit and reversible: set `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized` only after backfill validation passes, and return to `legacy` if rollback is needed.
+
+## Import Engine Status
+
+The first end-to-end Librarr 2.0 import path now exists behind a feature flag.
+
+```text
+LIBRARR_IMPORT_ENGINE=legacy  # default
+LIBRARR_IMPORT_ENGINE=v2      # planner + executor + normalized repository
+```
+
+Current behavior:
+
+- `legacy` keeps the existing importer behavior.
+- `v2` routes completed torrent imports, completed direct downloads, and manual import requests through the new planner/executor path.
+- The legacy importer still remains available for rollback.
+
+Safe rollback:
+
+```text
+LIBRARR_IMPORT_ENGINE=legacy
+```
+
+Current limitations:
+
+- Scheduler, scanner maintenance jobs, metadata refresh, and other non-import workflows still use their existing legacy-era paths.
+- UI, OPDS, and public API responses are intentionally unchanged in this milestone.
+- The normalized import engine should be paired with `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized`; startup rejects incompatible combinations.
 
 ## Features
 
@@ -378,6 +422,10 @@ which requires Transmission 3.0+).
 | `ANNAS_ARCHIVE_SECRET_KEY` | | Account secret key from the AA login page (also called a donator key in some tools). Used for `/dyn/api/fast_download.json` when the account has an active membership. Env alias `AA_DONATOR_KEY` is still accepted. Without a key, downloads use public LibGen mirrors. |
 
 ### Library Imports
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIBRARR_IMPORT_ENGINE` | `legacy` | Import execution mode: `legacy` keeps the current importer, `v2` enables the planner/executor path for completed torrents, direct downloads, and manual import. Use `legacy` for rollback. |
 
 | Variable | Default | Description |
 |----------|---------|-------------|

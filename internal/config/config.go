@@ -64,6 +64,10 @@ type Config struct {
 	// default for existing installations.
 	LibraryRepositoryMode string
 
+	// ImportEngine selects the production import persistence engine.
+	// Supported values are "legacy" and "v2"; legacy is the safe default.
+	ImportEngine string
+
 	// Circuit Breaker
 	CircuitBreakerThreshold int
 	CircuitBreakerTimeout   int // seconds
@@ -291,6 +295,7 @@ func buildFromEnv() *Config {
 		TrustedProxies: splitCSV(getEnv("LIBRARR_TRUSTED_PROXIES", "")),
 
 		LibraryRepositoryMode: getEnv("LIBRARR_LIBRARY_REPOSITORY_MODE", "legacy"),
+		ImportEngine:          getEnv("LIBRARR_IMPORT_ENGINE", "legacy"),
 
 		QBUrl:               getEnv("QB_URL", ""),
 		QBUser:              getEnv("QB_USER", "admin"),
@@ -599,6 +604,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"manga_incoming_dir":        &c.MangaIncomingDir,
 		"flibusta_url":              &c.FlibustaURL,
 		"library_repository_mode":   &c.LibraryRepositoryMode,
+		"import_engine":             &c.ImportEngine,
 	}
 	for key, fieldPtr := range strPtrs {
 		v, ok := raw[key]
@@ -674,6 +680,19 @@ func (c *Config) NormalizedLibraryRepositoryMode() (string, error) {
 		return mode, nil
 	default:
 		return "", fmt.Errorf("invalid LIBRARR_LIBRARY_REPOSITORY_MODE %q: expected \"legacy\" or \"normalized\"", c.LibraryRepositoryMode)
+	}
+}
+
+func (c *Config) ImportEngineMode() (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(c.ImportEngine))
+	if mode == "" {
+		return "legacy", nil
+	}
+	switch mode {
+	case "legacy", "v2":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid LIBRARR_IMPORT_ENGINE %q: expected \"legacy\" or \"v2\"", c.ImportEngine)
 	}
 }
 

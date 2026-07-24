@@ -14,6 +14,8 @@ import (
 
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/JeremiahM37/librarr/internal/library"
+	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
 	"github.com/JeremiahM37/librarr/internal/models"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/search"
@@ -28,6 +30,7 @@ type Watcher struct {
 	organizer *organize.Organizer
 	targets   *organize.LibraryTargets
 	health    *search.HealthTracker
+	importer  libraryimport.ImportEngine
 
 	processing sync.Map // hash -> struct{}, tracks in-progress imports
 	imported   sync.Map // hash -> struct{}, tracks already-imported hashes
@@ -37,6 +40,10 @@ var errTorrentContentPending = errors.New("torrent content pending synchronizati
 
 // NewWatcher creates a new torrent completion watcher.
 func NewWatcher(cfg *config.Config, database *db.DB, torrent TorrentClient, organizer *organize.Organizer, targets *organize.LibraryTargets, health *search.HealthTracker) *Watcher {
+	return NewWatcherWithImportEngine(cfg, database, torrent, organizer, targets, health, nil)
+}
+
+func NewWatcherWithImportEngine(cfg *config.Config, database *db.DB, torrent TorrentClient, organizer *organize.Organizer, targets *organize.LibraryTargets, health *search.HealthTracker, importer libraryimport.ImportEngine) *Watcher {
 	return &Watcher{
 		cfg:       cfg,
 		db:        database,
@@ -44,6 +51,7 @@ func NewWatcher(cfg *config.Config, database *db.DB, torrent TorrentClient, orga
 		organizer: organizer,
 		targets:   targets,
 		health:    health,
+		importer:  importer,
 	}
 }
 
@@ -300,7 +308,7 @@ func (w *Watcher) importEbook(t TorrentInfo, savePath string) error {
 			destPath = bf
 		}
 
-		inserted, err := w.recordTorrentItem(t, "ebook", bf, destPath, title, author, metadata.Title, metadata.Author, fileFormat(destPath), t.TotalSize)
+		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeEbook, bf, destPath, title, author, metadata.Title, metadata.Author, fileFormat(destPath), t.TotalSize)
 		if err != nil {
 			return err
 		}
@@ -346,7 +354,7 @@ func (w *Watcher) importAudiobook(t TorrentInfo, savePath string) error {
 		return fmt.Errorf("organize audiobook %q: %w", savePath, err)
 	}
 
-	inserted, err := w.recordTorrentItem(t, "audiobook", savePath, destPath, title, author, title, author, fileFormat(destPath), t.TotalSize)
+	inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeAudiobook, savePath, destPath, title, author, title, author, fileFormat(destPath), t.TotalSize)
 	if err != nil {
 		return err
 	}
@@ -371,7 +379,7 @@ func (w *Watcher) importManga(t TorrentInfo, savePath string) error {
 			destPath = mf
 		}
 
-		inserted, err := w.recordTorrentItem(t, "manga", mf, destPath, t.Name, "", t.Name, "", fileFormat(destPath), t.TotalSize)
+		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeManga, mf, destPath, t.Name, "", t.Name, "", fileFormat(destPath), t.TotalSize)
 		if err != nil {
 			return err
 		}
@@ -422,6 +430,47 @@ func (w *Watcher) recordTorrentItem(t TorrentInfo, mediaType, sourcePath, destin
 	}
 	slog.Info("torrent library import decision", fields...)
 	return outcome.Inserted, nil
+}
+
+func (w *Watcher) importTorrentItem(ctx context.Context, t TorrentInfo, mediaType library.MediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format string, fileSize int64) (bool, error) {
+	if w.importer == nil {
+		return w.recordTorrentItem(t, string(mediaType), sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format, fileSize)
+	}
+
+	result, err := w.importer.Import(ctx, libraryimport.ImportRequest{
+		Source: library.ImportSource{
+			Name:      "torrent",
+			SourceID:  t.Hash,
+			MediaType: mediaType,
+		},
+		RootPath:     destinationPath,
+		OriginalPath: sourcePath,
+		TitleHint:    title,
+		AuthorHint:   author,
+	})
+	fields := []any{
+		"torrent_hash", t.Hash,
+		"torrent_name", t.Name,
+		"source_path", sourcePath,
+		"destination_path", destinationPath,
+		"file_size", fileSize,
+		"detected_format", format,
+		"metadata_title", metadataTitle,
+		"metadata_author", metadataAuthor,
+	}
+	if err != nil {
+		slog.Error("torrent library import engine failure", append(fields, "error", err)...)
+		return false, err
+	}
+	inserted := result != nil && result.InsertedCount > 0
+	slog.Info("torrent library import decision", append(fields,
+		"engine", "configured",
+		"inserted_count", result.InsertedCount,
+		"duplicate_count", result.DuplicateCount,
+		"skipped_count", result.SkippedCount,
+		"conflict_count", result.ConflictCount,
+	)...)
+	return inserted, nil
 }
 
 func fileFormat(filePath string) string {
