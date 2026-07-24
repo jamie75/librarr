@@ -5,9 +5,26 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/JeremiahM37/librarr)](https://goreportcard.com/report/github.com/JeremiahM37/librarr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**The missing *arr for books.** Self-hosted book, audiobook, and manga search and download manager -- like Sonarr/Radarr but for your reading library.
+**Next-generation open-source personal library manager.**
 
-Librarr searches all configured indexers in parallel, scores results by confidence, and auto-imports into your Calibre, Audiobookshelf, Kavita, or Komga library. Single ~17MB Go binary, no runtime dependencies — **~14MB RSS idle** in a real homelab[^1], typically 10-20× lower than the .NET-based *arr apps.
+⚠️ **Librarr 2.0 is currently under active development.**
+
+Librarr is evolving into its own book-centric library platform, focused on:
+
+- normalized library model
+- multiple editions
+- multiple formats per title
+- richer metadata
+- better contributor handling
+- improved migration support
+- Media Assistant integration
+- long-term API stability
+
+Existing users continue using the proven legacy storage model while the Librarr 2.0 migration engine is completed.
+
+Today, Librarr remains a self-hosted book, audiobook, and manga search and download manager. It searches configured indexers in parallel, scores results by confidence, and auto-imports into your Calibre, Audiobookshelf, Kavita, or Komga library. Single ~17MB Go binary, no runtime dependencies — **~14MB RSS idle** in a real homelab[^1], typically 10-20× lower than the .NET-based *arr apps.
+
+Originally inspired by Readarr.
 
 [^1]: Measured on v1.1.0 in an LXC on Debian 12 (Mar 2026). Reference: Sonarr 4.x ≈ 240MB, Radarr 5.x ≈ 220MB on the same host.
 
@@ -31,6 +48,79 @@ Librarr searches all configured indexers in parallel, scores results by confiden
 - **Torznab API** -- add Librarr as an indexer in Prowlarr or Readarr (it works both ways)
 - **OPDS 1.2 feed** -- browse your library from any e-reader app
 - **Tiny footprint** -- ~14MB idle RSS, runs comfortably on a Pi or any thermally-constrained mini-PC
+
+## Librarr 2.0 Progress
+
+- ✅ Vision
+- ✅ Architecture
+- ✅ Schema Foundation
+- ✅ Domain Layer
+- ✅ Repository Interfaces
+- ✅ LibraryService
+- ✅ Repository Cutover
+- ✅ Normalized Repository
+- ✅ Migration Design
+- ✅ Backfill Engine
+- ⬜ Repository Switch
+- ⬜ Import Pipeline v2
+- ⬜ UI Enhancements
+- ⬜ Metadata Engine
+- ⬜ Media Assistant Integration
+
+## Project Direction
+
+Librarr is not aiming to be simply another Readarr fork. The 2.0 work is reshaping the application around a clean domain architecture that can model personal libraries the way they actually exist: one book can have multiple editions, and each edition can have multiple files and formats.
+
+The long-term direction is:
+
+- **Book-centric data model** -- books, editions, files, contributors, identifiers, and covers are distinct concepts.
+- **Multiple files per book** -- EPUB, MOBI, PDF, AZW3, CBZ, CBR, audiobook, and manga formats can coexist without fighting a single-row library model.
+- **Contributor roles** -- authors, narrators, editors, illustrators, and future role types can be represented explicitly.
+- **Deterministic upgrades** -- schema and data migrations should be ordered, repeatable, resumable, and safe to validate.
+- **API-first design** -- REST, OPDS, automation, and future integrations should have stable contracts even as internals improve.
+- **Migration compatibility** -- existing installations keep working while normalized storage is built, backfilled, validated, and eventually switched on.
+
+## Architecture Overview
+
+Production still uses the legacy repository and `library_items` as the active storage source. The normalized repository and backfill engine are present so Librarr 2.0 can be migrated safely before the production switch.
+
+```mermaid
+flowchart TD
+    A[LibraryService] --> B[Repository]
+    B --> C[Legacy Repository]
+    C --> D[(library_items)]
+
+    B -. Librarr 2.0 migration path .-> E[Normalized Repository]
+    E --> F[(books)]
+    F --> G[(editions)]
+    G --> H[(files)]
+```
+
+## Migration Status
+
+Current production path:
+
+```text
+LibraryService
+  ↓
+LegacyRepository
+  ↓
+library_items
+```
+
+Upcoming Librarr 2.0 path:
+
+```text
+Backfill
+  ↓
+Validation
+  ↓
+Repository Switch
+  ↓
+Public 2.0
+```
+
+The migration engine is designed to be deterministic, repeatable, and idempotent. It records migration state separately from production reads, validates normalized records, and preserves the legacy model until the repository switch is intentionally completed.
 
 ## Features
 
@@ -650,7 +740,7 @@ async def list_downloads() -> list[dict]:
 
 The same pattern works for audiobooks (`/api/search/audiobooks`, `/api/download/audiobook`) and manga (`/api/search/manga`, `/api/download/torrent`). Wrap whichever subset of the [API Endpoints](#api-endpoints) above is useful to your assistant.
 
-## Architecture
+## Code Layout
 
 Single static binary, zero CGO dependencies, pure-Go SQLite via `modernc.org/sqlite`.
 
