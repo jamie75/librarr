@@ -92,6 +92,14 @@ func (r *LegacyLibraryRepository) GetBook(ctx context.Context, id int64) (*Book,
 	return &book, nil
 }
 
+func (r *LegacyLibraryRepository) CreateBook(context.Context, Book) (*Book, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) UpdateBook(context.Context, Book) (*Book, error) {
+	return nil, ErrReadOnlyRepository
+}
+
 func (r *LegacyLibraryRepository) ListBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
 	items, err := r.ListLegacyItems(ctx, string(query.MediaType), query.Limit, query.Offset)
 	if err != nil {
@@ -102,6 +110,39 @@ func (r *LegacyLibraryRepository) ListBooks(ctx context.Context, query ListBooks
 		books = append(books, LegacyItemToBook(item))
 	}
 	return books, nil
+}
+
+func (r *LegacyLibraryRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
+	if strings.TrimSpace(query.Title) == "" {
+		return r.ListBooks(ctx, ListBooksQuery{MediaType: query.MediaType, Limit: 100000})
+	}
+	items, err := r.store.FindByTitle(query.Title)
+	if err != nil {
+		return nil, err
+	}
+	books := make([]Book, 0, len(items))
+	for _, item := range items {
+		if query.MediaType != "" && MediaType(item.MediaType) != query.MediaType {
+			continue
+		}
+		if query.Author != "" && !strings.EqualFold(strings.TrimSpace(item.Author), strings.TrimSpace(query.Author)) {
+			continue
+		}
+		books = append(books, LegacyItemToBook(item))
+	}
+	return books, nil
+}
+
+func (r *LegacyLibraryRepository) CountBooks(ctx context.Context, query BookQuery) (int, error) {
+	books, err := r.SearchBooks(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	return len(books), nil
+}
+
+func (r *LegacyLibraryRepository) RecentBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
+	return r.ListBooks(ctx, query)
 }
 
 func (r *LegacyLibraryRepository) SaveBook(context.Context, Book) (*Book, error) {
@@ -160,6 +201,10 @@ func (r *LegacyLibraryRepository) FindFileByPath(ctx context.Context, path strin
 	return &file, nil
 }
 
+func (r *LegacyLibraryRepository) FindByPath(ctx context.Context, path string) (*BookFile, error) {
+	return r.FindFileByPath(ctx, path)
+}
+
 func (r *LegacyLibraryRepository) FindFileBySourceID(ctx context.Context, sourceID string) (*BookFile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -194,6 +239,10 @@ func (r *LegacyLibraryRepository) FindFilesByContentHash(ctx context.Context, ha
 	return files, nil
 }
 
+func (r *LegacyLibraryRepository) ListFiles(ctx context.Context, editionID int64) ([]BookFile, error) {
+	return r.GetBookFiles(ctx, editionID)
+}
+
 func (r *LegacyLibraryRepository) AttachFile(context.Context, BookFile) (*BookFile, error) {
 	return nil, ErrReadOnlyRepository
 }
@@ -202,12 +251,45 @@ func (r *LegacyLibraryRepository) DetachFile(context.Context, int64) error {
 	return ErrReadOnlyRepository
 }
 
+func (r *LegacyLibraryRepository) MoveFile(context.Context, int64, string) (*BookFile, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) DeleteFile(context.Context, int64) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) ValidateManagedFile(ctx context.Context, fileID int64) error {
+	_, err := r.GetFile(ctx, fileID)
+	return err
+}
+
 func (r *LegacyLibraryRepository) GetSeries(context.Context, string) (*Series, error) {
 	return nil, ErrNotFound
 }
 
+func (r *LegacyLibraryRepository) FindSeries(context.Context, string) ([]Series, error) {
+	return []Series{}, nil
+}
+
 func (r *LegacyLibraryRepository) AttachBookToSeries(context.Context, int64, BookSeries) error {
 	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) AttachBook(ctx context.Context, bookID int64, series BookSeries) error {
+	return r.AttachBookToSeries(ctx, bookID, series)
+}
+
+func (r *LegacyLibraryRepository) DetachBook(context.Context, int64, int64) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) SeriesPosition(context.Context, int64, int64) (BookSeries, error) {
+	return BookSeries{}, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) ListSeriesBooks(context.Context, int64) ([]Book, error) {
+	return []Book{}, nil
 }
 
 func (r *LegacyLibraryRepository) MergeContributor(context.Context, Contributor) (*Contributor, error) {
@@ -226,12 +308,32 @@ func (r *LegacyLibraryRepository) AttachContributor(context.Context, int64, Cont
 	return ErrReadOnlyRepository
 }
 
+func (r *LegacyLibraryRepository) DetachContributor(context.Context, int64, int64, ContributorRole) error {
+	return ErrReadOnlyRepository
+}
+
 func (r *LegacyLibraryRepository) AddCover(context.Context, Cover) (*Cover, error) {
 	return nil, ErrReadOnlyRepository
 }
 
+func (r *LegacyLibraryRepository) AttachCover(ctx context.Context, cover Cover) (*Cover, error) {
+	return r.AddCover(ctx, cover)
+}
+
+func (r *LegacyLibraryRepository) ReplaceCover(context.Context, Cover) (*Cover, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) RemoveCover(context.Context, int64) error {
+	return ErrReadOnlyRepository
+}
+
 func (r *LegacyLibraryRepository) GetPrimaryCover(context.Context, int64) (*Cover, error) {
 	return nil, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) PrimaryCover(ctx context.Context, bookID int64) (*Cover, error) {
+	return r.GetPrimaryCover(ctx, bookID)
 }
 
 func (r *LegacyLibraryRepository) AddIdentifier(context.Context, Identifier) (*Identifier, error) {
@@ -251,6 +353,18 @@ func (r *LegacyLibraryRepository) FindByIdentifier(ctx context.Context, identifi
 		EditionID:  file.EditionID,
 		Identifier: identifier,
 	}}, nil
+}
+
+func (r *LegacyLibraryRepository) SaveEmbeddedMetadata(context.Context, int64, map[string]string) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) SaveProviderMetadata(context.Context, int64, string, map[string]string) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) SaveUserOverride(context.Context, int64, string, string) error {
+	return ErrReadOnlyRepository
 }
 
 func (r *LegacyLibraryRepository) findLegacyItem(ctx context.Context, match func(models.LibraryItem) bool) (models.LibraryItem, error) {

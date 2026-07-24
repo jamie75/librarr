@@ -129,7 +129,8 @@ func (s *LibraryService) FindBookByIdentifier(ctx context.Context, identifier Id
 }
 
 func (s *LibraryService) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
-	return s.ListBooks(ctx, ListBooksQuery{MediaType: query.MediaType, Limit: 100, Offset: 0})
+	books, err := s.books.SearchBooks(ctx, query)
+	return books, translateLibraryError(err)
 }
 
 func (s *LibraryService) ListBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
@@ -138,7 +139,8 @@ func (s *LibraryService) ListBooks(ctx context.Context, query ListBooksQuery) ([
 }
 
 func (s *LibraryService) ListRecent(ctx context.Context, mediaType MediaType, limit, offset int) ([]Book, error) {
-	return s.ListBooks(ctx, ListBooksQuery{MediaType: mediaType, Limit: limit, Offset: offset})
+	books, err := s.books.RecentBooks(ctx, ListBooksQuery{MediaType: mediaType, Limit: limit, Offset: offset})
+	return books, translateLibraryError(err)
 }
 
 func (s *LibraryService) GetBookFiles(ctx context.Context, bookID int64) ([]BookFile, error) {
