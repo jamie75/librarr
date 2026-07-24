@@ -26,7 +26,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	w.Write(indexHTML)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(startTime)
 
 	// Count enabled sources
@@ -41,7 +41,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 	// Library stats
 	libraryTotal := 0
-	if stats, err := s.db.GetStats(); err == nil {
+	if stats, err := s.library().LegacyStats(r.Context()); err == nil {
 		if total, ok := stats["total_items"]; ok {
 			if n, ok := total.(int); ok {
 				libraryTotal = n

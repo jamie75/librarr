@@ -13,6 +13,7 @@ import (
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
 	"github.com/JeremiahM37/librarr/internal/download"
+	"github.com/JeremiahM37/librarr/internal/library"
 	"github.com/JeremiahM37/librarr/internal/metadata"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/scheduler"
@@ -29,6 +30,7 @@ var indexHTML = web.IndexHTML
 type Server struct {
 	cfg            *config.Config
 	db             *db.DB
+	libraryService *library.LibraryService
 	searchMgr      *search.Manager
 	downloadMgr    *download.Manager
 	qb             *download.QBittorrentClient
@@ -94,6 +96,11 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 	// Wire webhook sender into download manager.
 	downloadMgr.SetWebhookSender(ws)
 
+	librarySvc, err := library.NewLegacyLibraryService(database)
+	if err != nil {
+		panic(err)
+	}
+
 	// Initialize scheduler, series detector, and author monitor.
 	sched := scheduler.NewScheduler(cfg, database, searchMgr, downloadMgr, ws)
 	wishlistClean := scheduler.NewWishlistCleaner(cfg, database)
@@ -103,6 +110,7 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
+		libraryService: librarySvc,
 		searchMgr:      searchMgr,
 		downloadMgr:    downloadMgr,
 		qb:             qb,
@@ -137,6 +145,21 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 
 	s.registerRoutes()
 	return s
+}
+
+func (s *Server) library() *library.LibraryService {
+	if s.libraryService != nil {
+		return s.libraryService
+	}
+	if s.db == nil {
+		return nil
+	}
+	librarySvc, err := library.NewLegacyLibraryService(s.db)
+	if err != nil {
+		return nil
+	}
+	s.libraryService = librarySvc
+	return s.libraryService
 }
 
 // StartScheduler starts the background scheduler loop.

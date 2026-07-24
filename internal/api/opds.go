@@ -79,9 +79,9 @@ func opdsNavEntry(entryID, title, content, href, mime string) string {
 		xmlEscape(content), xmlEscape(href), mime)
 }
 
-func (s *Server) handleOPDSRoot(w http.ResponseWriter, _ *http.Request) {
-	totalBooks, _ := s.db.CountItems("ebook")
-	totalAudio, _ := s.db.CountItems("audiobook")
+func (s *Server) handleOPDSRoot(w http.ResponseWriter, r *http.Request) {
+	totalBooks, _ := s.library().CountLegacyItems(r.Context(), "ebook")
+	totalAudio, _ := s.library().CountLegacyItems(r.Context(), "audiobook")
 	total := totalBooks + totalAudio
 
 	body := opdsFeedOpen("", "Librarr", "navigation", "/opds/", total, 1)
@@ -107,8 +107,8 @@ func (s *Server) handleOPDSBooks(w http.ResponseWriter, r *http.Request) {
 	mediaType := r.URL.Query().Get("type")
 	offset := (page - 1) * opdsPageSize
 
-	items, _ := s.db.GetItems(mediaType, opdsPageSize, offset)
-	total, _ := s.db.CountItems(mediaType)
+	items, _ := s.library().ListLegacyItems(r.Context(), mediaType, opdsPageSize, offset)
+	total, _ := s.library().CountLegacyItems(r.Context(), mediaType)
 
 	selfHref := fmt.Sprintf("/opds/books?page=%d", page)
 	if mediaType != "" {
@@ -230,62 +230,58 @@ func (s *Server) handleOPDSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the item.
-	items, _ := s.db.GetItems("", 10000, 0)
-	for _, item := range items {
-		if item.ID == id {
-			if item.FilePath == "" {
-				http.Error(w, "File not found on disk", http.StatusNotFound)
-				return
-			}
-
-			// Resolve the real path to prevent path traversal via symlinks or DB tampering.
-			realPath, err := filepath.EvalSymlinks(item.FilePath)
-			if err != nil {
-				http.Error(w, "File not found on disk", http.StatusNotFound)
-				return
-			}
-
-			// Validate the file is within an allowed directory.
-			allowed := false
-			for _, dir := range []string{s.cfg.EbookDir, s.cfg.AudiobookDir, s.cfg.MangaDir, s.cfg.IncomingDir, s.cfg.MangaIncomingDir} {
-				if dir == "" {
-					continue
-				}
-				absDir, err := filepath.Abs(dir)
-				if err != nil {
-					continue
-				}
-				if strings.HasPrefix(realPath, absDir+string(filepath.Separator)) || realPath == absDir {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				http.Error(w, "Access denied", http.StatusForbidden)
-				return
-			}
-
-			if _, err := os.Stat(realPath); os.IsNotExist(err) {
-				http.Error(w, "File not found on disk", http.StatusNotFound)
-				return
-			}
-
-			fmtStr := strings.ToLower(strings.TrimPrefix(filepath.Ext(realPath), "."))
-			mime := formatMIMEs[fmtStr]
-			if mime == "" {
-				mime = "application/octet-stream"
-			}
-
-			w.Header().Set("Content-Type", mime)
-			w.Header().Set("Content-Disposition",
-				fmt.Sprintf("attachment; filename=%q", filepath.Base(realPath)))
-			http.ServeFile(w, r, realPath)
-			return
-		}
+	item, err := s.library().GetLegacyItem(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if item.FilePath == "" {
+		http.Error(w, "File not found on disk", http.StatusNotFound)
+		return
 	}
 
-	http.Error(w, "Item not found", http.StatusNotFound)
+	// Resolve the real path to prevent path traversal via symlinks or DB tampering.
+	realPath, err := filepath.EvalSymlinks(item.FilePath)
+	if err != nil {
+		http.Error(w, "File not found on disk", http.StatusNotFound)
+		return
+	}
+
+	// Validate the file is within an allowed directory.
+	allowed := false
+	for _, dir := range []string{s.cfg.EbookDir, s.cfg.AudiobookDir, s.cfg.MangaDir, s.cfg.IncomingDir, s.cfg.MangaIncomingDir} {
+		if dir == "" {
+			continue
+		}
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(realPath, absDir+string(filepath.Separator)) || realPath == absDir {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
+	if _, err := os.Stat(realPath); os.IsNotExist(err) {
+		http.Error(w, "File not found on disk", http.StatusNotFound)
+		return
+	}
+
+	fmtStr := strings.ToLower(strings.TrimPrefix(filepath.Ext(realPath), "."))
+	mime := formatMIMEs[fmtStr]
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", filepath.Base(realPath)))
+	http.ServeFile(w, r, realPath)
 }
 
 func (s *Server) handleOPDSOpenSearch(w http.ResponseWriter, _ *http.Request) {

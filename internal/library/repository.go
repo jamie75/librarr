@@ -6,7 +6,9 @@ type BookRepository interface {
 	FindBook(context.Context, BookQuery) (*Book, error)
 	FindBookByIdentifier(context.Context, Identifier) (*Book, error)
 	GetBook(context.Context, int64) (*Book, error)
+	ListBooks(context.Context, ListBooksQuery) ([]Book, error)
 	SaveBook(context.Context, Book) (*Book, error)
+	DeleteBook(context.Context, int64) error
 }
 
 type FileRepository interface {
@@ -16,6 +18,7 @@ type FileRepository interface {
 	FindFileBySourceID(context.Context, string) (*BookFile, error)
 	FindFilesByContentHash(context.Context, string) ([]BookFile, error)
 	AttachFile(context.Context, BookFile) (*BookFile, error)
+	DetachFile(context.Context, int64) error
 }
 
 type SeriesRepository interface {
@@ -58,4 +61,10 @@ type IdentifierMatch struct {
 	BookID     int64
 	EditionID  int64
 	Identifier Identifier
+}
+
+type ListBooksQuery struct {
+	MediaType MediaType
+	Limit     int
+	Offset    int
 }

@@ -14,6 +14,19 @@ type legacyStore interface {
 	HasSourceID(sourceID string) bool
 }
 
+type legacyCountStore interface {
+	CountItems(mediaType string) (int, error)
+}
+
+type legacyStatsStore interface {
+	GetStats() (map[string]interface{}, error)
+}
+
+type legacyDeleteStore interface {
+	DeleteItem(id int64) error
+	DeleteItemBySourceID(sourceID string) error
+}
+
 type LegacyLibraryRepository struct {
 	store legacyStore
 }
@@ -79,8 +92,31 @@ func (r *LegacyLibraryRepository) GetBook(ctx context.Context, id int64) (*Book,
 	return &book, nil
 }
 
+func (r *LegacyLibraryRepository) ListBooks(ctx context.Context, query ListBooksQuery) ([]Book, error) {
+	items, err := r.ListLegacyItems(ctx, string(query.MediaType), query.Limit, query.Offset)
+	if err != nil {
+		return nil, err
+	}
+	books := make([]Book, 0, len(items))
+	for _, item := range items {
+		books = append(books, LegacyItemToBook(item))
+	}
+	return books, nil
+}
+
 func (r *LegacyLibraryRepository) SaveBook(context.Context, Book) (*Book, error) {
 	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) DeleteBook(ctx context.Context, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store, ok := r.store.(legacyDeleteStore)
+	if !ok {
+		return ErrUnsupportedOperation
+	}
+	return store.DeleteItem(id)
 }
 
 func (r *LegacyLibraryRepository) GetBookFiles(ctx context.Context, bookID int64) ([]BookFile, error) {
@@ -162,6 +198,10 @@ func (r *LegacyLibraryRepository) AttachFile(context.Context, BookFile) (*BookFi
 	return nil, ErrReadOnlyRepository
 }
 
+func (r *LegacyLibraryRepository) DetachFile(context.Context, int64) error {
+	return ErrReadOnlyRepository
+}
+
 func (r *LegacyLibraryRepository) GetSeries(context.Context, string) (*Series, error) {
 	return nil, ErrNotFound
 }
@@ -238,6 +278,82 @@ func (r *LegacyLibraryRepository) allLegacyItems() ([]models.LibraryItem, error)
 		return []models.LibraryItem{}, nil
 	}
 	return items, nil
+}
+
+func (r *LegacyLibraryRepository) ListLegacyItems(ctx context.Context, mediaType string, limit, offset int) ([]models.LibraryItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := r.store.GetItems(mediaType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return []models.LibraryItem{}, nil
+	}
+	return items, nil
+}
+
+func (r *LegacyLibraryRepository) CountLegacyItems(ctx context.Context, mediaType string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	store, ok := r.store.(legacyCountStore)
+	if !ok {
+		items, err := r.store.GetItems(mediaType, 100000, 0)
+		if err != nil {
+			return 0, err
+		}
+		return len(items), nil
+	}
+	return store.CountItems(mediaType)
+}
+
+func (r *LegacyLibraryRepository) LegacyStats(ctx context.Context) (map[string]interface{}, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if store, ok := r.store.(legacyStatsStore); ok {
+		return store.GetStats()
+	}
+	ebookCount, _ := r.CountLegacyItems(ctx, "ebook")
+	audiobookCount, _ := r.CountLegacyItems(ctx, "audiobook")
+	mangaCount, _ := r.CountLegacyItems(ctx, "manga")
+	totalCount, _ := r.CountLegacyItems(ctx, "")
+	return map[string]interface{}{
+		"total_items": totalCount,
+		"ebooks":      ebookCount,
+		"audiobooks":  audiobookCount,
+		"manga":       mangaCount,
+	}, nil
+}
+
+func (r *LegacyLibraryRepository) GetLegacyItem(ctx context.Context, id int64) (models.LibraryItem, error) {
+	return r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.ID == id
+	})
+}
+
+func (r *LegacyLibraryRepository) DeleteLegacyItem(ctx context.Context, id int64) error {
+	return r.DeleteBook(ctx, id)
+}
+
+func (r *LegacyLibraryRepository) DeleteLegacyItemBySourceID(ctx context.Context, sourceID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store, ok := r.store.(legacyDeleteStore)
+	if !ok {
+		return ErrUnsupportedOperation
+	}
+	return store.DeleteItemBySourceID(sourceID)
+}
+
+func (r *LegacyLibraryRepository) HasLegacySourceID(ctx context.Context, sourceID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return r.store.HasSourceID(sourceID), nil
 }
 
 var _ BookRepository = (*LegacyLibraryRepository)(nil)
