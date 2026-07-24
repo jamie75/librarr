@@ -53,7 +53,7 @@ Replace the file-centric library core with a normalized domain model while prese
 
 ### 2.0.2 Normalized schema
 
-- [ ] Add domain tables additively:
+- [x] Add domain tables additively:
   - `books`
   - `editions`
   - `contributors`
@@ -62,9 +62,9 @@ Replace the file-centric library core with a normalized domain model while prese
   - `files`
   - `identifiers`
   - `covers`
-- [ ] Add indexes for normalized names, foreign keys, hashes, formats, and source IDs.
-- [ ] Preserve `library_items` during the transition.
-- [ ] Add explicit schema versioning and migration status logging.
+- [x] Add indexes for normalized names, foreign keys, hashes, formats, and source IDs.
+- [x] Preserve `library_items` during the transition.
+- [x] Add explicit schema versioning and migration status logging.
 
 ### 2.0.3 Conservative matching service
 

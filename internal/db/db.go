@@ -32,6 +32,11 @@ func New(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
 
 	d := &DB{db: db, path: path}
 	if err := d.migrate(); err != nil {
@@ -315,7 +320,7 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("backfill library content hashes: %w", err)
 	}
 
-	return nil
+	return d.runVersionedMigrations()
 }
 
 func (d *DB) GetDBPath() string {

@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,6 +25,51 @@ func newTestDB(t *testing.T) *DB {
 	return d
 }
 
+func tableExists(t *testing.T, d *DB, name string) bool {
+	t.Helper()
+	return countRows(t, d, "sqlite_master", "type = 'table' AND name = ?", name) == 1
+}
+
+func indexExists(t *testing.T, d *DB, name string) bool {
+	t.Helper()
+	return countRows(t, d, "sqlite_master", "type = 'index' AND name = ?", name) == 1
+}
+
+func schemaMigrationVersions(t *testing.T, d *DB) map[int]string {
+	t.Helper()
+	rows, err := d.db.Query("SELECT version, name FROM schema_migrations ORDER BY version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	versions := make(map[int]string)
+	for rows.Next() {
+		var version int
+		var name string
+		if err := rows.Scan(&version, &name); err != nil {
+			t.Fatal(err)
+		}
+		versions[version] = name
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return versions
+}
+
+func countRows(t *testing.T, d *DB, table, where string, args ...interface{}) int {
+	t.Helper()
+	var count int
+	query := "SELECT COUNT(*) FROM " + table
+	if where != "" {
+		query += " WHERE " + where
+	}
+	if err := d.db.QueryRow(query, args...).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestNew_CreatesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "subdir", "deep", "test.db")
@@ -34,6 +81,277 @@ func TestNew_CreatesDirectory(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Dir(path)); os.IsNotExist(err) {
 		t.Error("expected directory to be created")
+	}
+}
+
+func TestSchemaFoundation_FreshDatabaseCreatesLegacyAndNormalizedTables(t *testing.T) {
+	d := newTestDB(t)
+
+	for _, table := range []string{
+		"library_items",
+		"schema_migrations",
+		"books",
+		"editions",
+		"contributors",
+		"edition_contributors",
+		"series",
+		"book_series",
+		"files",
+		"identifiers",
+		"covers",
+		"library_item_migration_map",
+	} {
+		if !tableExists(t, d, table) {
+			t.Fatalf("expected table %s to exist", table)
+		}
+	}
+
+	if !indexExists(t, d, "idx_files_file_path_unique") {
+		t.Fatal("expected file path unique index")
+	}
+}
+
+func TestSchemaFoundation_ExistingLibraryItemsUpgradeWithoutDataLoss(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE library_items (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		title TEXT NOT NULL DEFAULT '',
+		author TEXT NOT NULL DEFAULT '',
+		file_path TEXT NOT NULL DEFAULT '',
+		original_path TEXT NOT NULL DEFAULT '',
+		file_size INTEGER NOT NULL DEFAULT 0,
+		file_format TEXT NOT NULL DEFAULT '',
+		media_type TEXT NOT NULL DEFAULT 'ebook',
+		source TEXT NOT NULL DEFAULT '',
+		source_id TEXT NOT NULL DEFAULT '',
+		metadata TEXT NOT NULL DEFAULT '{}',
+		added_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO library_items (title, author, file_path, file_format, media_type, source_id)
+		VALUES ('Legacy Book', 'Legacy Author', '/books/legacy.epub', 'epub', 'ebook', 'legacy-1')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	items, err := d.GetItems("ebook", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Title != "Legacy Book" || items[0].SourceID != "legacy-1" {
+		t.Fatalf("legacy items after migration = %+v", items)
+	}
+	if !tableExists(t, d, "books") || !tableExists(t, d, "files") {
+		t.Fatal("normalized tables were not created")
+	}
+}
+
+func TestSchemaFoundation_MigrationVersionsRecordedAndIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "library.db")
+	d, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := schemaMigrationVersions(t, d)
+	if err := d.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	second := schemaMigrationVersions(t, d)
+	d.Close()
+
+	if len(first) != len(versionedMigrations) {
+		t.Fatalf("recorded migrations = %v, want %d entries", first, len(versionedMigrations))
+	}
+	if len(second) != len(first) {
+		t.Fatalf("migration rerun changed versions: before %v after %v", first, second)
+	}
+	for version, name := range first {
+		if second[version] != name {
+			t.Fatalf("version %d name changed from %q to %q", version, name, second[version])
+		}
+	}
+
+	d, err = New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	third := schemaMigrationVersions(t, d)
+	if len(third) != len(first) {
+		t.Fatalf("reopen migrations = %v, want %v", third, first)
+	}
+}
+
+func TestSchemaFoundation_FailedMigrationIsNotRecorded(t *testing.T) {
+	d := newTestDB(t)
+	err := d.applySchemaMigration(schemaMigration{
+		version: 999,
+		name:    "intentional_failure",
+		run: func(tx *sql.Tx) error {
+			if _, err := tx.Exec("CREATE TABLE failed_migration_marker (id INTEGER PRIMARY KEY)"); err != nil {
+				return err
+			}
+			return errors.New("stop migration")
+		},
+	})
+	if err == nil {
+		t.Fatal("expected failed migration to return an error")
+	}
+	if _, ok := schemaMigrationVersions(t, d)[999]; ok {
+		t.Fatal("failed migration version was recorded")
+	}
+	if tableExists(t, d, "failed_migration_marker") {
+		t.Fatal("failed transactional migration left its table behind")
+	}
+}
+
+func TestSchemaFoundation_NormalizedRelationshipsAndConstraints(t *testing.T) {
+	d := newTestDB(t)
+
+	bookID, err := d.CreateBook(&Book{Title: "The Guardian's Path", SortTitle: "guardian's path", MediaType: "ebook", Monitored: true, Status: "owned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotBook, err := d.GetBook(bookID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBook.Title != "The Guardian's Path" || !gotBook.Monitored {
+		t.Fatalf("GetBook = %+v", gotBook)
+	}
+
+	firstEditionID, err := d.CreateEdition(&Edition{BookID: bookID, Title: "The Guardian's Path", EditionName: "Retail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondEditionID, err := d.CreateEdition(&Edition{BookID: bookID, Title: "The Guardian's Path", EditionName: "PDF"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstEditionID == secondEditionID {
+		t.Fatal("multiple editions produced same ID")
+	}
+
+	authorID, err := d.CreateContributor(&Contributor{Name: "Carla Jablonski", SortName: "Jablonski, Carla"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	illustratorID, err := d.CreateContributor(&Contributor{Name: "Disney", SortName: "Disney"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddEditionContributor(EditionContributor{EditionID: firstEditionID, ContributorID: authorID, Role: "author", Position: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddEditionContributor(EditionContributor{EditionID: firstEditionID, ContributorID: illustratorID, Role: "illustrator", Position: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	seriesID, err := d.CreateSeries(&Series{Title: "Prince of Persia"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddBookSeries(BookSeries{
+		BookID: bookID, SeriesID: seriesID,
+		Position:        sql.NullFloat64{Float64: 1, Valid: true},
+		DisplayPosition: "1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.CreateFile(&File{EditionID: firstEditionID, MediaType: "ebook", Format: "epub", FilePath: "/books/guardian.epub", ContentHash: "hash-epub", IsManaged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateFile(&File{EditionID: firstEditionID, MediaType: "ebook", Format: "mobi", FilePath: "/books/guardian.mobi", ContentHash: "hash-mobi", IsManaged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateFile(&File{EditionID: firstEditionID, MediaType: "ebook", Format: "azw3", FilePath: "/books/guardian.epub", IsManaged: true}); err == nil {
+		t.Fatal("expected duplicate file_path to be rejected")
+	}
+
+	if _, err := d.AddIdentifier(&Identifier{BookID: sql.NullInt64{Int64: bookID, Valid: true}, Provider: "isbn13", Identifier: "9780000000001"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddIdentifier(&Identifier{EditionID: sql.NullInt64{Int64: firstEditionID, Valid: true}, Provider: "openlibrary", Identifier: "OL1M"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddIdentifier(&Identifier{Provider: "asin", Identifier: "B000000"}); err == nil {
+		t.Fatal("expected identifier without owner to fail")
+	}
+	if _, err := d.AddIdentifier(&Identifier{
+		BookID: sql.NullInt64{Int64: bookID, Valid: true}, EditionID: sql.NullInt64{Int64: firstEditionID, Valid: true},
+		Provider: "bad", Identifier: "both",
+	}); err == nil {
+		t.Fatal("expected identifier with two owners to fail")
+	}
+
+	if _, err := d.AddCover(&Cover{BookID: sql.NullInt64{Int64: bookID, Valid: true}, Source: "provider", LocalPath: "/covers/book.jpg", IsPrimary: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddCover(&Cover{EditionID: sql.NullInt64{Int64: firstEditionID, Valid: true}, Source: "embedded", LocalPath: "/covers/edition.jpg", IsPrimary: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddCover(&Cover{Source: "bad", LocalPath: "/covers/bad.jpg"}); err == nil {
+		t.Fatal("expected cover without owner to fail")
+	}
+	if _, err := d.AddCover(&Cover{
+		BookID: sql.NullInt64{Int64: bookID, Valid: true}, EditionID: sql.NullInt64{Int64: firstEditionID, Valid: true},
+		Source: "bad", LocalPath: "/covers/both.jpg",
+	}); err == nil {
+		t.Fatal("expected cover with two owners to fail")
+	}
+}
+
+func TestSchemaFoundation_DeleteBehavior(t *testing.T) {
+	d := newTestDB(t)
+	bookID, err := d.CreateBook(&Book{Title: "Cascade Book", MediaType: "ebook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	editionID, err := d.CreateEdition(&Edition{BookID: bookID, Title: "Cascade Book"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := d.CreateFile(&File{EditionID: editionID, MediaType: "ebook", Format: "epub", FilePath: "/books/cascade.epub", IsManaged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.db.Exec("DELETE FROM files WHERE id = ?", fileID); err != nil {
+		t.Fatal(err)
+	}
+	if countRows(t, d, "editions", "id = ?", editionID) != 1 || countRows(t, d, "books", "id = ?", bookID) != 1 {
+		t.Fatal("deleting a file should not delete its edition or book")
+	}
+
+	if _, err := d.CreateFile(&File{EditionID: editionID, MediaType: "ebook", Format: "mobi", FilePath: "/books/cascade.mobi", IsManaged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.db.Exec("DELETE FROM books WHERE id = ?", bookID); err != nil {
+		t.Fatal(err)
+	}
+	if countRows(t, d, "books", "id = ?", bookID) != 0 {
+		t.Fatal("book was not deleted")
+	}
+	if countRows(t, d, "editions", "id = ?", editionID) != 0 {
+		t.Fatal("deleting a book should cascade to editions")
+	}
+	if countRows(t, d, "files", "edition_id = ?", editionID) != 0 {
+		t.Fatal("deleting a book should cascade to files through editions")
 	}
 }
 
