@@ -27,6 +27,10 @@ type legacyDeleteStore interface {
 	DeleteItemBySourceID(sourceID string) error
 }
 
+type legacyImportStore interface {
+	AddItem(*models.LibraryItem) (int64, error)
+}
+
 type LegacyLibraryRepository struct {
 	store legacyStore
 }
@@ -446,6 +450,18 @@ func (r *LegacyLibraryRepository) GetLegacyItem(ctx context.Context, id int64) (
 	return r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
 		return item.ID == id
 	})
+}
+
+func (r *LegacyLibraryRepository) ImportLegacyItem(ctx context.Context, item models.LibraryItem) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	store, ok := r.store.(legacyImportStore)
+	if !ok {
+		return 0, ErrUnsupportedOperation
+	}
+	item.ID = 0
+	return store.AddItem(&item)
 }
 
 func (r *LegacyLibraryRepository) DeleteLegacyItem(ctx context.Context, id int64) error {

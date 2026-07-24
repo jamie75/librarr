@@ -53,6 +53,18 @@ type Server struct {
 
 // NewServer creates the HTTP API server.
 func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, downloadMgr *download.Manager, qb *download.QBittorrentClient, transmission *download.TransmissionClient, sab *download.SABnzbdClient, organizer *organize.Organizer, targets *organize.LibraryTargets) *Server {
+	slog.Warn("NewServer called without explicit LibraryService; using legacy repository compatibility fallback")
+	librarySvc, err := library.NewLegacyLibraryService(database)
+	if err != nil {
+		panic(err)
+	}
+	return NewServerWithLibraryService(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySvc)
+}
+
+func NewServerWithLibraryService(cfg *config.Config, database *db.DB, searchMgr *search.Manager, downloadMgr *download.Manager, qb *download.QBittorrentClient, transmission *download.TransmissionClient, sab *download.SABnzbdClient, organizer *organize.Organizer, targets *organize.LibraryTargets, librarySvc *library.LibraryService) *Server {
+	if librarySvc == nil {
+		panic("api.NewServerWithLibraryService requires an explicit LibraryService")
+	}
 	sessions := NewSessionStore()
 
 	// Configure which reverse proxies may set forwarded headers we honor.
@@ -95,11 +107,6 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 
 	// Wire webhook sender into download manager.
 	downloadMgr.SetWebhookSender(ws)
-
-	librarySvc, err := library.NewLegacyLibraryService(database)
-	if err != nil {
-		panic(err)
-	}
 
 	// Initialize scheduler, series detector, and author monitor.
 	sched := scheduler.NewScheduler(cfg, database, searchMgr, downloadMgr, ws)
@@ -151,9 +158,16 @@ func (s *Server) library() *library.LibraryService {
 	if s.libraryService != nil {
 		return s.libraryService
 	}
+	if s.cfg != nil {
+		mode, err := s.cfg.NormalizedLibraryRepositoryMode()
+		if err == nil && mode == "normalized" {
+			panic("api.Server missing LibraryService while normalized repository mode is configured")
+		}
+	}
 	if s.db == nil {
 		return nil
 	}
+	slog.Warn("api.Server missing LibraryService; lazily using legacy repository compatibility fallback")
 	librarySvc, err := library.NewLegacyLibraryService(s.db)
 	if err != nil {
 		return nil

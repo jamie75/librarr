@@ -327,4 +327,8 @@ func (d *DB) GetDBPath() string {
 	return d.path
 }
 
+func (d *DB) SQLDB() *sql.DB {
+	return d.db
+}
+
 // ItemToJSON converts a LibraryItem to a JSON-friendly map.

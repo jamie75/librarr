@@ -27,6 +27,7 @@ type LegacyCompatibilityRepository interface {
 	CountLegacyItems(context.Context, string) (int, error)
 	LegacyStats(context.Context) (map[string]interface{}, error)
 	GetLegacyItem(context.Context, int64) (models.LibraryItem, error)
+	ImportLegacyItem(context.Context, models.LibraryItem) (int64, error)
 	DeleteLegacyItem(context.Context, int64) error
 	DeleteLegacyItemBySourceID(context.Context, string) error
 	HasLegacySourceID(context.Context, string) (bool, error)
@@ -204,6 +205,14 @@ func (s *LibraryService) GetLegacyItem(ctx context.Context, id int64) (models.Li
 	}
 	item, err := s.legacy.GetLegacyItem(ctx, id)
 	return item, translateLibraryError(err)
+}
+
+func (s *LibraryService) ImportLegacyItem(ctx context.Context, item models.LibraryItem) (int64, error) {
+	if s.legacy == nil {
+		return 0, ErrUnsupportedOperation
+	}
+	id, err := s.legacy.ImportLegacyItem(ctx, item)
+	return id, translateLibraryError(err)
 }
 
 func (s *LibraryService) DeleteLegacyItem(ctx context.Context, id int64) error {

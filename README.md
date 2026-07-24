@@ -20,7 +20,7 @@ Librarr is evolving into its own book-centric library platform, focused on:
 - Media Assistant integration
 - long-term API stability
 
-Existing users continue using the proven legacy storage model while the Librarr 2.0 migration, validation, and repository-switch process is completed.
+Existing users continue using the proven legacy storage model by default while Librarr 2.0 normalized storage can be explicitly enabled after a successful backfill and validation.
 
 Today, Librarr remains a self-hosted book, audiobook, and manga search and download manager. It searches configured indexers in parallel, scores results by confidence, and auto-imports into your Calibre, Audiobookshelf, Kavita, or Komga library. Single ~17MB Go binary, no runtime dependencies — **~14MB RSS idle** in a real homelab[^1], typically 10-20× lower than the .NET-based *arr apps.
 
@@ -63,7 +63,7 @@ Originally inspired by Readarr.
 - ✅ Normalized Repository
 - ✅ Migration Design
 - ✅ Backfill Engine
-- ⬜ Repository Switch
+- ✅ Repository Switch
 - ⬜ Import Pipeline v2
 - ⬜ UI Enhancements
 - ⬜ Metadata Engine
@@ -84,19 +84,47 @@ The long-term direction is:
 
 ## Architecture Overview
 
-Production still uses the legacy repository and `library_items` as the active storage source. The normalized repository and backfill engine are present so Librarr 2.0 can be migrated safely before the production switch.
+Production defaults to the legacy repository and `library_items` as the active storage source. Operators can explicitly select normalized storage after the Librarr 2.0 backfill completes and validates successfully. Legacy storage remains available for rollback by switching the repository mode back to `legacy`.
 
 ```mermaid
 flowchart TD
     A[LibraryService] --> B[Repository]
-    B --> C[Legacy Repository]
-    C --> D[(library_items)]
+    B --> C{LIBRARR_LIBRARY_REPOSITORY_MODE}
+    C --> D[Legacy Repository]
+    D --> E[(library_items)]
 
-    B -. Librarr 2.0 migration path .-> E[Normalized Repository]
-    E --> F[(books)]
-    F --> G[(editions)]
-    G --> H[(files)]
+    C --> F[Normalized Repository]
+    F --> G[(books)]
+    G --> H[(editions)]
+    H --> I[(files)]
+
+    J[Backfill + Validation] -. gates activation .-> F
 ```
+
+## Repository Mode
+
+Librarr selects the active library repository at startup:
+
+```text
+LIBRARR_LIBRARY_REPOSITORY_MODE=legacy      # default
+LIBRARR_LIBRARY_REPOSITORY_MODE=normalized  # explicit Librarr 2.0 storage
+```
+
+Normalized mode is refused unless startup can verify that:
+
+- required normalized schema migrations have completed;
+- a non-dry-run Librarr 2.0 backfill completed successfully;
+- the stored backfill validation report passed;
+- migration state has completed rows for the legacy library and no incomplete or failed rows;
+- mapped normalized books, editions, and files still exist.
+
+Rollback is configuration-only:
+
+```text
+LIBRARR_LIBRARY_REPOSITORY_MODE=legacy
+```
+
+No legacy rows are deleted by the repository switch.
 
 ## Migration Status
 
@@ -105,12 +133,12 @@ Current production path:
 ```text
 LibraryService
   ↓
-LegacyRepository
+Selected Repository
   ↓
-library_items
+library_items or normalized books/editions/files
 ```
 
-Upcoming Librarr 2.0 path:
+Librarr 2.0 migration path:
 
 ```text
 Backfill
@@ -122,7 +150,7 @@ Repository Switch
 Public 2.0
 ```
 
-The migration engine is designed to be deterministic, repeatable, and idempotent. It records migration state separately from production reads, validates normalized records, and preserves the legacy model until the repository switch is intentionally completed.
+The migration engine is deterministic, repeatable, and idempotent. It records migration state separately from production reads, validates normalized records, and preserves the legacy model. The repository switch is explicit and reversible: set `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized` only after backfill validation passes, and return to `legacy` if rollback is needed.
 
 ## Features
 

@@ -77,6 +77,16 @@ func TestLoad_Defaults(t *testing.T) {
 			t.Error("expected RateLimitEnabled=true by default")
 		}
 	})
+
+	t.Run("library repository mode defaults to legacy", func(t *testing.T) {
+		mode, err := cfg.NormalizedLibraryRepositoryMode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode != "legacy" {
+			t.Errorf("expected legacy repository mode, got %q", mode)
+		}
+	})
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
@@ -87,11 +97,12 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	os.Setenv("ANNAS_ARCHIVE_DOMAIN", "https://annas-archive.org/search/")
 	os.Setenv("MIN_TORRENT_SIZE_BYTES", "50000")
 	os.Setenv("OIDC_PROXY_HEADERS_ENABLED", "true")
+	os.Setenv("LIBRARR_LIBRARY_REPOSITORY_MODE", "normalized")
 	defer func() {
 		for _, key := range []string{
 			"LIBRARR_PORT", "LIBRARR_DB_PATH", "QB_URL",
 			"FILE_ORG_ENABLED", "ANNAS_ARCHIVE_DOMAIN", "MIN_TORRENT_SIZE_BYTES",
-			"OIDC_PROXY_HEADERS_ENABLED",
+			"OIDC_PROXY_HEADERS_ENABLED", "LIBRARR_LIBRARY_REPOSITORY_MODE",
 		} {
 			os.Unsetenv(key)
 		}
@@ -119,6 +130,16 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if !cfg.OIDCProxyHeaders {
 		t.Error("expected OIDCProxyHeaders=true with env override")
+	}
+	if cfg.LibraryRepositoryMode != "normalized" {
+		t.Errorf("expected normalized repository mode, got %q", cfg.LibraryRepositoryMode)
+	}
+}
+
+func TestNormalizedLibraryRepositoryModeRejectsInvalidValue(t *testing.T) {
+	cfg := &Config{LibraryRepositoryMode: "weird"}
+	if _, err := cfg.NormalizedLibraryRepositoryMode(); err == nil {
+		t.Fatal("expected invalid repository mode error")
 	}
 }
 

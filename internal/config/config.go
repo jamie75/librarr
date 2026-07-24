@@ -4,6 +4,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -57,6 +58,11 @@ type Config struct {
 	// mirrors, and per-site config from here instead of from hardcoded
 	// constants. Always non-nil after Load() returns.
 	Sources *sources.Registry
+
+	// LibraryRepositoryMode selects the production library storage backend.
+	// Supported values are "legacy" and "normalized"; legacy is the safe
+	// default for existing installations.
+	LibraryRepositoryMode string
 
 	// Circuit Breaker
 	CircuitBreakerThreshold int
@@ -283,6 +289,8 @@ func buildFromEnv() *Config {
 		Port:           getEnvInt("LIBRARR_PORT", 5050),
 		DBPath:         dbPath,
 		TrustedProxies: splitCSV(getEnv("LIBRARR_TRUSTED_PROXIES", "")),
+
+		LibraryRepositoryMode: getEnv("LIBRARR_LIBRARY_REPOSITORY_MODE", "legacy"),
 
 		QBUrl:               getEnv("QB_URL", ""),
 		QBUser:              getEnv("QB_USER", "admin"),
@@ -590,6 +598,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"incoming_dir":              &c.IncomingDir,
 		"manga_incoming_dir":        &c.MangaIncomingDir,
 		"flibusta_url":              &c.FlibustaURL,
+		"library_repository_mode":   &c.LibraryRepositoryMode,
 	}
 	for key, fieldPtr := range strPtrs {
 		v, ok := raw[key]
@@ -652,6 +661,19 @@ func (c *Config) applySettingsFileOverrides() {
 				*fieldPtr = n
 			}
 		}
+	}
+}
+
+func (c *Config) NormalizedLibraryRepositoryMode() (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(c.LibraryRepositoryMode))
+	if mode == "" {
+		return "legacy", nil
+	}
+	switch mode {
+	case "legacy", "normalized":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid LIBRARR_LIBRARY_REPOSITORY_MODE %q: expected \"legacy\" or \"normalized\"", c.LibraryRepositoryMode)
 	}
 }
 

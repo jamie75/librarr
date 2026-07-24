@@ -98,6 +98,25 @@ func (s sqlLegacyStore) GetStats() (map[string]interface{}, error) {
 	}, nil
 }
 
+func (s sqlLegacyStore) AddItem(item *models.LibraryItem) (int64, error) {
+	if item == nil {
+		return 0, fmt.Errorf("library item is nil")
+	}
+	metadata := item.Metadata
+	if metadata == "" {
+		metadata = "{}"
+	}
+	res, err := s.db.Exec(`INSERT INTO library_items
+		(title, author, file_path, original_path, file_size, file_format, media_type, source, source_id, metadata, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.Title, item.Author, item.FilePath, item.OriginalPath, item.FileSize, item.FileFormat,
+		item.MediaType, item.Source, item.SourceID, metadata, item.ContentHash)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
 func (s sqlLegacyStore) DeleteItem(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM library_items WHERE id = ?`, id)
 	if err != nil {

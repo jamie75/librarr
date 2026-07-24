@@ -16,6 +16,7 @@ import (
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
 	"github.com/JeremiahM37/librarr/internal/download"
+	"github.com/JeremiahM37/librarr/internal/library"
 	"github.com/JeremiahM37/librarr/internal/netutil"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/search"
@@ -121,6 +122,12 @@ func main() {
 	targets := organize.NewLibraryTargets(cfg)
 	downloadMgr := download.NewManager(cfg, database, torrentClient, sab, directDL, organizer, targets, health)
 
+	librarySelection, err := library.NewConfiguredLibraryService(ctx, cfg, database)
+	if err != nil {
+		slog.Error("failed to configure library repository", "error", err)
+		os.Exit(1)
+	}
+
 	// Try to connect to qBittorrent on startup (Transmission has no persistent
 	// login — it handshakes a session id lazily on first request).
 	if cfg.ActiveTorrentClient() == "qbittorrent" {
@@ -138,7 +145,7 @@ func main() {
 	go scanner.Start(ctx)
 
 	// Create HTTP server (also initializes webhook sender, scheduler, series detector).
-	server := api.NewServer(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets)
+	server := api.NewServerWithLibraryService(cfg, database, searchMgr, downloadMgr, qb, transmission, sab, organizer, targets, librarySelection.LibraryService)
 
 	// Start scheduled search goroutine.
 	go server.StartScheduler(ctx)
