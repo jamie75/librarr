@@ -9,7 +9,9 @@ type BookRepository interface {
 	FindBookByIdentifier(context.Context, Identifier) (*Book, error)
 	GetBook(context.Context, int64) (*Book, error)
 	ListBooks(context.Context, ListBooksQuery) ([]Book, error)
+	ListBookReadModels(context.Context, ListBooksQuery) ([]BookReadModel, error)
 	CountListedBooks(context.Context, ListBooksQuery) (int, error)
+	GetLibrarySummary(context.Context) (LibrarySummary, error)
 	SearchBooks(context.Context, BookQuery) ([]Book, error)
 	CountBooks(context.Context, BookQuery) (int, error)
 	RecentBooks(context.Context, ListBooksQuery) ([]Book, error)
@@ -93,6 +95,29 @@ type ListBooksQuery struct {
 	Order     string
 	Limit     int
 	Offset    int
+}
+
+type BookReadModel struct {
+	Book          Book
+	PrimaryAuthor *Contributor
+	Contributors  []Contributor
+	Identifiers   []Identifier
+	Series        []BookSeries
+	Formats       []string
+	EditionCount  int
+	FileCount     int
+	LocalCover    *Cover
+}
+
+type LibrarySummary struct {
+	TotalBooks       int
+	TotalEditions    int
+	TotalFiles       int
+	EbookCount       int
+	AudiobookCount   int
+	MangaCount       int
+	RecentAddedCount int
+	FormatCounts     map[string]int
 }
 
 type EditionRepository interface {

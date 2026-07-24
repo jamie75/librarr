@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JeremiahM37/librarr/internal/config"
@@ -47,7 +49,6 @@ func TestV1BooksListSupportsPaginationSortSearchAndFormat(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/books?media_type=ebook&search=andy&format=mobi", nil)
 	rr = httptest.NewRecorder()
 	s.handleV1Books(rr, req)
-
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
@@ -84,7 +85,7 @@ func TestV1BookDetailFilesAndEditions(t *testing.T) {
 	if detail.Series.Name == nil || *detail.Series.Name != "The Ryland Grace Files" {
 		t.Fatalf("series = %+v", detail.Series)
 	}
-	if detail.Cover.URL == nil || *detail.Cover.URL != "https://covers.example/project-hail-mary.jpg" {
+	if detail.Cover.URL == nil || *detail.Cover.URL != fmt.Sprintf("/api/v1/books/%d/cover", ids.projectHailMaryID) {
 		t.Fatalf("cover = %+v", detail.Cover)
 	}
 	if len(detail.Editions) != 1 || detail.Editions[0].FileCount != 2 {
@@ -217,9 +218,90 @@ func TestV1BooksRejectLegacyModeAndCompatibilityEndpointRemainsAvailable(t *test
 	}
 }
 
+func TestV1BooksSupportAudiobooksAndMangaAndSummary(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/books?media_type=audiobook", nil)
+	rr := httptest.NewRecorder()
+	s.handleV1Books(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("audiobook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var listBody struct {
+		Items []v1BookSummary `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &listBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(listBody.Items) != 1 || listBody.Items[0].ID != ids.audiobookID || listBody.Items[0].MediaType != "audiobook" {
+		t.Fatalf("audiobook items = %+v", listBody.Items)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/books?media_type=manga", nil)
+	rr = httptest.NewRecorder()
+	s.handleV1Books(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("manga status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &listBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(listBody.Items) != 1 || listBody.Items[0].ID != ids.mangaID || listBody.Items[0].MediaType != "manga" {
+		t.Fatalf("manga items = %+v", listBody.Items)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/library/summary", nil)
+	rr = httptest.NewRecorder()
+	s.handleV1LibrarySummary(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("summary status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var summary map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary["total_books"].(float64) != 4 || summary["ebooks"].(float64) != 2 || summary["audiobooks"].(float64) != 1 || summary["manga"].(float64) != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	formats := summary["format_distribution"].(map[string]any)
+	if formats["epub"].(float64) < 2 || formats["mobi"].(float64) < 1 || formats["mp3"].(float64) < 1 || formats["cbz"].(float64) < 1 {
+		t.Fatalf("format distribution = %+v", formats)
+	}
+}
+
+func TestV1BookCoverSuccessAndNotFound(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/cover", ids.projectHailMaryID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookCover(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("cover status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); got == "" || !strings.HasPrefix(got, "image/") {
+		t.Fatalf("content-type = %q", got)
+	}
+	if rr.Body.Len() == 0 {
+		t.Fatal("expected image body")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/cover", ids.darkMatterID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.darkMatterID))
+	rr = httptest.NewRecorder()
+	s.handleV1BookCover(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cover missing status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 type normalizedBookAPIIDs struct {
 	projectHailMaryID int64
 	darkMatterID      int64
+	audiobookID       int64
+	mangaID           int64
 }
 
 func newNormalizedBooksAPIServer(t *testing.T) (*Server, normalizedBookAPIIDs, func()) {
@@ -275,10 +357,15 @@ func newNormalizedBooksAPIServer(t *testing.T) (*Server, normalizedBookAPIIDs, f
 	}); err != nil {
 		t.Fatal(err)
 	}
+	coverPath := filepath.Join(t.TempDir(), "project-hail-mary-cover.png")
+	if err := os.WriteFile(coverPath, []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := repo.AttachCover(ctx, library.Cover{
 		BookID:    firstBook.ID,
 		Source:    "test",
-		SourceURL: "https://covers.example/project-hail-mary.jpg",
+		LocalPath: coverPath,
+		MimeType:  "image/png",
 		IsPrimary: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -343,6 +430,69 @@ func newNormalizedBooksAPIServer(t *testing.T) (*Server, normalizedBookAPIIDs, f
 		t.Fatal(err)
 	}
 
+	audiobookBook, err := selection.LibraryService.CreateBook(ctx, library.Book{
+		Title:     "Project Hail Mary Audio",
+		SortTitle: "Project Hail Mary Audio",
+		MediaType: library.MediaTypeAudiobook,
+		Status:    library.BookStatusOwned,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audiobookEdition, err := selection.LibraryService.CreateEdition(ctx, library.Edition{
+		BookID: audiobookBook.ID,
+		Title:  "Project Hail Mary Audio",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := selection.LibraryService.AttachContributor(ctx, audiobookEdition.ID, library.Contributor{Name: "Ray Porter", Roles: []library.ContributorRole{library.RoleNarrator}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selection.LibraryService.AttachFile(ctx, library.BookFile{
+		EditionID:    audiobookEdition.ID,
+		MediaType:    library.MediaTypeAudiobook,
+		Format:       "mp3",
+		Path:         "/books/project-hail-mary-audio.mp3",
+		OriginalPath: "/incoming/project-hail-mary-audio.mp3",
+		Size:         1000,
+		ContentHash:  "hash-audio",
+		SourceID:     "source-audio",
+		SourceType:   "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mangaBook, err := selection.LibraryService.CreateBook(ctx, library.Book{
+		Title:     "Yotsuba",
+		SortTitle: "Yotsuba",
+		MediaType: library.MediaTypeManga,
+		Status:    library.BookStatusOwned,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mangaEdition, err := selection.LibraryService.CreateEdition(ctx, library.Edition{
+		BookID: mangaBook.ID,
+		Title:  "Yotsuba",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selection.LibraryService.AttachFile(ctx, library.BookFile{
+		EditionID:    mangaEdition.ID,
+		MediaType:    library.MediaTypeManga,
+		Format:       "cbz",
+		Path:         "/books/yotsuba.cbz",
+		OriginalPath: "/incoming/yotsuba.cbz",
+		Size:         700,
+		ContentHash:  "hash-manga",
+		SourceID:     "source-manga",
+		SourceType:   "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := d.SQLDB().Exec(`UPDATE books SET created_at = '2026-07-20 10:00:00', updated_at = '2026-07-20 10:00:00' WHERE id = ?`, firstBook.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -353,5 +503,7 @@ func newNormalizedBooksAPIServer(t *testing.T) (*Server, normalizedBookAPIIDs, f
 	return &Server{cfg: cfg, db: d, libraryService: selection.LibraryService}, normalizedBookAPIIDs{
 		projectHailMaryID: firstBook.ID,
 		darkMatterID:      secondBook.ID,
+		audiobookID:       audiobookBook.ID,
+		mangaID:           mangaBook.ID,
 	}, func() { _ = d.Close() }
 }

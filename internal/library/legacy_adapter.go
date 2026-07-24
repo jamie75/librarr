@@ -116,6 +116,19 @@ func (r *LegacyLibraryRepository) ListBooks(ctx context.Context, query ListBooks
 	return books, nil
 }
 
+func (r *LegacyLibraryRepository) ListBookReadModels(ctx context.Context, query ListBooksQuery) ([]BookReadModel, error) {
+	books, err := r.ListBooks(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]BookReadModel, 0, len(books))
+	for _, book := range books {
+		bookCopy := book
+		items = append(items, BookReadModel{Book: bookCopy})
+	}
+	return items, nil
+}
+
 func (r *LegacyLibraryRepository) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -133,6 +146,13 @@ func (r *LegacyLibraryRepository) CountListedBooks(ctx context.Context, query Li
 		return len(books), nil
 	}
 	return r.CountBooks(ctx, BookQuery{Title: query.Search, MediaType: query.MediaType})
+}
+
+func (r *LegacyLibraryRepository) GetLibrarySummary(ctx context.Context) (LibrarySummary, error) {
+	if err := ctx.Err(); err != nil {
+		return LibrarySummary{}, err
+	}
+	return LibrarySummary{}, ErrUnsupportedOperation
 }
 
 func (r *LegacyLibraryRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {

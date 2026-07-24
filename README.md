@@ -169,6 +169,25 @@ Public 2.0
 
 The migration engine is deterministic, repeatable, and idempotent. It records migration state separately from production reads, validates normalized records, and preserves the legacy model. The repository switch is explicit and reversible: set `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized` only after backfill validation passes, and return to `legacy` if rollback is needed.
 
+## Librarr 2.0 Read API Status
+
+The normalized read API is now active behind repository selection.
+
+- `GET /api/v1/books`
+- `GET /api/v1/books/{id}`
+- `GET /api/v1/books/{id}/files`
+- `GET /api/v1/books/{id}/editions`
+- `GET /api/v1/books/{id}/cover`
+- `GET /api/v1/library/summary`
+
+Current behavior:
+
+- normalized mode serves native Librarr 2.0 book, file, cover, and summary data
+- legacy mode keeps `/api/library` compatibility routes unchanged
+- the Librarr 2.0 UI uses the normalized endpoints for ebooks, audiobooks, and manga when `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized`
+
+The normalized book-list endpoint now uses a batched repository-backed read model so book cards do not require one enrichment query per book.
+
 ## Import Engine Status
 
 The first end-to-end Librarr 2.0 import path now exists behind a feature flag.

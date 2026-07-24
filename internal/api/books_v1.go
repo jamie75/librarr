@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -174,24 +176,19 @@ func (s *Server) handleV1Books(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books, err := s.library().ListBooks(r.Context(), query)
+	items, err := s.library().ListBookReadModels(r.Context(), query)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to load books", err)
 		return
 	}
 
-	items := make([]v1BookSummary, 0, len(books))
-	for _, book := range books {
-		summary, err := s.buildV1BookSummary(r.Context(), book)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to build book response", err)
-			return
-		}
-		items = append(items, summary)
+	responseItems := make([]v1BookSummary, 0, len(items))
+	for _, item := range items {
+		responseItems = append(responseItems, buildV1BookSummary(item))
 	}
 
 	writeJSON(w, http.StatusOK, v1BookListResponse{
-		Items: items,
+		Items: responseItems,
 		Pagination: v1PaginationBlock{
 			Limit:  query.Limit,
 			Offset: query.Offset,
@@ -291,6 +288,82 @@ func (s *Server) handleV1BookEditions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": editions})
 }
 
+func (s *Server) handleV1LibrarySummary(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureNormalizedReadAPI(w) {
+		return
+	}
+	summary, err := s.library().GetLibrarySummary(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load library summary", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_books":         summary.TotalBooks,
+		"total_editions":      summary.TotalEditions,
+		"total_files":         summary.TotalFiles,
+		"ebooks":              summary.EbookCount,
+		"audiobooks":          summary.AudiobookCount,
+		"manga":               summary.MangaCount,
+		"recently_added":      summary.RecentAddedCount,
+		"format_distribution": summary.FormatCounts,
+	})
+}
+
+func (s *Server) handleV1BookCover(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureNormalizedReadAPI(w) {
+		return
+	}
+	bookID, ok := parseIDPathValue(w, r, "id", "Invalid book ID")
+	if !ok {
+		return
+	}
+	if _, err := s.library().GetBook(r.Context(), bookID); errors.Is(err, library.ErrBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Book not found"})
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load book", err)
+		return
+	}
+	cover, err := s.library().GetPrimaryCover(r.Context(), bookID)
+	if errors.Is(err, library.ErrBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Cover not found"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load cover", err)
+		return
+	}
+	if strings.TrimSpace(cover.LocalPath) == "" {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Cover not found"})
+		return
+	}
+	file, err := os.Open(cover.LocalPath)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Cover not found"})
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Cover not found"})
+		return
+	}
+	header := make([]byte, 512)
+	n, _ := io.ReadFull(file, header)
+	contentType := strings.TrimSpace(cover.MimeType)
+	if contentType == "" {
+		contentType = http.DetectContentType(header[:n])
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Cover not found"})
+		return
+	}
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	http.ServeContent(w, r, "cover", info.ModTime(), file)
+}
+
 func (s *Server) ensureNormalizedReadAPI(w http.ResponseWriter) bool {
 	mode, err := s.cfg.NormalizedLibraryRepositoryMode()
 	if err != nil || mode != "normalized" {
@@ -315,28 +388,24 @@ func parseIDPathValue(w http.ResponseWriter, r *http.Request, key, message strin
 	return id, true
 }
 
-func (s *Server) buildV1BookSummary(ctx context.Context, book library.Book) (v1BookSummary, error) {
-	detail, err := s.buildV1BookDetail(ctx, book)
-	if err != nil {
-		return v1BookSummary{}, err
-	}
+func buildV1BookSummary(item library.BookReadModel) v1BookSummary {
 	return v1BookSummary{
-		ID:            detail.ID,
-		Title:         detail.Title,
-		SortTitle:     detail.SortTitle,
-		MediaType:     detail.MediaType,
-		Description:   detail.Description,
-		Series:        detail.Series,
-		PrimaryAuthor: detail.PrimaryAuthor,
-		Contributors:  detail.Contributors,
-		Identifiers:   detail.Identifiers,
-		Formats:       detail.Formats,
-		EditionCount:  detail.EditionCount,
-		FileCount:     detail.FileCount,
-		Cover:         detail.Cover,
-		CreatedAt:     detail.CreatedAt,
-		UpdatedAt:     detail.UpdatedAt,
-	}, nil
+		ID:            item.Book.ID,
+		Title:         item.Book.Title,
+		SortTitle:     item.Book.SortTitle,
+		MediaType:     string(item.Book.MediaType),
+		Description:   item.Book.Description,
+		Series:        mapSeries(item.Series),
+		PrimaryAuthor: mapPrimaryAuthor(item.PrimaryAuthor),
+		Contributors:  mapContributors(item.Contributors),
+		Identifiers:   mapIdentifiers(item.Identifiers),
+		Formats:       item.Formats,
+		EditionCount:  item.EditionCount,
+		FileCount:     item.FileCount,
+		Cover:         mapBookCover(item.Book.ID, item.LocalCover),
+		CreatedAt:     formatAPITime(item.Book.CreatedAt),
+		UpdatedAt:     formatAPITime(item.Book.UpdatedAt),
+	}
 }
 
 func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1BookDetailResponse, error) {
@@ -366,7 +435,7 @@ func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1Bo
 		FileCount:       len(files),
 		EditionCount:    len(editions),
 		Editions:        editions,
-		Cover:           mapCover(book.Covers),
+		Cover:           mapBookCover(book.ID, primaryLocalBookCover(book.Covers)),
 		CreatedAt:       formatAPITime(book.CreatedAt),
 		UpdatedAt:       formatAPITime(book.UpdatedAt),
 	}, nil
@@ -452,20 +521,29 @@ func mapIdentifiers(identifiers []library.Identifier) []v1IdentifierSummary {
 	return items
 }
 
-func mapCover(covers []library.Cover) v1CoverSummary {
-	if len(covers) == 0 {
+func mapPrimaryAuthor(contributor *library.Contributor) *v1PrimaryAuthorSummary {
+	if contributor == nil {
+		return nil
+	}
+	return &v1PrimaryAuthorSummary{ID: contributor.ID, Name: contributor.Name}
+}
+
+func mapBookCover(bookID int64, cover *library.Cover) v1CoverSummary {
+	if cover == nil || strings.TrimSpace(cover.LocalPath) == "" {
 		return v1CoverSummary{}
 	}
+	url := "/api/v1/books/" + strconv.FormatInt(bookID, 10) + "/cover"
+	return v1CoverSummary{Available: true, URL: &url}
+}
+
+func primaryLocalBookCover(covers []library.Cover) *library.Cover {
 	for _, cover := range covers {
-		if strings.TrimSpace(cover.SourceURL) != "" {
-			url := cover.SourceURL
-			return v1CoverSummary{Available: true, URL: &url}
-		}
 		if strings.TrimSpace(cover.LocalPath) != "" {
-			return v1CoverSummary{Available: true}
+			copyCover := cover
+			return &copyCover
 		}
 	}
-	return v1CoverSummary{Available: true}
+	return nil
 }
 
 func aggregateContributors(editions []v1EditionSummary) ([]v1ContributorSummary, *v1PrimaryAuthorSummary) {

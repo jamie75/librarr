@@ -1827,7 +1827,7 @@ async function loadLibrary() {
   const tab = state.libraryTab;
   const q = document.getElementById('library-search').value.trim();
   const page = state.libraryPage;
-  const normalizedBooks = normalizedLibraryMode() && tab === 'ebooks';
+  const normalizedBooks = normalizedLibraryMode();
 
   const endpoints = {
     ebooks: `/api/library?page=${page}${q ? '&q=' + encodeURIComponent(q) : ''}`,
@@ -1844,7 +1844,8 @@ async function loadLibrary() {
     if (normalizedBooks) {
       const limit = 24;
       const offset = (page - 1) * limit;
-      const data = await apiJson(`/api/v1/books?media_type=ebook&limit=${limit}&offset=${offset}&sort=title&order=asc${q ? '&search=' + encodeURIComponent(q) : ''}`);
+      const mediaType = normalizedMediaTypeForTab(tab);
+      const data = await apiJson(`/api/v1/books?media_type=${encodeURIComponent(mediaType)}&limit=${limit}&offset=${offset}&sort=title&order=asc${q ? '&search=' + encodeURIComponent(q) : ''}`);
       const total = data.pagination?.total || 0;
       state.libraryPages = Math.max(1, Math.ceil(total / limit));
       books = (data.items || []).map(mapV1BookToUIBook);
@@ -1885,13 +1886,21 @@ function normalizedLibraryMode() {
   return (state.config?.library_repository_mode || '').toLowerCase() === 'normalized';
 }
 
+function normalizedMediaTypeForTab(tab) {
+  switch (tab) {
+    case 'audiobooks': return 'audiobook';
+    case 'manga': return 'manga';
+    default: return 'ebook';
+  }
+}
+
 function mapV1BookToUIBook(book) {
   return {
     id: book.id,
     title: book.title || t('unknown_title'),
     author: book.primary_author?.name || (book.contributors?.find(c => c.role === 'author')?.name || ''),
     series: book.series?.name || '',
-    coverUrl: book.cover?.url || '',
+    coverUrl: book.cover?.available ? (book.cover?.url || '') : '',
     mediaType: book.media_type || 'ebook',
     formats: (book.formats || []).map(format => String(format).toUpperCase()),
     files: [],
@@ -2072,11 +2081,15 @@ async function loadHomeDashboard() {
   const container = document.getElementById('home-dashboard');
   if (!container) return;
   try {
-    const recentLibraryRequest = normalizedLibraryMode()
-      ? apiJson('/api/v1/books?media_type=ebook&limit=4&offset=0&sort=recently_added&order=desc')
+    const useNormalized = normalizedLibraryMode();
+    const recentLibraryRequest = useNormalized
+      ? apiJson('/api/v1/books?limit=4&offset=0&sort=recently_added&order=desc')
       : apiJson('/api/library?limit=8');
+    const statsRequest = useNormalized
+      ? apiJson('/api/v1/library/summary')
+      : apiJson('/api/stats');
     const [statsRes, downloadsRes, wishlistRes, activityRes, libraryRes] = await Promise.allSettled([
-      apiJson('/api/stats'),
+      statsRequest,
       apiJson('/api/downloads'),
       apiJson('/api/wishlist'),
       apiJson('/api/activity?limit=6'),
@@ -2088,12 +2101,14 @@ async function loadHomeDashboard() {
     const wishlist = wishlistRes.status === 'fulfilled' ? (wishlistRes.value.items || []) : [];
     const activity = activityRes.status === 'fulfilled' ? (activityRes.value.events || []) : [];
     const recentBooks = libraryRes.status === 'fulfilled'
-      ? (normalizedLibraryMode()
+      ? (useNormalized
           ? (libraryRes.value.items || []).map(mapV1BookToUIBook)
           : groupLibraryItems(libraryRes.value.items || [], 'ebooks').slice(0, 4))
       : [];
     state.homeBooks = recentBooks;
-    const formatCounts = buildFormatCounts(recentBooks);
+    const formatCounts = useNormalized
+      ? (stats.format_distribution || {})
+      : buildFormatCounts(recentBooks);
 
     container.innerHTML = `
       <section class="dashboard-panel lg:col-span-7 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
@@ -2108,7 +2123,7 @@ async function loadHomeDashboard() {
       <section class="dashboard-panel lg:col-span-5 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_totals')}</h3>
         <div class="grid grid-cols-2 gap-3">
-          ${renderMetricCard('Books', stats.total_items ?? 0)}
+          ${renderMetricCard('Books', useNormalized ? (stats.total_books ?? 0) : (stats.total_items ?? 0))}
           ${renderMetricCard('Ebooks', stats.ebooks ?? 0)}
           ${renderMetricCard('Audiobooks', stats.audiobooks ?? 0)}
           ${renderMetricCard('Manga', stats.manga ?? 0)}

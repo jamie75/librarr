@@ -177,7 +177,7 @@
     "/api/v1/books": {
       "get": {
         "summary": "List normalized Librarr 2.0 books",
-        "description": "Returns one logical book per item. Requires LIBRARR_LIBRARY_REPOSITORY_MODE=normalized.",
+        "description": "Returns one logical book per item with batched normalized enrichment. Requires LIBRARR_LIBRARY_REPOSITORY_MODE=normalized.",
         "parameters": [
           {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}},
           {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}},
@@ -205,6 +205,18 @@
       "get": {
         "summary": "List editions for a normalized book",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
+    "/api/v1/books/{id}/cover": {
+      "get": {
+        "summary": "Serve a stored local cover image for a normalized book",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      }
+    },
+    "/api/v1/library/summary": {
+      "get": {
+        "summary": "Return normalized library totals and format distribution",
+        "description": "Returns native counts from normalized Librarr 2.0 tables. Requires LIBRARR_LIBRARY_REPOSITORY_MODE=normalized."
       }
     },
     "/api/library/audiobooks": {"get": {"summary": "List audiobooks (proxied from Audiobookshelf when configured)"}},

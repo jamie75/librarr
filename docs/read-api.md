@@ -11,6 +11,8 @@ send-to-device, metadata refresh, or compatibility write behavior.
 - `GET /api/v1/books/{id}`
 - `GET /api/v1/books/{id}/files`
 - `GET /api/v1/books/{id}/editions`
+- `GET /api/v1/books/{id}/cover`
+- `GET /api/v1/library/summary`
 
 ## Repository mode behavior
 
@@ -25,6 +27,17 @@ These endpoints are native Librarr 2.0 endpoints.
 
 Existing compatibility endpoints such as `/api/library` remain available and
 unchanged.
+
+## Media type support
+
+The normalized read API now supports:
+
+- `ebook`
+- `audiobook`
+- `manga`
+
+The same `GET /api/v1/books` endpoint handles all three through the
+`media_type` query parameter.
 
 ## Query parameters
 
@@ -71,6 +84,36 @@ represented in storage. It does not fabricate unsupported fields.
 The files endpoint returns all files attached to the logical book across all
 editions.
 
+The summary endpoint returns normalized totals directly from the Librarr 2.0
+tables, including:
+
+- total logical books
+- total editions
+- total files
+- ebook count
+- audiobook count
+- manga count
+- format distribution
+- recently added count
+
+The cover endpoint serves a stored local cover image when one exists. It does
+not proxy external images in this milestone.
+
+## Performance strategy
+
+`GET /api/v1/books` now uses a batched repository-backed read model instead of
+performing per-book enrichment. The normalized repository loads:
+
+- base books
+- contributors and primary authors
+- identifiers
+- series
+- edition/file counts
+- format lists
+- local primary-cover availability
+
+in bounded query count rather than one query per book.
+
 ## Architecture
 
 The read path is:
@@ -86,7 +129,14 @@ Handlers do not query `sql.DB` directly.
 
 ## Frontend behavior
 
-The Librarr 2.0 UI path now prefers `/api/v1/books` for ebook cards when the
-public config reports `library_repository_mode=normalized`.
+When the public config reports `library_repository_mode=normalized`, the
+Librarr 2.0 UI now uses `/api/v1/books` for:
+
+- ebooks
+- audiobooks
+- manga
+
+The Home dashboard uses `/api/v1/library/summary` for totals and format
+distribution in normalized mode.
 
 Legacy mode continues using `/api/library` compatibility responses.

@@ -96,7 +96,8 @@ Replace the file-centric library core with a normalized domain model while prese
 
 ### 2.0.6 Compatibility API
 
-- [ ] Add `/api/v1/books` and explicit file resources.
+- [x] Add `/api/v1/books` and explicit file resources.
+- [x] Add `/api/v1/library/summary` and local cover delivery for normalized reads.
 - [ ] Keep existing library endpoints available during transition.
 - [ ] Return one logical book with a `formats` list and `files` collection.
 - [ ] Preserve a preferred/default file in compatibility responses.

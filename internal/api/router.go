@@ -365,10 +365,12 @@ func (s *Server) registerDownloadRoutes() {
 // series tracking, and monitored authors.
 func (s *Server) registerLibraryRoutes() {
 	// Librarr 2.0 native normalized read API.
+	s.mux.HandleFunc("GET /api/v1/library/summary", s.handleV1LibrarySummary)
 	s.mux.HandleFunc("GET /api/v1/books", s.handleV1Books)
 	s.mux.HandleFunc("GET /api/v1/books/{id}", s.handleV1Book)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/files", s.handleV1BookFiles)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/editions", s.handleV1BookEditions)
+	s.mux.HandleFunc("GET /api/v1/books/{id}/cover", s.handleV1BookCover)
 
 	// Library.
 	s.mux.HandleFunc("GET /api/library", s.handleLibrary)

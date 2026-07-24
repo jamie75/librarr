@@ -280,6 +280,20 @@ func (r *serviceTestRepo) CountListedBooks(context.Context, ListBooksQuery) (int
 	return 1, nil
 }
 
+func (r *serviceTestRepo) ListBookReadModels(context.Context, ListBooksQuery) ([]BookReadModel, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return []BookReadModel{{Book: r.book}}, nil
+}
+
+func (r *serviceTestRepo) GetLibrarySummary(context.Context) (LibrarySummary, error) {
+	if r.err != nil {
+		return LibrarySummary{}, r.err
+	}
+	return LibrarySummary{TotalBooks: 1}, nil
+}
+
 func (r *serviceTestRepo) SearchBooks(context.Context, BookQuery) ([]Book, error) {
 	if r.err != nil {
 		return nil, r.err

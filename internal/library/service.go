@@ -163,9 +163,19 @@ func (s *LibraryService) ListBooks(ctx context.Context, query ListBooksQuery) ([
 	return books, translateLibraryError(err)
 }
 
+func (s *LibraryService) ListBookReadModels(ctx context.Context, query ListBooksQuery) ([]BookReadModel, error) {
+	items, err := s.books.ListBookReadModels(ctx, query)
+	return items, translateLibraryError(err)
+}
+
 func (s *LibraryService) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
 	count, err := s.books.CountListedBooks(ctx, query)
 	return count, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetLibrarySummary(ctx context.Context) (LibrarySummary, error) {
+	summary, err := s.books.GetLibrarySummary(ctx)
+	return summary, translateLibraryError(err)
 }
 
 func (s *LibraryService) ListRecent(ctx context.Context, mediaType MediaType, limit, offset int) ([]Book, error) {
@@ -207,6 +217,11 @@ func (s *LibraryService) GetEdition(ctx context.Context, id int64) (*Edition, er
 	}
 	edition, err := s.editions.GetEdition(ctx, id)
 	return edition, translateLibraryError(err)
+}
+
+func (s *LibraryService) GetPrimaryCover(ctx context.Context, bookID int64) (*Cover, error) {
+	cover, err := s.covers.GetPrimaryCover(ctx, bookID)
+	return cover, translateLibraryError(err)
 }
 
 func (s *LibraryService) FindEdition(ctx context.Context, bookID int64, title string) (*Edition, error) {

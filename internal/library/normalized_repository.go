@@ -18,7 +18,8 @@ type sqlExecutor interface {
 }
 
 type NormalizedRepository struct {
-	db *sql.DB
+	db        *sql.DB
+	queryHook func()
 }
 
 func NewNormalizedRepository(db *sql.DB) (*NormalizedRepository, error) {
@@ -57,6 +58,20 @@ func (r *NormalizedRepository) exec(ctx context.Context) sqlExecutor {
 		return tx
 	}
 	return r.db
+}
+
+func (r *NormalizedRepository) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if r.queryHook != nil {
+		r.queryHook()
+	}
+	return r.exec(ctx).QueryContext(ctx, query, args...)
+}
+
+func (r *NormalizedRepository) queryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if r.queryHook != nil {
+		r.queryHook()
+	}
+	return r.exec(ctx).QueryRowContext(ctx, query, args...)
 }
 
 func (r *NormalizedRepository) CreateBook(ctx context.Context, book Book) (*Book, error) {
@@ -164,11 +179,131 @@ func (r *NormalizedRepository) ListBooks(ctx context.Context, query ListBooksQue
 	return r.queryBooks(ctx, query)
 }
 
+func (r *NormalizedRepository) ListBookReadModels(ctx context.Context, query ListBooksQuery) ([]BookReadModel, error) {
+	books, err := r.queryBooks(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return []BookReadModel{}, nil
+	}
+
+	bookIDs := make([]int64, 0, len(books))
+	for _, book := range books {
+		bookIDs = append(bookIDs, book.ID)
+	}
+
+	contributorsByBook, err := r.bookContributorsByBook(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+	seriesByBook, err := r.bookSeriesByBooks(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+	identifiersByBook, err := r.bookIdentifiersByBooks(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+	statsByBook, err := r.bookFileStatsByBooks(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+	coversByBook, err := r.primaryLocalCoversByBook(ctx, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]BookReadModel, 0, len(books))
+	for _, book := range books {
+		contributors := contributorsByBook[book.ID]
+		series := seriesByBook[book.ID]
+		identifiers := identifiersByBook[book.ID]
+		stats := statsByBook[book.ID]
+		bookCopy := book
+		bookCopy.Series = series
+		bookCopy.Identifiers = identifiers
+		items = append(items, BookReadModel{
+			Book:          bookCopy,
+			PrimaryAuthor: selectPrimaryContributor(contributors),
+			Contributors:  contributors,
+			Identifiers:   identifiers,
+			Series:        series,
+			Formats:       stats.Formats,
+			EditionCount:  stats.EditionCount,
+			FileCount:     stats.FileCount,
+			LocalCover:    coversByBook[book.ID],
+		})
+	}
+	return items, nil
+}
+
 func (r *NormalizedRepository) CountListedBooks(ctx context.Context, query ListBooksQuery) (int, error) {
 	where, args := r.listBooksWhere(query)
 	var count int
-	err := r.exec(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM books b`+where, args...).Scan(&count)
+	err := r.queryRowContext(ctx, `SELECT COUNT(*) FROM books b`+where, args...).Scan(&count)
 	return count, err
+}
+
+func (r *NormalizedRepository) GetLibrarySummary(ctx context.Context) (LibrarySummary, error) {
+	var summary LibrarySummary
+
+	if err := r.queryRowContext(ctx, `SELECT COUNT(*) FROM books`).Scan(&summary.TotalBooks); err != nil {
+		return LibrarySummary{}, err
+	}
+	if err := r.queryRowContext(ctx, `SELECT COUNT(*) FROM editions`).Scan(&summary.TotalEditions); err != nil {
+		return LibrarySummary{}, err
+	}
+	if err := r.queryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&summary.TotalFiles); err != nil {
+		return LibrarySummary{}, err
+	}
+	rows, err := r.queryContext(ctx, `SELECT media_type, COUNT(*) FROM books GROUP BY media_type`)
+	if err != nil {
+		return LibrarySummary{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var mediaType string
+		var count int
+		if err := rows.Scan(&mediaType, &count); err != nil {
+			return LibrarySummary{}, err
+		}
+		switch MediaType(mediaType) {
+		case MediaTypeEbook:
+			summary.EbookCount = count
+		case MediaTypeAudiobook:
+			summary.AudiobookCount = count
+		case MediaTypeManga:
+			summary.MangaCount = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return LibrarySummary{}, err
+	}
+
+	summary.FormatCounts = make(map[string]int)
+	formatRows, err := r.queryContext(ctx, `SELECT LOWER(format), COUNT(*) FROM files WHERE TRIM(format) <> '' GROUP BY LOWER(format) ORDER BY LOWER(format)`)
+	if err != nil {
+		return LibrarySummary{}, err
+	}
+	defer formatRows.Close()
+	for formatRows.Next() {
+		var format string
+		var count int
+		if err := formatRows.Scan(&format, &count); err != nil {
+			return LibrarySummary{}, err
+		}
+		summary.FormatCounts[format] = count
+	}
+	if err := formatRows.Err(); err != nil {
+		return LibrarySummary{}, err
+	}
+
+	if err := r.queryRowContext(ctx, `SELECT COUNT(*) FROM books WHERE datetime(created_at) >= datetime('now', '-30 days')`).Scan(&summary.RecentAddedCount); err != nil {
+		return LibrarySummary{}, err
+	}
+
+	return summary, nil
 }
 
 func (r *NormalizedRepository) SearchBooks(ctx context.Context, query BookQuery) ([]Book, error) {
@@ -207,7 +342,7 @@ func (r *NormalizedRepository) queryBooks(ctx context.Context, query ListBooksQu
 	where, args := r.listBooksWhere(query)
 	orderBy := r.listBooksOrderBy(query)
 	args = append(args, limit, offset)
-	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT id, title, sort_title, description, publication_year,
+	rows, err := r.queryContext(ctx, `SELECT id, title, sort_title, description, publication_year,
 		language, media_type, monitored, status, created_at, updated_at FROM books b`+where+`
 		ORDER BY `+orderBy+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -1076,7 +1211,7 @@ func (r *NormalizedRepository) editionCovers(ctx context.Context, editionID int6
 }
 
 func (r *NormalizedRepository) covers(ctx context.Context, where string, arg any) ([]Cover, error) {
-	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT id, book_id, edition_id, source, source_url, local_path,
+	rows, err := r.queryContext(ctx, `SELECT id, book_id, edition_id, source, source_url, local_path,
 		mime_type, width, height, is_primary, created_at, updated_at FROM covers WHERE `+where+` ORDER BY is_primary DESC, id`, arg)
 	if err != nil {
 		return nil, err
@@ -1091,6 +1226,213 @@ func (r *NormalizedRepository) covers(ctx context.Context, where string, arg any
 		covers = append(covers, *cover)
 	}
 	return covers, rows.Err()
+}
+
+type bookFileStats struct {
+	EditionCount int
+	FileCount    int
+	Formats      []string
+}
+
+func (r *NormalizedRepository) bookContributorsByBook(ctx context.Context, bookIDs []int64) (map[int64][]Contributor, error) {
+	placeholders := repeatPlaceholders(len(bookIDs))
+	args := int64Args(bookIDs)
+	rows, err := r.queryContext(ctx, `SELECT e.book_id, c.id, c.name, c.sort_name, ec.role, ec.position, c.created_at, c.updated_at
+		FROM editions e
+		JOIN edition_contributors ec ON ec.edition_id = e.id
+		JOIN contributors c ON c.id = ec.contributor_id
+		WHERE e.book_id IN (`+placeholders+`)
+		ORDER BY e.book_id, ec.position, c.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64][]Contributor, len(bookIDs))
+	for rows.Next() {
+		var (
+			bookID           int64
+			contributor      Contributor
+			role             string
+			created, updated string
+		)
+		if err := rows.Scan(&bookID, &contributor.ID, &contributor.Name, &contributor.SortName, &role, &contributor.Position, &created, &updated); err != nil {
+			return nil, err
+		}
+		contributor.Roles = []ContributorRole{ContributorRole(role)}
+		contributor.CreatedAt = parseTime(created)
+		contributor.UpdatedAt = parseTime(updated)
+		result[bookID] = append(result[bookID], contributor)
+	}
+	return result, rows.Err()
+}
+
+func (r *NormalizedRepository) bookSeriesByBooks(ctx context.Context, bookIDs []int64) (map[int64][]BookSeries, error) {
+	placeholders := repeatPlaceholders(len(bookIDs))
+	args := int64Args(bookIDs)
+	rows, err := r.queryContext(ctx, `SELECT bs.book_id, s.id, s.title, s.description, s.created_at, s.updated_at,
+		bs.position, bs.display_position
+		FROM book_series bs
+		JOIN series s ON s.id = bs.series_id
+		WHERE bs.book_id IN (`+placeholders+`)
+		ORDER BY bs.book_id, bs.position, s.title`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64][]BookSeries, len(bookIDs))
+	for rows.Next() {
+		var (
+			bookID           int64
+			series           BookSeries
+			position         sql.NullFloat64
+			created, updated string
+		)
+		if err := rows.Scan(&bookID, &series.Series.ID, &series.Series.Title, &series.Series.Description, &created, &updated, &position, &series.DisplayPosition); err != nil {
+			return nil, err
+		}
+		if position.Valid {
+			series.Position = position.Float64
+		}
+		series.Series.CreatedAt = parseTime(created)
+		series.Series.UpdatedAt = parseTime(updated)
+		result[bookID] = append(result[bookID], series)
+	}
+	return result, rows.Err()
+}
+
+func (r *NormalizedRepository) bookIdentifiersByBooks(ctx context.Context, bookIDs []int64) (map[int64][]Identifier, error) {
+	placeholders := repeatPlaceholders(len(bookIDs))
+	args := int64Args(bookIDs)
+	rows, err := r.queryContext(ctx, `SELECT book_id, id, provider, identifier, created_at
+		FROM identifiers
+		WHERE book_id IN (`+placeholders+`)
+		ORDER BY book_id, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64][]Identifier, len(bookIDs))
+	for rows.Next() {
+		var (
+			bookID  int64
+			id      Identifier
+			created string
+		)
+		if err := rows.Scan(&bookID, &id.ID, &id.Provider, &id.Value, &created); err != nil {
+			return nil, err
+		}
+		id.Scope = IdentifierScopeBook
+		id.CreatedAt = parseTime(created)
+		result[bookID] = append(result[bookID], id)
+	}
+	return result, rows.Err()
+}
+
+func (r *NormalizedRepository) bookFileStatsByBooks(ctx context.Context, bookIDs []int64) (map[int64]bookFileStats, error) {
+	placeholders := repeatPlaceholders(len(bookIDs))
+	args := int64Args(bookIDs)
+	rows, err := r.queryContext(ctx, `SELECT e.book_id,
+		COUNT(DISTINCT e.id) AS edition_count,
+		COUNT(f.id) AS file_count,
+		COALESCE(GROUP_CONCAT(DISTINCT LOWER(f.format)), '') AS formats
+		FROM editions e
+		LEFT JOIN files f ON f.edition_id = e.id
+		WHERE e.book_id IN (`+placeholders+`)
+		GROUP BY e.book_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]bookFileStats, len(bookIDs))
+	for rows.Next() {
+		var (
+			bookID  int64
+			stats   bookFileStats
+			formats string
+		)
+		if err := rows.Scan(&bookID, &stats.EditionCount, &stats.FileCount, &formats); err != nil {
+			return nil, err
+		}
+		stats.Formats = splitFormats(formats)
+		result[bookID] = stats
+	}
+	return result, rows.Err()
+}
+
+func (r *NormalizedRepository) primaryLocalCoversByBook(ctx context.Context, bookIDs []int64) (map[int64]*Cover, error) {
+	placeholders := repeatPlaceholders(len(bookIDs))
+	args := int64Args(bookIDs)
+	rows, err := r.queryContext(ctx, `SELECT id, book_id, edition_id, source, source_url, local_path,
+		mime_type, width, height, is_primary, created_at, updated_at
+		FROM covers
+		WHERE book_id IN (`+placeholders+`) AND is_primary = 1 AND TRIM(local_path) <> ''
+		ORDER BY book_id, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]*Cover, len(bookIDs))
+	for rows.Next() {
+		cover, err := scanCover(rows)
+		if err != nil {
+			return nil, err
+		}
+		if result[cover.BookID] == nil {
+			result[cover.BookID] = cover
+		}
+	}
+	return result, rows.Err()
+}
+
+func selectPrimaryContributor(contributors []Contributor) *Contributor {
+	for _, contributor := range contributors {
+		if len(contributor.Roles) > 0 && contributor.Roles[0] == RoleAuthor {
+			copyContributor := contributor
+			return &copyContributor
+		}
+	}
+	if len(contributors) == 0 {
+		return nil
+	}
+	copyContributor := contributors[0]
+	return &copyContributor
+}
+
+func repeatPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
+}
+
+func int64Args(ids []int64) []any {
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	return args
+}
+
+func splitFormats(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	formats := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.ToLower(part))
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		formats = append(formats, part)
+	}
+	return formats
 }
 
 func mapSQLError(err error) error {

@@ -239,6 +239,55 @@ func TestNormalizedRepositoryTransactionsAndFactory(t *testing.T) {
 	}
 }
 
+func TestNormalizedRepositoryListBookReadModelsUsesBoundedQueries(t *testing.T) {
+	repo, cleanup := newNormalizedRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		book, err := repo.CreateBook(ctx, Book{
+			Title:     fmt.Sprintf("Book %d", i),
+			SortTitle: fmt.Sprintf("Book %d", i),
+			MediaType: MediaTypeEbook,
+			Status:    BookStatusOwned,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		edition, err := repo.CreateEdition(ctx, Edition{BookID: book.ID, Title: book.Title})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.AttachContributor(ctx, edition.ID, Contributor{Name: fmt.Sprintf("Author %d", i), Roles: []ContributorRole{RoleAuthor}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.AttachFile(ctx, BookFile{
+			EditionID:   edition.ID,
+			MediaType:   MediaTypeEbook,
+			Format:      "epub",
+			Path:        fmt.Sprintf("/books/book-%d.epub", i),
+			ContentHash: fmt.Sprintf("hash-%d", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	queryCount := 0
+	repo.queryHook = func() { queryCount++ }
+	defer func() { repo.queryHook = nil }()
+
+	items, err := repo.ListBookReadModels(ctx, ListBooksQuery{MediaType: MediaTypeEbook, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 5 {
+		t.Fatalf("items = %d", len(items))
+	}
+	if queryCount > 6 {
+		t.Fatalf("expected bounded query count, got %d", queryCount)
+	}
+}
+
 func newNormalizedRepo(t *testing.T) (*NormalizedRepository, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "normalized.db")+"?_busy_timeout=10000")
