@@ -18,6 +18,10 @@ schema_migrations (
 Version `1`, `librarr_2_schema_foundation`, creates the normalized Librarr 2.0
 tables and indexes.
 
+Version `2`, `librarr_2_file_metadata_json`, adds
+`files.embedded_metadata_json` so legacy `library_items.metadata` can be
+preserved during a future backfill.
+
 The existing legacy schema creation remains in place. Existing production code
 continues to read from and write to `library_items`.
 
@@ -32,7 +36,8 @@ continues to read from and write to `library_items`.
 - `series`: logical series records.
 - `book_series`: book-to-series relationships with numeric and display
   positions.
-- `files`: physical managed files or directories owned by editions.
+- `files`: physical managed files or directories owned by editions, including
+  a JSON landing place for embedded/legacy file metadata.
 - `identifiers`: scoped provider identifiers owned by either a book or an
   edition.
 - `covers`: locally cacheable cover records owned by either a book or an

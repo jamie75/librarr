@@ -35,6 +35,32 @@ func indexExists(t *testing.T, d *DB, name string) bool {
 	return countRows(t, d, "sqlite_master", "type = 'index' AND name = ?", name) == 1
 }
 
+func columnExists(t *testing.T, d *DB, table, column string) bool {
+	t.Helper()
+	rows, err := d.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatal(err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
+}
+
 func schemaMigrationVersions(t *testing.T, d *DB) map[int]string {
 	t.Helper()
 	rows, err := d.db.Query("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -108,6 +134,9 @@ func TestSchemaFoundation_FreshDatabaseCreatesLegacyAndNormalizedTables(t *testi
 
 	if !indexExists(t, d, "idx_files_file_path_unique") {
 		t.Fatal("expected file path unique index")
+	}
+	if !columnExists(t, d, "files", "embedded_metadata_json") {
+		t.Fatal("expected files.embedded_metadata_json column")
 	}
 }
 

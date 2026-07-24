@@ -15,6 +15,7 @@ type schemaMigration struct {
 
 var versionedMigrations = []schemaMigration{
 	{version: 1, name: "librarr_2_schema_foundation", run: migrateLibrarr2SchemaFoundation},
+	{version: 2, name: "librarr_2_file_metadata_json", run: migrateLibrarr2FileMetadataJSON},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -262,6 +263,14 @@ func migrateLibrarr2SchemaFoundation(tx *sql.Tx) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("execute statement: %w\nSQL: %s", err, stmt)
 		}
+	}
+	return nil
+}
+
+func migrateLibrarr2FileMetadataJSON(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE files ADD COLUMN embedded_metadata_json TEXT NOT NULL DEFAULT '{}'`)
+	if err != nil {
+		return fmt.Errorf("add files.embedded_metadata_json: %w", err)
 	}
 	return nil
 }

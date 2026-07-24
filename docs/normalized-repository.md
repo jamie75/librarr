@@ -79,15 +79,16 @@ flows able to reason about both the physical file and its logical book.
 Series and contributor APIs use upserts or merge-safe lookups where the schema
 supports it, while preserving conservative identity rules.
 
-## Metadata Limitation
+## Metadata Storage
 
-The current normalized schema does not yet include generic metadata JSON
-columns for embedded, provider, or user override metadata. The
-`MetadataRepository` methods therefore return `ErrUnsupportedOperation` rather
-than inventing storage or changing the schema during this repository-only step.
+The normalized schema includes `files.embedded_metadata_json` so the legacy
+`library_items.metadata` JSON blob can be preserved during backfill. This is a
+file-level landing place because each legacy row currently represents one
+physical file.
 
-Future metadata migrations should add explicit provenance-aware storage before
-these methods are used in production.
+Provider metadata and user override metadata still need explicit
+provenance-aware storage before the `MetadataRepository` methods are used in
+production.
 
 ## Repository Factory
 
