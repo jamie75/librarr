@@ -1,0 +1,248 @@
+package library
+
+import (
+	"context"
+	"strings"
+
+	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/JeremiahM37/librarr/internal/models"
+)
+
+type legacyStore interface {
+	GetItems(mediaType string, limit, offset int) ([]models.LibraryItem, error)
+	FindByTitle(title string) ([]models.LibraryItem, error)
+	HasSourceID(sourceID string) bool
+}
+
+type LegacyLibraryRepository struct {
+	store legacyStore
+}
+
+func NewLegacyLibraryRepository(database *db.DB) *LegacyLibraryRepository {
+	return &LegacyLibraryRepository{store: database}
+}
+
+func NewLegacyLibraryRepositoryWithStore(store legacyStore) *LegacyLibraryRepository {
+	return &LegacyLibraryRepository{store: store}
+}
+
+func (r *LegacyLibraryRepository) FindBook(ctx context.Context, query BookQuery) (*Book, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := r.store.FindByTitle(query.Title)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if query.MediaType != "" && MediaType(item.MediaType) != query.MediaType {
+			continue
+		}
+		if query.Author != "" && !strings.EqualFold(strings.TrimSpace(item.Author), strings.TrimSpace(query.Author)) {
+			continue
+		}
+		book := LegacyItemToBook(item)
+		return &book, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) FindBookByIdentifier(ctx context.Context, identifier Identifier) (*Book, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(identifier.Value) == "" || !r.store.HasSourceID(identifier.Value) {
+		return nil, ErrNotFound
+	}
+	file, err := r.FindFileBySourceID(ctx, identifier.Value)
+	if err != nil {
+		return nil, err
+	}
+	book, err := r.GetBook(ctx, file.BookID)
+	if err != nil {
+		return nil, err
+	}
+	return book, nil
+}
+
+func (r *LegacyLibraryRepository) GetBook(ctx context.Context, id int64) (*Book, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	item, err := r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.ID == id
+	})
+	if err != nil {
+		return nil, err
+	}
+	book := LegacyItemToBook(item)
+	return &book, nil
+}
+
+func (r *LegacyLibraryRepository) SaveBook(context.Context, Book) (*Book, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) GetBookFiles(ctx context.Context, bookID int64) ([]BookFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	item, err := r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.ID == bookID
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []BookFile{LegacyItemToFile(item)}, nil
+}
+
+func (r *LegacyLibraryRepository) GetFile(ctx context.Context, id int64) (*BookFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	item, err := r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.ID == id
+	})
+	if err != nil {
+		return nil, err
+	}
+	file := LegacyItemToFile(item)
+	return &file, nil
+}
+
+func (r *LegacyLibraryRepository) FindFileByPath(ctx context.Context, path string) (*BookFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	item, err := r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.FilePath == path || item.OriginalPath == path
+	})
+	if err != nil {
+		return nil, err
+	}
+	file := LegacyItemToFile(item)
+	return &file, nil
+}
+
+func (r *LegacyLibraryRepository) FindFileBySourceID(ctx context.Context, sourceID string) (*BookFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	item, err := r.findLegacyItem(ctx, func(item models.LibraryItem) bool {
+		return item.SourceID == sourceID
+	})
+	if err != nil {
+		return nil, err
+	}
+	file := LegacyItemToFile(item)
+	return &file, nil
+}
+
+func (r *LegacyLibraryRepository) FindFilesByContentHash(ctx context.Context, hash string) ([]BookFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := r.allLegacyItems()
+	if err != nil {
+		return nil, err
+	}
+	files := make([]BookFile, 0)
+	for _, item := range items {
+		if item.ContentHash == hash {
+			files = append(files, LegacyItemToFile(item))
+		}
+	}
+	if len(files) == 0 {
+		return nil, ErrNotFound
+	}
+	return files, nil
+}
+
+func (r *LegacyLibraryRepository) AttachFile(context.Context, BookFile) (*BookFile, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) GetSeries(context.Context, string) (*Series, error) {
+	return nil, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) AttachBookToSeries(context.Context, int64, BookSeries) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) MergeContributor(context.Context, Contributor) (*Contributor, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) GetEditionContributors(ctx context.Context, editionID int64) ([]Contributor, error) {
+	book, err := r.GetBook(ctx, editionID)
+	if err != nil {
+		return nil, err
+	}
+	return book.Contributors, nil
+}
+
+func (r *LegacyLibraryRepository) AttachContributor(context.Context, int64, Contributor) error {
+	return ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) AddCover(context.Context, Cover) (*Cover, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) GetPrimaryCover(context.Context, int64) (*Cover, error) {
+	return nil, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) AddIdentifier(context.Context, Identifier) (*Identifier, error) {
+	return nil, ErrReadOnlyRepository
+}
+
+func (r *LegacyLibraryRepository) FindByIdentifier(ctx context.Context, identifier Identifier) ([]IdentifierMatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := r.FindFileBySourceID(ctx, identifier.Value)
+	if err != nil {
+		return nil, err
+	}
+	return []IdentifierMatch{{
+		BookID:     file.BookID,
+		EditionID:  file.EditionID,
+		Identifier: identifier,
+	}}, nil
+}
+
+func (r *LegacyLibraryRepository) findLegacyItem(ctx context.Context, match func(models.LibraryItem) bool) (models.LibraryItem, error) {
+	if err := ctx.Err(); err != nil {
+		return models.LibraryItem{}, err
+	}
+	items, err := r.allLegacyItems()
+	if err != nil {
+		return models.LibraryItem{}, err
+	}
+	for _, item := range items {
+		if match(item) {
+			return item, nil
+		}
+	}
+	return models.LibraryItem{}, ErrNotFound
+}
+
+func (r *LegacyLibraryRepository) allLegacyItems() ([]models.LibraryItem, error) {
+	items, err := r.store.GetItems("", 100000, 0)
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return []models.LibraryItem{}, nil
+	}
+	return items, nil
+}
+
+var _ BookRepository = (*LegacyLibraryRepository)(nil)
+var _ FileRepository = (*LegacyLibraryRepository)(nil)
+var _ SeriesRepository = (*LegacyLibraryRepository)(nil)
+var _ ContributorRepository = (*LegacyLibraryRepository)(nil)
+var _ CoverRepository = (*LegacyLibraryRepository)(nil)
+var _ IdentifierRepository = (*LegacyLibraryRepository)(nil)
