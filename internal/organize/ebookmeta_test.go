@@ -25,6 +25,54 @@ func TestExtractEbookMetadataFilenameFallbacks(t *testing.T) {
 	}
 }
 
+func TestExtractEbookMetadataMOBIFilenameTitleAuthor(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name       string
+		wantTitle  string
+		wantAuthor string
+	}{
+		{
+			name:       "Ameritopia-The Unmaking of America - Mark R. Levin.mobi",
+			wantTitle:  "Ameritopia-The Unmaking of America",
+			wantAuthor: "Mark R. Levin",
+		},
+		{
+			name:       "Disney - [Prince of Persia- The Sands of Time] - The Guardian's Path - Carla Jablonski (retail) (epub).mobi",
+			wantTitle:  "The Guardian's Path",
+			wantAuthor: "Carla Jablonski",
+		},
+		{
+			name:       "Disney - [Prince of Persia- The Sands of Time] - To Right a Wrong - Carla Jablonski (retail) (epub).mobi",
+			wantTitle:  "To Right a Wrong",
+			wantAuthor: "Carla Jablonski",
+		},
+	}
+
+	for _, tc := range cases {
+		path := filepath.Join(dir, tc.name)
+		if err := os.WriteFile(path, []byte("not embedded metadata"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		got := ExtractEbookMetadata(path)
+		if got.Title != tc.wantTitle || got.Author != tc.wantAuthor {
+			t.Fatalf("%q metadata = %+v, want title %q author %q", tc.name, got, tc.wantTitle, tc.wantAuthor)
+		}
+	}
+}
+
+func TestExtractEbookMetadataEPUBFilenameFallbackUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Disney - [Prince of Persia- The Sands of Time] - The Guardian's Path - Carla Jablonski (retail) (epub).epub")
+	if err := os.WriteFile(path, []byte("not an epub"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ExtractEbookMetadata(path)
+	if got.Title != "- The Guardian's Path - Carla Jablonski (retail) (epub)" || got.Author != "Disney" {
+		t.Fatalf("EPUB fallback metadata = %+v, want existing generic filename behavior", got)
+	}
+}
+
 func TestExtractEbookMetadataPrefersEPUBMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Torrent Name.epub")
 	file, err := os.Create(path)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // EbookMetadata contains the best metadata available for an ebook file.
@@ -17,33 +18,37 @@ type EbookMetadata struct {
 }
 
 var pdfInfoValueRe = regexp.MustCompile(`/((?:Title)|(?:Author))\s*\(([^()]*)\)`)
+var parenRe = regexp.MustCompile(`\([^)]*\)`)
 
 // ExtractEbookMetadata returns metadata for supported ebook formats. Readers
 // without a supported embedded metadata format still receive a useful
 // filename-derived title, while callers retain their own final fallback.
 func ExtractEbookMetadata(filePath string) EbookMetadata {
-	metadata := parseEbookFilename(filePath)
+	filename := parseEbookFilename(filePath)
+	if strings.EqualFold(filepath.Ext(filePath), ".mobi") {
+		filename = parseMOBIFilename(filePath)
+	}
+	embedded := extractEmbeddedEbookMetadata(filePath)
+	metadata := filename
+	if embedded.Title != "" {
+		metadata.Title = embedded.Title
+	}
+	if embedded.Author != "" {
+		metadata.Author = embedded.Author
+	}
+	return metadata
+}
+
+func extractEmbeddedEbookMetadata(filePath string) EbookMetadata {
 	switch strings.ToLower(filepath.Ext(filePath)) {
 	case ".epub":
 		if embedded, err := ExtractEPUBMeta(filePath); err == nil {
-			if embedded.Title != "" {
-				metadata.Title = embedded.Title
-			}
-			if embedded.Author != "" {
-				metadata.Author = embedded.Author
-			}
+			return *embedded
 		}
 	case ".pdf":
-		if embedded := extractPDFInfo(filePath); embedded.Title != "" || embedded.Author != "" {
-			if embedded.Title != "" {
-				metadata.Title = embedded.Title
-			}
-			if embedded.Author != "" {
-				metadata.Author = embedded.Author
-			}
-		}
+		return extractPDFInfo(filePath)
 	}
-	return metadata
+	return EbookMetadata{}
 }
 
 func parseEbookFilename(filePath string) EbookMetadata {
@@ -65,6 +70,87 @@ func parseEbookFilename(filePath string) EbookMetadata {
 		}
 	}
 	return metadata
+}
+
+func parseMOBIFilename(filePath string) EbookMetadata {
+	name := cleanMOBIFilename(filePath)
+	if name == "" {
+		return EbookMetadata{}
+	}
+
+	parts := splitFilenameParts(name)
+	switch len(parts) {
+	case 0:
+		return EbookMetadata{}
+	case 1:
+		return EbookMetadata{Title: parts[0]}
+	case 2:
+		leftLooksAuthor := looksLikeAuthorName(parts[0])
+		rightLooksAuthor := looksLikeAuthorName(parts[1])
+		if rightLooksAuthor && !leftLooksAuthor {
+			return EbookMetadata{Title: parts[0], Author: parts[1]}
+		}
+		if leftLooksAuthor && !rightLooksAuthor {
+			return EbookMetadata{Title: parts[1], Author: parts[0]}
+		}
+		if rightLooksAuthor {
+			return EbookMetadata{Title: parts[0], Author: parts[1]}
+		}
+		return EbookMetadata{Title: parts[1], Author: parts[0]}
+	default:
+		return EbookMetadata{Title: parts[len(parts)-2], Author: parts[len(parts)-1]}
+	}
+}
+
+func cleanMOBIFilename(filePath string) string {
+	name := strings.TrimSpace(strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath)))
+	name = bracketRe.ReplaceAllString(name, "")
+	name = parenRe.ReplaceAllString(name, "")
+	name = whitespaceRe.ReplaceAllString(name, " ")
+	return strings.TrimSpace(name)
+}
+
+func splitFilenameParts(name string) []string {
+	rawParts := strings.Split(name, " - ")
+	parts := make([]string, 0, len(rawParts))
+	for _, part := range rawParts {
+		part = strings.Trim(strings.TrimSpace(part), "- ")
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+func looksLikeAuthorName(value string) bool {
+	words := strings.Fields(value)
+	if len(words) < 2 || len(words) > 4 {
+		return false
+	}
+	first := strings.ToLower(strings.Trim(words[0], ".,;:!?\"'"))
+	if first == "a" || first == "an" || first == "the" {
+		return false
+	}
+	for _, word := range words {
+		word = strings.Trim(word, ".,;:!?\"'")
+		if word == "" {
+			return false
+		}
+		if len([]rune(word)) == 1 {
+			if !unicode.IsUpper([]rune(word)[0]) {
+				return false
+			}
+			continue
+		}
+		if strings.HasSuffix(word, ".") && len([]rune(strings.TrimSuffix(word, "."))) == 1 {
+			continue
+		}
+		firstRune := []rune(word)[0]
+		if !unicode.IsUpper(firstRune) {
+			return false
+		}
+	}
+	return true
 }
 
 func extractPDFInfo(filePath string) EbookMetadata {
