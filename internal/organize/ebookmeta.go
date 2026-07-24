@@ -39,6 +39,22 @@ func ExtractEbookMetadata(filePath string) EbookMetadata {
 	return metadata
 }
 
+// ExtractFilenameEbookMetadata returns the filename-derived metadata fallback
+// without consulting embedded metadata. This supports planning and diagnostics
+// that need to explain why a title or author was selected.
+func ExtractFilenameEbookMetadata(filePath string) EbookMetadata {
+	if strings.EqualFold(filepath.Ext(filePath), ".mobi") {
+		return parseMOBIFilename(filePath)
+	}
+	return parseEbookFilename(filePath)
+}
+
+// ExtractEmbeddedEbookMetadata returns embedded metadata for supported ebook
+// formats without applying filename fallback.
+func ExtractEmbeddedEbookMetadata(filePath string) EbookMetadata {
+	return extractEmbeddedEbookMetadata(filePath)
+}
+
 func extractEmbeddedEbookMetadata(filePath string) EbookMetadata {
 	switch strings.ToLower(filepath.Ext(filePath)) {
 	case ".epub":
