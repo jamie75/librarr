@@ -63,6 +63,21 @@ func TestConfiguredLibraryServiceNormalizedSelectsNormalizedWhenReady(t *testing
 	}
 }
 
+func TestConfiguredLibraryServiceNormalizedAllowsFreshEmptyInstall(t *testing.T) {
+	d := switchTestDB(t)
+
+	selection, err := NewConfiguredLibraryService(context.Background(), &config.Config{LibraryRepositoryMode: "normalized"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Implementation != "normalized" {
+		t.Fatalf("implementation = %q", selection.Implementation)
+	}
+	if !selection.Readiness.FreshInstall || !selection.Readiness.Ready {
+		t.Fatalf("readiness = %+v", selection.Readiness)
+	}
+}
+
 func TestConfiguredLibraryServiceNormalizedFailsWhenBackfillIncomplete(t *testing.T) {
 	d := switchTestDB(t)
 	legacyID := seedLegacyItem(t, d)
@@ -128,6 +143,14 @@ func TestCheckNormalizedReadinessFailsWhenSchemaMigrationMissing(t *testing.T) {
 	}
 	readiness := CheckNormalizedReadiness(context.Background(), d.SQLDB())
 	if readiness.Ready || readiness.MigrationsOK {
+		t.Fatalf("readiness = %+v", readiness)
+	}
+}
+
+func TestCheckNormalizedReadinessFreshInstallIsReady(t *testing.T) {
+	d := switchTestDB(t)
+	readiness := CheckNormalizedReadiness(context.Background(), d.SQLDB())
+	if !readiness.Ready || !readiness.FreshInstall || readiness.LegacyItems != 0 {
 		t.Fatalf("readiness = %+v", readiness)
 	}
 }

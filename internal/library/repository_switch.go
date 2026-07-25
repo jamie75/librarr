@@ -34,6 +34,7 @@ type RepositorySelection struct {
 type NormalizedReadiness struct {
 	Requested        bool
 	Ready            bool
+	FreshInstall     bool
 	MigrationsOK     bool
 	BackfillComplete bool
 	ValidationOK     bool
@@ -114,10 +115,29 @@ func CheckNormalizedReadiness(ctx context.Context, db *sql.DB) NormalizedReadine
 	}
 
 	readiness.MigrationsOK = requiredSchemaMigrationsApplied(ctx, db, &readiness)
+	if !countLegacyItems(ctx, db, &readiness) {
+		return readiness
+	}
+	if readiness.MigrationsOK && readiness.LegacyItems == 0 {
+		readiness.FreshInstall = true
+		readiness.BackfillComplete = true
+		readiness.ValidationOK = true
+		readiness.StateOK = true
+		readiness.Ready = true
+		return readiness
+	}
 	readiness.BackfillComplete = completedBackfillRun(ctx, db, &readiness)
 	readiness.StateOK = migrationStateComplete(ctx, db, &readiness)
 	readiness.Ready = readiness.MigrationsOK && readiness.BackfillComplete && readiness.ValidationOK && readiness.StateOK
 	return readiness
+}
+
+func countLegacyItems(ctx context.Context, db *sql.DB, readiness *NormalizedReadiness) bool {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM library_items`).Scan(&readiness.LegacyItems); err != nil {
+		readiness.Issues = append(readiness.Issues, "legacy library item count could not be checked")
+		return false
+	}
+	return true
 }
 
 func requiredSchemaMigrationsApplied(ctx context.Context, db *sql.DB, readiness *NormalizedReadiness) bool {
@@ -163,10 +183,6 @@ func completedBackfillRun(ctx context.Context, db *sql.DB, readiness *Normalized
 }
 
 func migrationStateComplete(ctx context.Context, db *sql.DB, readiness *NormalizedReadiness) bool {
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM library_items`).Scan(&readiness.LegacyItems); err != nil {
-		readiness.Issues = append(readiness.Issues, "legacy library item count could not be checked")
-		return false
-	}
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM backfill_state WHERE status = 'completed'`).Scan(&readiness.CompletedStates); err != nil {
 		readiness.Issues = append(readiness.Issues, "backfill state could not be checked")
 		return false
@@ -214,6 +230,7 @@ func migrationStateComplete(ctx context.Context, db *sql.DB, readiness *Normaliz
 func logNormalizedReadiness(readiness NormalizedReadiness) {
 	slog.Info("normalized repository readiness checked",
 		"ready", readiness.Ready,
+		"fresh_install", readiness.FreshInstall,
 		"migrations_ok", readiness.MigrationsOK,
 		"backfill_complete", readiness.BackfillComplete,
 		"validation_ok", readiness.ValidationOK,
