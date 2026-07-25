@@ -2887,7 +2887,9 @@ function setLibraryImportStep2State(unlocked, values = null) {
   const icon = document.getElementById('settings-library-import-step2-icon');
   const copy = document.getElementById('settings-library-import-step2-copy');
   const summary = document.getElementById('settings-library-import-summary');
-  if (!panel || !icon || !copy || !summary) return;
+  const saveButton = document.getElementById('settings-library-import-save-continue');
+  const completeState = document.getElementById('settings-library-import-complete');
+  if (!panel || !icon || !copy || !summary || !saveButton || !completeState) return;
 
   panel.dataset.state = unlocked ? 'ready' : 'locked';
   panel.classList.toggle('opacity-75', !unlocked);
@@ -2895,6 +2897,9 @@ function setLibraryImportStep2State(unlocked, values = null) {
   panel.classList.toggle('bg-slate-800/20', !unlocked);
   panel.classList.toggle('border-emerald-500/30', unlocked);
   panel.classList.toggle('bg-emerald-500/10', unlocked);
+
+  saveButton.classList.toggle('hidden', unlocked);
+  completeState.classList.toggle('hidden', !unlocked);
 
   icon.textContent = unlocked ? '✅' : '🔒';
   icon.className = unlocked ? 'mt-0.5 text-emerald-300' : 'mt-0.5 text-slate-500';

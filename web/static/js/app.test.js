@@ -155,6 +155,8 @@ test('index.html uses improved Step 2 copy and Save & Continue action', () => {
   assert.match(indexHTML, /Step 2 – Scan Your Existing Library/);
   assert.match(indexHTML, /Available after saving your library folders\./);
   assert.match(indexHTML, /Save & Continue/);
+  assert.match(indexHTML, /Scan Library/);
+  assert.match(indexHTML, /Library scanning will be available in the next release\./);
   assert.doesNotMatch(indexHTML, /Next: Scan Existing Collection/);
 });
 
@@ -184,6 +186,8 @@ test('saveLibraryImportSettings uses existing settings save path', async () => {
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
     'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': { classList: fakeClassList() },
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
   };
   let request = null;
   const context = createContext({
@@ -221,6 +225,8 @@ test('successful Save & Continue advances focus to Step 2 panel', async () => {
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
     'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': { classList: fakeClassList() },
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
   };
   const context = createContext({
     document: { getElementById: id => elements[id] || null },
@@ -240,6 +246,8 @@ test('successful Save & Continue advances focus to Step 2 panel', async () => {
   assert.equal(elements['settings-library-import-step2-copy'].textContent, 'Your folders are saved. Librarr is ready to scan your existing collection.');
   assert.match(elements['settings-library-import-summary'].innerHTML, /Import Folder/);
   assert.match(elements['settings-library-import-summary'].innerHTML, /\/downloads/);
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), false);
 });
 
 test('failed Save & Continue shows an error and does not advance', async () => {
@@ -254,6 +262,8 @@ test('failed Save & Continue shows an error and does not advance', async () => {
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
     'settings-library-import-summary': { innerHTML: 'old', classList: fakeClassList() },
+    'settings-library-import-save-continue': { classList: fakeClassList() },
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
   };
   const context = createContext({
     document: { getElementById: id => elements[id] || null },
@@ -267,6 +277,8 @@ test('failed Save & Continue shows an error and does not advance', async () => {
   assert.deepEqual(events, ['toast:error:Nope']);
   assert.equal(elements['settings-library-import-step2'].dataset.state, 'locked');
   assert.equal(elements['settings-library-import-summary'].innerHTML, '');
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), false);
+  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), true);
 });
 
 function fakeClassList(initial = []) {
