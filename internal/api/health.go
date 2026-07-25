@@ -132,6 +132,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	userCount, _ := s.db.CountUsers()
 	resp["multi_user"] = userCount > 0
 	resp["has_users"] = userCount > 0
+	resp["setup_required"] = normalizedInitialSetupRequired(s.cfg, userCount)
 
 	// Current user info from context.
 	if username, ok := r.Context().Value(ctxUsername).(string); ok && username != "" {

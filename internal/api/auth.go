@@ -364,10 +364,11 @@ func handleAuthStatus(cfg *config.Config, database *db.DB, sessions *SessionStor
 		userCount, _ := database.CountUsers()
 
 		resp := map[string]any{
-			"multi_user":    userCount > 0,
-			"has_users":     userCount > 0,
-			"authenticated": false,
-			"oidc_enabled":  false,
+			"multi_user":     userCount > 0,
+			"has_users":      userCount > 0,
+			"setup_required": normalizedInitialSetupRequired(cfg, userCount),
+			"authenticated":  false,
+			"oidc_enabled":   false,
 		}
 
 		// OIDC hints

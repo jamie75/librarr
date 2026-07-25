@@ -3255,6 +3255,19 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 async function init() {
   try {
+    const authResp = await fetch('/api/auth/status', { credentials: 'include' });
+    const auth = await authResp.json().catch(() => ({}));
+
+    if (auth.setup_required) {
+      showLoginModal();
+      return;
+    }
+
+    if (auth.has_users && !auth.authenticated) {
+      showLoginModal();
+      return;
+    }
+
     // Test auth by hitting config
     const cfg = await apiJson('/api/config');
     state.config = cfg;
