@@ -286,7 +286,7 @@
           <button data-action="saveLibraryImportSettings" class="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors">Save</button>
         </div>
         <div class="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3">
-          <p class="text-sm font-medium text-amber-100">Import starts here.</p>
+          <p class="text-sm font-medium text-amber-100">Step 1 – Configure Library Folders</p>
           <p class="mt-1 text-sm text-stone-300">Configure the folders where Librarr should find your existing books and where new downloads will be imported. After saving, you can scan your library to begin building your collection.</p>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -319,11 +319,16 @@
             <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
           </label>
         </div>
-        <div class="mt-5 flex justify-end">
+        <div class="mt-5 flex flex-col items-end gap-2">
+          <div id="settings-library-import-unsaved" class="hidden text-xs text-amber-300">Unsaved changes</div>
+          <div id="settings-library-import-validation" class="hidden max-w-md rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200"></div>
           <button id="settings-library-import-save-continue" data-action="saveLibraryImportContinue" class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-medium transition-colors">Save & Continue</button>
-          <div id="settings-library-import-complete" class="hidden inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/12 px-4 py-2.5 text-sm font-medium text-emerald-100">
-            <span aria-hidden="true">✓</span>
-            <span>Step 1 Complete</span>
+          <div id="settings-library-import-complete" class="hidden rounded-lg border border-emerald-500/30 bg-emerald-500/12 px-4 py-2.5 text-sm text-emerald-100">
+            <div class="flex items-center gap-2 font-medium">
+              <span aria-hidden="true">✓</span>
+              <span id="settings-library-import-complete-title">Step 1 Complete</span>
+            </div>
+            <p id="settings-library-import-complete-copy" class="mt-1 text-xs text-emerald-200/85">Library folders configured successfully.</p>
           </div>
         </div>
         <div id="settings-library-import-step2" tabindex="-1" data-state="locked" class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/20 px-4 py-3 outline-none opacity-75">

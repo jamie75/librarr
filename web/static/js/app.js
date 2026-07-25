@@ -605,6 +605,12 @@ const state = {
   downloadPollTimer: null,
   currentUser: null,
   currentRole: null,
+  libraryImport: {
+    completed: false,
+    dirty: false,
+    lastSaved: null,
+    flashTimer: null,
+  },
 };
 
 const LIBRARY_IMPORT_FIELDS = ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'];
@@ -2748,6 +2754,7 @@ function searchWishlistItem(title, mediaType) {
 // SETTINGS
 // ============================================================
 async function loadSettings() {
+  bindLibraryImportChangeHandlers();
   loadConfig();
   loadSources();
   loadTOTPStatus();
@@ -2869,8 +2876,72 @@ async function loadSettingToggles() {
         }
       }
     }
-    setLibraryImportStep2State(false);
+    const values = getLibraryImportFormValues();
+    const validation = validateLibraryImportSettings(values);
+    const completed = validation.errors.length === 0;
+    state.libraryImport.completed = completed;
+    state.libraryImport.dirty = false;
+    state.libraryImport.lastSaved = sanitizeLibraryImportValues(values);
+    setLibraryImportStep2State(completed, completed ? state.libraryImport.lastSaved : null);
+    updateLibraryImportSaveState();
   } catch (err) {}
+}
+
+function getLibraryImportFormValues() {
+  const values = {};
+  for (const key of LIBRARY_IMPORT_FIELDS) {
+    values[key] = document.getElementById(`setting-${key}`)?.value || '';
+  }
+  values.file_org_enabled = !!document.getElementById('setting-file_org_enabled')?.checked;
+  return values;
+}
+
+function sanitizeLibraryImportValues(values) {
+  return {
+    incoming_dir: (values.incoming_dir || '').trim(),
+    ebook_dir: (values.ebook_dir || '').trim(),
+    audiobook_dir: (values.audiobook_dir || '').trim(),
+    manga_dir: (values.manga_dir || '').trim(),
+    file_org_enabled: !!values.file_org_enabled,
+  };
+}
+
+function validateLibraryImportSettings(values) {
+  const errors = [];
+  const pathKeys = [
+    ['incoming_dir', 'Import Folder'],
+    ['ebook_dir', 'Ebook Library'],
+    ['audiobook_dir', 'Audiobook Library'],
+    ['manga_dir', 'Manga Library'],
+  ];
+  const normalized = [];
+
+  for (const [key, label] of pathKeys) {
+    const raw = values[key] || '';
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      errors.push(`${label} is required.`);
+      continue;
+    }
+    if (raw !== trimmed) {
+      errors.push(`${label} contains leading or trailing whitespace.`);
+    }
+    if (trimmed.includes('//')) {
+      errors.push(`${label} contains a double slash.`);
+    }
+    normalized.push([label, trimmed]);
+  }
+
+  const seen = new Map();
+  for (const [label, value] of normalized) {
+    if (seen.has(value)) {
+      errors.push(`${label} duplicates ${seen.get(value)}.`);
+    } else {
+      seen.set(value, label);
+    }
+  }
+
+  return { errors };
 }
 
 function libraryImportSummaryLines(values) {
@@ -2922,17 +2993,81 @@ function setLibraryImportStep2State(unlocked, values = null) {
   summary.classList.remove('hidden');
 }
 
+function updateLibraryImportSaveState(flashMode = '') {
+  const saveButton = document.getElementById('settings-library-import-save-continue');
+  const completeState = document.getElementById('settings-library-import-complete');
+  const completeTitle = document.getElementById('settings-library-import-complete-title');
+  const completeCopy = document.getElementById('settings-library-import-complete-copy');
+  const unsaved = document.getElementById('settings-library-import-unsaved');
+  const validationEl = document.getElementById('settings-library-import-validation');
+  if (!saveButton || !completeState || !completeTitle || !completeCopy || !unsaved || !validationEl) return;
+
+  const values = getLibraryImportFormValues();
+  const validation = validateLibraryImportSettings(values);
+  const sanitized = sanitizeLibraryImportValues(values);
+  const dirty = state.libraryImport.lastSaved
+    ? JSON.stringify(sanitized) !== JSON.stringify(state.libraryImport.lastSaved)
+    : true;
+  state.libraryImport.dirty = dirty;
+
+  if (validation.errors.length) {
+    validationEl.innerHTML = validation.errors.map(err => `<div>${escapeHtml(err)}</div>`).join('');
+    validationEl.classList.remove('hidden');
+  } else {
+    validationEl.innerHTML = '';
+    validationEl.classList.add('hidden');
+  }
+
+  if (state.libraryImport.completed) {
+    if (dirty) {
+      saveButton.textContent = 'Save Changes';
+      saveButton.disabled = validation.errors.length > 0;
+      saveButton.classList.toggle('opacity-50', saveButton.disabled);
+      saveButton.classList.toggle('cursor-not-allowed', saveButton.disabled);
+      saveButton.classList.remove('hidden');
+      completeState.classList.add('hidden');
+      unsaved.classList.remove('hidden');
+      return;
+    }
+
+    unsaved.classList.add('hidden');
+    saveButton.classList.add('hidden');
+    completeState.classList.remove('hidden');
+    completeTitle.textContent = flashMode === 'saved' ? 'Changes Saved' : 'Step 1 Complete';
+    completeCopy.textContent = flashMode === 'saved'
+      ? 'Library folder changes saved successfully.'
+      : 'Library folders configured successfully.';
+    return;
+  }
+
+  unsaved.classList.add('hidden');
+  completeState.classList.add('hidden');
+  saveButton.textContent = 'Save & Continue';
+  saveButton.disabled = validation.errors.length > 0;
+  saveButton.classList.toggle('opacity-50', saveButton.disabled);
+  saveButton.classList.toggle('cursor-not-allowed', saveButton.disabled);
+  saveButton.classList.remove('hidden');
+}
+
+function bindLibraryImportChangeHandlers() {
+  const fields = [...LIBRARY_IMPORT_FIELDS.map(key => document.getElementById(`setting-${key}`)), document.getElementById('setting-file_org_enabled')].filter(Boolean);
+  for (const field of fields) {
+    if (field.dataset.libraryImportBound === 'true') continue;
+    const eventName = field.type === 'checkbox' ? 'change' : 'input';
+    field.addEventListener(eventName, () => updateLibraryImportSaveState());
+    field.dataset.libraryImportBound = 'true';
+  }
+}
+
 async function saveLibraryImportSettings(continueAfterSave = false) {
-  const payload = {};
-  for (const key of LIBRARY_IMPORT_FIELDS) {
-    const el = document.getElementById(`setting-${key}`);
-    if (!el) continue;
-    payload[key] = el.value;
+  const values = getLibraryImportFormValues();
+  const validation = validateLibraryImportSettings(values);
+  if (validation.errors.length) {
+    updateLibraryImportSaveState();
+    showToast(validation.errors[0], 'error');
+    return;
   }
-  const fileOrgEnabled = document.getElementById('setting-file_org_enabled');
-  if (fileOrgEnabled) {
-    payload.file_org_enabled = fileOrgEnabled.checked;
-  }
+  const payload = sanitizeLibraryImportValues(values);
 
   try {
     const res = await apiJson('/api/settings', {
@@ -2942,17 +3077,28 @@ async function saveLibraryImportSettings(continueAfterSave = false) {
     });
     if (res.success) {
       showToast('Library and import settings saved', 'success');
+      state.libraryImport.completed = true;
+      state.libraryImport.lastSaved = payload;
       setLibraryImportStep2State(true, payload);
+      if (state.libraryImport.flashTimer) window.clearTimeout(state.libraryImport.flashTimer);
+      updateLibraryImportSaveState(state.libraryImport.completed && !continueAfterSave ? 'saved' : '');
+      state.libraryImport.flashTimer = window.setTimeout(() => {
+        if (!state.libraryImport.dirty) {
+          updateLibraryImportSaveState();
+        }
+      }, continueAfterSave ? 0 : 1800);
       if (continueAfterSave) {
         scrollToSettingsSection('settings-library-import-step2');
         document.getElementById('settings-library-import-step2')?.focus();
       }
     } else {
-      setLibraryImportStep2State(false);
+      setLibraryImportStep2State(state.libraryImport.completed, state.libraryImport.completed ? state.libraryImport.lastSaved : null);
+      updateLibraryImportSaveState();
       showToast(res.error || 'Failed to save', 'error');
     }
   } catch (err) {
-    setLibraryImportStep2State(false);
+    setLibraryImportStep2State(state.libraryImport.completed, state.libraryImport.completed ? state.libraryImport.lastSaved : null);
+    updateLibraryImportSaveState();
     if (err.message !== 'Unauthorized') {
       showToast('Failed to save', 'error');
     }
