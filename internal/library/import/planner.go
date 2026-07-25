@@ -39,7 +39,10 @@ func (p *ImportPlanner) Plan(ctx context.Context, pc PlanningContext) (ImportRes
 	if err != nil {
 		return ImportResult{}, err
 	}
+	return p.PlanCandidates(ctx, pc, candidates)
+}
 
+func (p *ImportPlanner) PlanCandidates(ctx context.Context, pc PlanningContext, candidates []ImportCandidate) (ImportResult, error) {
 	result := ImportResult{
 		Plans:  make([]ImportPlan, 0, len(candidates)),
 		Counts: map[string]int{},

@@ -15,6 +15,7 @@ import (
 	"github.com/JeremiahM37/librarr/internal/download"
 	"github.com/JeremiahM37/librarr/internal/library"
 	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
+	libraryscanner "github.com/JeremiahM37/librarr/internal/library/scanner"
 	"github.com/JeremiahM37/librarr/internal/metadata"
 	"github.com/JeremiahM37/librarr/internal/organize"
 	"github.com/JeremiahM37/librarr/internal/scheduler"
@@ -33,6 +34,7 @@ type Server struct {
 	db             *db.DB
 	libraryService *library.LibraryService
 	importEngine   libraryimport.ImportEngine
+	libraryScanner *libraryscanner.Manager
 	searchMgr      *search.Manager
 	downloadMgr    *download.Manager
 	qb             *download.QBittorrentClient
@@ -125,6 +127,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		db:             database,
 		libraryService: librarySvc,
 		importEngine:   importEngine,
+		libraryScanner: libraryscanner.NewManager(librarySvc),
 		searchMgr:      searchMgr,
 		downloadMgr:    downloadMgr,
 		qb:             qb,
@@ -374,6 +377,9 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/books/{id}/files", s.handleV1BookFiles)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/editions", s.handleV1BookEditions)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/cover", s.handleV1BookCover)
+	s.mux.HandleFunc("POST /api/v1/library/scan", requireAdmin(s.handleV1LibraryScanStart))
+	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}", requireAdmin(s.handleV1LibraryScanJob))
+	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/results", requireAdmin(s.handleV1LibraryScanResults))
 
 	// Library.
 	s.mux.HandleFunc("GET /api/library", s.handleLibrary)
