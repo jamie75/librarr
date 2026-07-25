@@ -2869,7 +2869,52 @@ async function loadSettingToggles() {
         }
       }
     }
+    setLibraryImportStep2State(false);
   } catch (err) {}
+}
+
+function libraryImportSummaryLines(values) {
+  return [
+    ['Import Folder', values.incoming_dir || 'Not set'],
+    ['Ebook Library', values.ebook_dir || 'Not set'],
+    ['Audiobook Library', values.audiobook_dir || 'Not set'],
+    ['Manga Library', values.manga_dir || 'Not set'],
+  ];
+}
+
+function setLibraryImportStep2State(unlocked, values = null) {
+  const panel = document.getElementById('settings-library-import-step2');
+  const icon = document.getElementById('settings-library-import-step2-icon');
+  const copy = document.getElementById('settings-library-import-step2-copy');
+  const summary = document.getElementById('settings-library-import-summary');
+  if (!panel || !icon || !copy || !summary) return;
+
+  panel.dataset.state = unlocked ? 'ready' : 'locked';
+  panel.classList.toggle('opacity-75', !unlocked);
+  panel.classList.toggle('border-slate-700', !unlocked);
+  panel.classList.toggle('bg-slate-800/20', !unlocked);
+  panel.classList.toggle('border-emerald-500/30', unlocked);
+  panel.classList.toggle('bg-emerald-500/10', unlocked);
+
+  icon.textContent = unlocked ? '✅' : '🔒';
+  icon.className = unlocked ? 'mt-0.5 text-emerald-300' : 'mt-0.5 text-slate-500';
+  copy.textContent = unlocked
+    ? 'Your folders are saved. Librarr is ready to scan your existing collection.'
+    : 'Available after saving your library folders.';
+
+  if (!unlocked || !values) {
+    summary.innerHTML = '';
+    summary.classList.add('hidden');
+    return;
+  }
+
+  summary.innerHTML = libraryImportSummaryLines(values).map(([label, value]) => `
+    <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+      <span class="text-stone-400">${escapeHtml(label)}</span>
+      <span class="font-medium text-stone-100">${escapeHtml(value)}</span>
+    </div>
+  `).join('');
+  summary.classList.remove('hidden');
 }
 
 async function saveLibraryImportSettings(continueAfterSave = false) {
@@ -2892,14 +2937,17 @@ async function saveLibraryImportSettings(continueAfterSave = false) {
     });
     if (res.success) {
       showToast('Library and import settings saved', 'success');
+      setLibraryImportStep2State(true, payload);
       if (continueAfterSave) {
         scrollToSettingsSection('settings-library-import-step2');
         document.getElementById('settings-library-import-step2')?.focus();
       }
     } else {
+      setLibraryImportStep2State(false);
       showToast(res.error || 'Failed to save', 'error');
     }
   } catch (err) {
+    setLibraryImportStep2State(false);
     if (err.message !== 'Unauthorized') {
       showToast('Failed to save', 'error');
     }

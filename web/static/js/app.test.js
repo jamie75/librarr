@@ -56,6 +56,8 @@ function extractFunctionSource(name) {
 const functionBundle = [
   extractFunctionSource('currentLibraryCount'),
   extractFunctionSource('buildHomeDashboardMarkup'),
+  extractFunctionSource('libraryImportSummaryLines'),
+  extractFunctionSource('setLibraryImportStep2State'),
   extractFunctionSource('saveLibraryImportSettings'),
 ].join('\n\n');
 
@@ -151,9 +153,24 @@ test('index.html uses requested field ordering', () => {
 
 test('index.html uses improved Step 2 copy and Save & Continue action', () => {
   assert.match(indexHTML, /Step 2 – Scan Your Existing Library/);
-  assert.match(indexHTML, /After saving your folders, Librarr will scan your collection and import your books\./);
+  assert.match(indexHTML, /Available after saving your library folders\./);
   assert.match(indexHTML, /Save & Continue/);
   assert.doesNotMatch(indexHTML, /Next: Scan Existing Collection/);
+});
+
+test('index.html places Save & Continue before Step 2', () => {
+  const buttonPos = indexHTML.indexOf('Save & Continue');
+  const step2Pos = indexHTML.indexOf('Step 2 – Scan Your Existing Library');
+  assert.notEqual(buttonPos, -1);
+  assert.notEqual(step2Pos, -1);
+  assert.ok(buttonPos < step2Pos, 'Save & Continue should appear before Step 2');
+});
+
+test('index.html shows Step 2 as disabled before save', () => {
+  assert.match(indexHTML, /data-state="locked"/);
+  assert.match(indexHTML, /🔒/);
+  assert.match(indexHTML, /opacity-75/);
+  assert.match(indexHTML, /Available after saving your library folders\./);
 });
 
 test('saveLibraryImportSettings uses existing settings save path', async () => {
@@ -163,7 +180,10 @@ test('saveLibraryImportSettings uses existing settings save path', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: true },
-    'settings-library-import-step2': { focus() {} },
+    'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus() {} },
+    'settings-library-import-step2-icon': { textContent: '', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
   };
   let request = null;
   const context = createContext({
@@ -197,7 +217,10 @@ test('successful Save & Continue advances focus to Step 2 panel', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: false },
-    'settings-library-import-step2': step2,
+    'settings-library-import-step2': Object.assign(step2, { dataset: {}, classList: fakeClassList() }),
+    'settings-library-import-step2-icon': { textContent: '', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
   };
   const context = createContext({
     document: { getElementById: id => elements[id] || null },
@@ -213,6 +236,10 @@ test('successful Save & Continue advances focus to Step 2 panel', async () => {
     'scroll:settings-library-import-step2',
     'focus',
   ]);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'ready');
+  assert.equal(elements['settings-library-import-step2-copy'].textContent, 'Your folders are saved. Librarr is ready to scan your existing collection.');
+  assert.match(elements['settings-library-import-summary'].innerHTML, /Import Folder/);
+  assert.match(elements['settings-library-import-summary'].innerHTML, /\/downloads/);
 });
 
 test('failed Save & Continue shows an error and does not advance', async () => {
@@ -223,7 +250,10 @@ test('failed Save & Continue shows an error and does not advance', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: false },
-    'settings-library-import-step2': { focus: () => events.push('focus') },
+    'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus: () => events.push('focus') },
+    'settings-library-import-step2-icon': { textContent: '', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: 'old', classList: fakeClassList() },
   };
   const context = createContext({
     document: { getElementById: id => elements[id] || null },
@@ -235,4 +265,25 @@ test('failed Save & Continue shows an error and does not advance', async () => {
   await context.saveLibraryImportSettings(true);
 
   assert.deepEqual(events, ['toast:error:Nope']);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'locked');
+  assert.equal(elements['settings-library-import-summary'].innerHTML, '');
 });
+
+function fakeClassList(initial = []) {
+  const set = new Set(initial);
+  return {
+    add: (...names) => names.forEach(name => set.add(name)),
+    remove: (...names) => names.forEach(name => set.delete(name)),
+    toggle: (name, force) => {
+      if (force === undefined) {
+        if (set.has(name)) set.delete(name);
+        else set.add(name);
+        return set.has(name);
+      }
+      if (force) set.add(name);
+      else set.delete(name);
+      return force;
+    },
+    contains: name => set.has(name),
+  };
+}

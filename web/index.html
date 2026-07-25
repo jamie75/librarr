@@ -319,12 +319,18 @@
             <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
           </label>
         </div>
-        <div id="settings-library-import-step2" tabindex="-1" class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/25 px-4 py-3 outline-none">
-          <p class="text-sm font-medium text-slate-300">Step 2 – Scan Your Existing Library</p>
-          <p class="mt-1 text-xs text-slate-500">After saving your folders, Librarr will scan your collection and import your books.</p>
-        </div>
         <div class="mt-5 flex justify-end">
           <button data-action="saveLibraryImportContinue" class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-medium transition-colors">Save & Continue</button>
+        </div>
+        <div id="settings-library-import-step2" tabindex="-1" data-state="locked" class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/20 px-4 py-3 outline-none opacity-75">
+          <div class="flex items-start gap-3">
+            <span id="settings-library-import-step2-icon" class="mt-0.5 text-slate-500" aria-hidden="true">🔒</span>
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-slate-400">Step 2 – Scan Your Existing Library</p>
+              <p id="settings-library-import-step2-copy" class="mt-1 text-xs text-slate-500">Available after saving your library folders.</p>
+              <div id="settings-library-import-summary" class="hidden mt-3 rounded-md border border-emerald-500/20 bg-emerald-500/8 px-3 py-2 text-xs text-stone-200"></div>
+            </div>
+          </div>
         </div>
       </div>
 
