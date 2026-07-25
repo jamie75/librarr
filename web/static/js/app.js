@@ -23,6 +23,15 @@ const I18N = {
     home_subtitle: 'Browse your collection like a personal bookshelf, not a file inventory.',
     home_open_library: 'Open Library',
     home_discover: 'Discover Books',
+    home_welcome_title: 'Welcome to Librarr',
+    home_welcome_subtitle: 'Import your existing collection or start discovering books.',
+    home_import_library: 'Import Existing Library',
+    home_import_hint: 'Import starts in Settings, where you can configure folders and existing library paths.',
+    home_onboarding_title: 'Get your library ready',
+    home_step_admin_done: 'Create administrator account',
+    home_step_configure_folders: 'Configure library folders',
+    home_step_scan_library: 'Scan existing library',
+    home_step_review_books: 'Review imported books',
     dashboard_recent: 'Recently Added',
     dashboard_downloading: 'Currently Downloading',
     dashboard_wishlist: 'Wishlist',
@@ -276,6 +285,15 @@ const I18N = {
     home_subtitle: 'Просматривайте коллекцию как личную библиотеку, а не как список файлов.',
     home_open_library: 'Открыть библиотеку',
     home_discover: 'Искать книги',
+    home_welcome_title: 'Добро пожаловать в Librarr',
+    home_welcome_subtitle: 'Импортируйте существующую коллекцию или начните искать книги.',
+    home_import_library: 'Импортировать библиотеку',
+    home_import_hint: 'Импорт начинается в Settings, где можно настроить папки и пути к существующей библиотеке.',
+    home_onboarding_title: 'Подготовьте библиотеку',
+    home_step_admin_done: 'Создать аккаунт администратора',
+    home_step_configure_folders: 'Настроить папки библиотеки',
+    home_step_scan_library: 'Просканировать существующую библиотеку',
+    home_step_review_books: 'Проверить импортированные книги',
     dashboard_recent: 'Недавно добавлено',
     dashboard_downloading: 'Текущие загрузки',
     dashboard_wishlist: 'Желаемое',
@@ -588,6 +606,8 @@ const state = {
   currentUser: null,
   currentRole: null,
 };
+
+const LIBRARY_IMPORT_FIELDS = ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'];
 
 const SOURCE_COLORS = {
   annas:           { bg: '#7c3aed', text: 'white', label: "Anna's Archive" },
@@ -1033,6 +1053,9 @@ function switchTab(tab) {
   if (tab === 'activity') loadActivityTab();
   if (tab === 'devices') loadDevicesTab();
   if (tab === 'settings') loadSettings();
+  if (tab === 'settings' && window.location.hash) {
+    scrollToSettingsSection(window.location.hash.slice(1));
+  }
 }
 
 function switchSearchTab(tab) {
@@ -1110,10 +1133,10 @@ function setupLibrarr2Shell() {
         <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
           <div class="max-w-2xl">
             <p class="text-xs uppercase tracking-[0.28em] text-amber-300/80 mb-3" data-i18n="home_kicker">Librarr 2.0</p>
-            <h2 class="text-3xl sm:text-4xl font-semibold tracking-tight text-white mb-3" data-i18n="home_title">A warmer, book-first library experience.</h2>
-            <p class="text-stone-300/80 leading-7" data-i18n="home_subtitle">Browse your collection like a personal bookshelf, not a file inventory.</p>
+            <h2 id="home-hero-title" class="text-3xl sm:text-4xl font-semibold tracking-tight text-white mb-3" data-i18n="home_title">A warmer, book-first library experience.</h2>
+            <p id="home-hero-subtitle" class="text-stone-300/80 leading-7" data-i18n="home_subtitle">Browse your collection like a personal bookshelf, not a file inventory.</p>
           </div>
-          <div class="flex flex-wrap gap-3">
+          <div id="home-hero-actions" class="flex flex-wrap gap-3">
             <button data-action="switchTab" data-arg="library" class="px-4 py-2.5 rounded-2xl bg-amber-500 text-stone-950 font-medium hover:bg-amber-400 transition-colors" data-i18n="home_open_library">Open Library</button>
             <button data-action="switchTab" data-arg="search" class="px-4 py-2.5 rounded-2xl bg-white/10 text-white font-medium hover:bg-white/15 transition-colors" data-i18n="home_discover">Discover Books</button>
           </div>
@@ -2117,11 +2140,15 @@ async function loadHomeDashboard() {
           : groupLibraryItems(libraryRes.value.items || [], 'ebooks').slice(0, 4))
       : [];
     state.homeBooks = recentBooks;
+    const bookCount = currentLibraryCount(useNormalized, stats);
+    const showOnboarding = bookCount === 0;
+    updateHomeHero(showOnboarding);
     const formatCounts = useNormalized
       ? (stats.format_distribution || {})
       : buildFormatCounts(recentBooks);
 
     container.innerHTML = `
+      ${showOnboarding ? renderOnboardingChecklist() : ''}
       <section class="dashboard-panel lg:col-span-7 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-semibold text-white">${t('dashboard_recent')}</h3>
@@ -2134,7 +2161,7 @@ async function loadHomeDashboard() {
       <section class="dashboard-panel lg:col-span-5 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_totals')}</h3>
         <div class="grid grid-cols-2 gap-3">
-          ${renderMetricCard('Books', useNormalized ? (stats.total_books ?? 0) : (stats.total_items ?? 0))}
+          ${renderMetricCard('Books', bookCount)}
           ${renderMetricCard('Ebooks', stats.ebooks ?? 0)}
           ${renderMetricCard('Audiobooks', stats.audiobooks ?? 0)}
           ${renderMetricCard('Manga', stats.manga ?? 0)}
@@ -2169,6 +2196,7 @@ async function loadHomeDashboard() {
       </section>
     `;
   } catch (err) {
+    updateHomeHero(false);
     container.innerHTML = `<div class="dashboard-panel rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
   }
 }
@@ -2225,6 +2253,83 @@ function renderCompactBookCard(book, index) {
 
 function renderMetricCard(label, value) {
   return `<div class="rounded-[1.5rem] bg-stone-900/70 p-4"><p class="text-xs uppercase tracking-[0.18em] text-stone-500">${escapeHtml(label)}</p><p class="mt-2 text-3xl font-semibold text-white">${escapeHtml(String(value))}</p></div>`;
+}
+
+function currentLibraryCount(useNormalized, stats) {
+  if (!stats) return 0;
+  return useNormalized ? (stats.total_books ?? 0) : (stats.total_items ?? 0);
+}
+
+function updateHomeHero(isOnboarding) {
+  const titleEl = document.getElementById('home-hero-title');
+  const subtitleEl = document.getElementById('home-hero-subtitle');
+  const actionsEl = document.getElementById('home-hero-actions');
+  if (!titleEl || !subtitleEl || !actionsEl) return;
+
+  if (isOnboarding) {
+    titleEl.textContent = t('home_welcome_title');
+    subtitleEl.textContent = t('home_welcome_subtitle');
+    actionsEl.innerHTML = `
+      <button data-action="openImportSettings" class="px-4 py-2.5 rounded-2xl bg-amber-500 text-stone-950 font-medium hover:bg-amber-400 transition-colors">${t('home_import_library')}</button>
+      <button data-action="switchTab" data-arg="search" class="px-4 py-2.5 rounded-2xl bg-white/10 text-white font-medium hover:bg-white/15 transition-colors">${t('home_discover')}</button>
+    `;
+    return;
+  }
+
+  titleEl.textContent = t('home_title');
+  subtitleEl.textContent = t('home_subtitle');
+  actionsEl.innerHTML = `
+    <button data-action="switchTab" data-arg="library" class="px-4 py-2.5 rounded-2xl bg-amber-500 text-stone-950 font-medium hover:bg-amber-400 transition-colors">${t('home_open_library')}</button>
+    <button data-action="switchTab" data-arg="search" class="px-4 py-2.5 rounded-2xl bg-white/10 text-white font-medium hover:bg-white/15 transition-colors">${t('home_discover')}</button>
+  `;
+}
+
+function renderOnboardingChecklist() {
+  const checklistItems = [
+    { done: Boolean(state.currentUser), label: t('home_step_admin_done') },
+    { done: false, label: t('home_step_configure_folders') },
+    { done: false, label: t('home_step_scan_library') },
+    { done: false, label: t('home_step_review_books') },
+  ];
+
+  return `
+    <section class="dashboard-panel lg:col-span-12 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+      <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
+        <div class="max-w-2xl">
+          <h3 class="text-xl font-semibold text-white mb-2">${t('home_onboarding_title')}</h3>
+          <p class="text-stone-400 leading-7">${t('home_import_hint')}</p>
+        </div>
+        <button data-action="openImportSettings" class="self-start px-4 py-2.5 rounded-2xl bg-stone-800 text-stone-100 font-medium hover:bg-stone-700 transition-colors">${t('home_import_library')}</button>
+      </div>
+      <div class="mt-6 grid gap-3 md:grid-cols-2">
+        ${checklistItems.map(item => `
+          <div class="flex items-center gap-3 rounded-2xl border ${item.done ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : 'border-stone-800 bg-stone-900/60 text-stone-200'} px-4 py-3">
+            <span class="text-base">${item.done ? '✅' : '⬜'}</span>
+            <span class="text-sm font-medium">${escapeHtml(item.label)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function openImportSettings() {
+  const targetId = 'settings-library-import';
+  window.location.hash = targetId;
+  switchTab('settings');
+  scrollToSettingsSection(targetId);
+}
+
+function scrollToSettingsSection(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.add('ring-2', 'ring-amber-400/70');
+    window.setTimeout(() => {
+      el.classList.remove('ring-2', 'ring-amber-400/70');
+    }, 1600);
+  });
 }
 
 function renderCompactDownload(item) {
@@ -2728,6 +2833,16 @@ async function loadSettingToggles() {
     if (langFilter && data.foreign_lang_filter !== undefined) {
       langFilter.checked = data.foreign_lang_filter;
     }
+    const fileOrgEnabled = document.getElementById('setting-file_org_enabled');
+    if (fileOrgEnabled && data.file_org_enabled !== undefined) {
+      fileOrgEnabled.checked = !!data.file_org_enabled;
+    }
+    for (const key of LIBRARY_IMPORT_FIELDS) {
+      const el = document.getElementById(`setting-${key}`);
+      if (el && data[key] !== undefined && data[key] !== null) {
+        el.value = data[key];
+      }
+    }
     // Populate integration inputs. Sensitive values come back as "--------"
     // from the server; the save handler drops that sentinel before writing.
     for (const fields of Object.values(INTEGRATION_FIELDS)) {
@@ -2739,6 +2854,36 @@ async function loadSettingToggles() {
       }
     }
   } catch (err) {}
+}
+
+async function saveLibraryImportSettings() {
+  const payload = {};
+  for (const key of LIBRARY_IMPORT_FIELDS) {
+    const el = document.getElementById(`setting-${key}`);
+    if (!el) continue;
+    payload[key] = el.value;
+  }
+  const fileOrgEnabled = document.getElementById('setting-file_org_enabled');
+  if (fileOrgEnabled) {
+    payload.file_org_enabled = fileOrgEnabled.checked;
+  }
+
+  try {
+    const res = await apiJson('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.success) {
+      showToast('Library and import settings saved', 'success');
+    } else {
+      showToast(res.error || 'Failed to save', 'error');
+    }
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      showToast('Failed to save', 'error');
+    }
+  }
 }
 
 async function saveIntegration(name) {
@@ -3303,6 +3448,8 @@ init();
 // never invoke anything that isn't registered here.
 const CLICK_ACTIONS = {
   switchTab: el => switchTab(el.dataset.arg),
+  openImportSettings: () => openImportSettings(),
+  saveLibraryImportSettings: () => saveLibraryImportSettings(),
   switchSearchTab: el => switchSearchTab(el.dataset.arg),
   switchLibraryTab: el => switchLibraryTab(el.dataset.arg),
   setSortMode: el => setSortMode(el.dataset.arg),

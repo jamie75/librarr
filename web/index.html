@@ -277,6 +277,54 @@
 
     <!-- ==================== SETTINGS TAB ==================== -->
     <div id="tab-settings" class="tab-content">
+      <div id="settings-library-import" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+        <div class="flex items-start justify-between mb-4 gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Library & Import</h3>
+            <p class="text-xs text-slate-500 mt-1">Configure the folders Librarr watches and where imported books are organized.</p>
+          </div>
+          <button data-action="saveLibraryImportSettings" class="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors">Save</button>
+        </div>
+        <div class="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+          <p class="text-sm font-medium text-amber-100">Import starts here.</p>
+          <p class="mt-1 text-sm text-stone-300">Configure the folders where Librarr should find your existing books and where new downloads will be imported. After saving, you can scan your library to begin building your collection.</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Incoming Directory</label>
+            <input type="text" id="setting-incoming_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/downloads">
+            <p class="text-xs text-slate-500 mt-1">Path Librarr scans for newly available ebook files.</p>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Ebook Library Directory</label>
+            <input type="text" id="setting-ebook_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/books">
+            <p class="text-xs text-slate-500 mt-1">Destination for organized ebook files after import.</p>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Audiobook Directory</label>
+            <input type="text" id="setting-audiobook_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/audiobooks">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Manga Directory</label>
+            <input type="text" id="setting-manga_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/manga">
+          </div>
+        </div>
+        <div class="mt-4 flex items-center justify-between rounded-lg bg-slate-800/40 px-4 py-3">
+          <div>
+            <p class="text-sm text-slate-300">Organize imported files automatically</p>
+            <p class="text-xs text-slate-500 mt-1">When enabled, Librarr moves imported files into the configured library directories.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer ml-4 shrink-0">
+            <input type="checkbox" id="setting-file_org_enabled" class="sr-only peer">
+            <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+        <div class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/25 px-4 py-3">
+          <p class="text-sm font-medium text-slate-300">Next: Scan Existing Collection</p>
+          <p class="mt-1 text-xs text-slate-500">Library scanning will be available here after folder configuration.</p>
+        </div>
+      </div>
+
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>
