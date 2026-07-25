@@ -2147,8 +2147,28 @@ async function loadHomeDashboard() {
       ? (stats.format_distribution || {})
       : buildFormatCounts(recentBooks);
 
-    container.innerHTML = `
-      ${showOnboarding ? renderOnboardingChecklist() : ''}
+    container.innerHTML = buildHomeDashboardMarkup({
+      showOnboarding,
+      recentBooks,
+      formatCounts,
+      downloads,
+      wishlist,
+      activity,
+      stats,
+      bookCount,
+    });
+  } catch (err) {
+    updateHomeHero(false);
+    container.innerHTML = `<div class="dashboard-panel rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
+  }
+}
+
+function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, downloads, wishlist, activity, stats, bookCount }) {
+  if (showOnboarding) {
+    return renderOnboardingChecklist();
+  }
+
+  return `
       <section class="dashboard-panel lg:col-span-7 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-semibold text-white">${t('dashboard_recent')}</h3>
@@ -2195,10 +2215,6 @@ async function loadHomeDashboard() {
         <div class="space-y-3">${activity.slice(0, 4).map(renderActivityRow).join('') || renderDashboardEmpty()}</div>
       </section>
     `;
-  } catch (err) {
-    updateHomeHero(false);
-    container.innerHTML = `<div class="dashboard-panel rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
-  }
 }
 
 async function loadActivityTab() {
