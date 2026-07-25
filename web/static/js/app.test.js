@@ -60,6 +60,7 @@ const functionBundle = [
   extractFunctionSource('sanitizeLibraryImportValues'),
   extractFunctionSource('validateLibraryImportSettings'),
   extractFunctionSource('libraryImportSummaryLines'),
+  extractFunctionSource('applyLibraryImportLoadedState'),
   extractFunctionSource('setLibraryImportStep2State'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
@@ -209,6 +210,7 @@ test('saveLibraryImportSettings uses existing settings save path', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
     'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus() {} },
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
@@ -252,6 +254,7 @@ test('successful Save & Continue advances focus to Step 2 panel', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: false },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
     'settings-library-import-step2': Object.assign(step2, { dataset: {}, classList: fakeClassList() }),
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
@@ -294,6 +297,7 @@ test('failed Save & Continue shows an error and does not advance', async () => {
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: false },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
     'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus: () => events.push('focus') },
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
@@ -321,13 +325,82 @@ test('failed Save & Continue shows an error and does not advance', async () => {
   assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), true);
 });
 
-test('after completion, edits switch UI to Save Changes with unsaved indicator while Step 2 stays ready', () => {
+test('fresh configuration shows Save & Continue and keeps Step 2 locked', () => {
+  const elements = {
+    'setting-incoming_dir': { value: '' },
+    'setting-ebook_dir': { value: '' },
+    'setting-audiobook_dir': { value: '' },
+    'setting-manga_dir': { value: '' },
+    'setting-file_org_enabled': { checked: false },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
+    'settings-library-import-step2': { dataset: { state: 'locked' }, classList: fakeClassList(['opacity-75']) },
+    'settings-library-import-step2-icon': { textContent: '🔒', className: '' },
+    'settings-library-import-step2-copy': { textContent: 'Available after saving your library folders.' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': { classList: fakeClassList(['hidden']), textContent: '' },
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-complete-title': { textContent: '' },
+    'settings-library-import-complete-copy': { textContent: '' },
+    'settings-library-import-unsaved': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+  });
+
+  context.updateLibraryImportSaveState();
+
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), false);
+  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'locked');
+});
+
+test('completed state restores from loaded settings and keeps Step 2 active', () => {
+  const elements = {
+    'setting-incoming_dir': { value: '/downloads' },
+    'setting-ebook_dir': { value: '/books' },
+    'setting-audiobook_dir': { value: '/audiobooks' },
+    'setting-manga_dir': { value: '/manga' },
+    'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
+    'settings-library-import-step2': { dataset: { state: 'ready' }, classList: fakeClassList() },
+    'settings-library-import-step2-icon': { textContent: '✅', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': { classList: fakeClassList(['hidden']), textContent: '' },
+    'settings-library-import-complete': { classList: fakeClassList() },
+    'settings-library-import-complete-title': { textContent: '' },
+    'settings-library-import-complete-copy': { textContent: '' },
+    'settings-library-import-unsaved': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+  });
+
+  context.applyLibraryImportLoadedState({
+    incoming_dir: '/downloads',
+    ebook_dir: '/books',
+    audiobook_dir: '/audiobooks',
+    manga_dir: '/manga',
+    file_org_enabled: true,
+  });
+
+  assert.equal(context.state.libraryImport.completed, true);
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), false);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'ready');
+  assert.match(elements['settings-library-import-summary'].innerHTML, /\/downloads/);
+});
+
+test('Save & Continue does not return after later edits', () => {
   const elements = {
     'setting-incoming_dir': { value: '/downloads-2' },
     'setting-ebook_dir': { value: '/books' },
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
     'settings-library-import-step2': { dataset: { state: 'ready' }, classList: fakeClassList() },
     'settings-library-import-step2-icon': { textContent: '✅', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
@@ -352,14 +425,14 @@ test('after completion, edits switch UI to Save Changes with unsaved indicator w
 
   context.updateLibraryImportSaveState();
 
-  assert.equal(elements['settings-library-import-save-continue'].textContent, 'Save Changes');
-  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), false);
-  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), false);
   assert.equal(elements['settings-library-import-unsaved'].classList.contains('hidden'), false);
   assert.equal(context.state.libraryImport.dirty, true);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'ready');
 });
 
-test('Save Changes success briefly shows changes saved then returns to completed state', async () => {
+test('standard purple Save persists Library & Import changes after onboarding and updates summary', async () => {
   const events = [];
   const elements = {
     'setting-incoming_dir': { value: '/downloads-2' },
@@ -367,6 +440,7 @@ test('Save Changes success briefly shows changes saved then returns to completed
     'setting-audiobook_dir': { value: '/audiobooks' },
     'setting-manga_dir': { value: '/manga' },
     'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
     'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus: () => events.push('focus') },
     'settings-library-import-step2-icon': { textContent: '', className: '' },
     'settings-library-import-step2-copy': { textContent: '' },
@@ -398,8 +472,58 @@ test('Save Changes success briefly shows changes saved then returns to completed
   assert.equal(elements['settings-library-import-complete'].classList.contains('hidden'), false);
   assert.equal(elements['settings-library-import-complete-title'].textContent, 'Step 1 Complete');
   assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'ready');
+  assert.match(elements['settings-library-import-summary'].innerHTML, /\/downloads-2/);
   assert.equal(context.state.libraryImport.dirty, false);
   assert.match(events.join('\n'), /toast:success:Library and import settings saved/);
+  assert.ok(!events.includes('scroll:settings-library-import-step2'));
+});
+
+test('failed standard save leaves Step 2 active and does not update summary', async () => {
+  const events = [];
+  const elements = {
+    'setting-incoming_dir': { value: '/downloads-2' },
+    'setting-ebook_dir': { value: '/books' },
+    'setting-audiobook_dir': { value: '/audiobooks' },
+    'setting-manga_dir': { value: '/manga' },
+    'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
+    'settings-library-import-step2': { dataset: { state: 'ready' }, classList: fakeClassList() },
+    'settings-library-import-step2-icon': { textContent: '✅', className: '' },
+    'settings-library-import-step2-copy': { textContent: 'Your folders are saved. Librarr is ready to scan your existing collection.' },
+    'settings-library-import-summary': { innerHTML: '<div>/downloads</div>', classList: fakeClassList() },
+    'settings-library-import-save-continue': { classList: fakeClassList(['hidden']), textContent: '' },
+    'settings-library-import-complete': { classList: fakeClassList() },
+    'settings-library-import-complete-title': { textContent: 'Step 1 Complete' },
+    'settings-library-import-complete-copy': { textContent: 'Library folders configured successfully.' },
+    'settings-library-import-unsaved': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
+  };
+  const context = createContext({
+    state: { libraryImport: { completed: true, dirty: true, lastSaved: {
+      incoming_dir: '/downloads',
+      ebook_dir: '/books',
+      audiobook_dir: '/audiobooks',
+      manga_dir: '/manga',
+      file_org_enabled: true,
+    }, flashTimer: null } },
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async () => ({ success: false, error: 'Nope' }),
+    showToast: (msg, kind) => events.push(`toast:${kind}:${msg}`),
+  });
+
+  await context.saveLibraryImportSettings(false);
+
+  assert.deepEqual(events, ['toast:error:Nope']);
+  assert.equal(elements['settings-library-import-step2'].dataset.state, 'ready');
+  assert.match(elements['settings-library-import-summary'].innerHTML, /\/downloads/);
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+});
+
+test('index.html keeps the standard Settings save control', () => {
+  assert.match(indexHTML, /id="settings-library-import-save-standard"/);
+  assert.match(indexHTML, /data-action="saveLibraryImportStandard"/);
+  assert.match(indexHTML, />Save<\/button>/);
 });
 
 function fakeClassList(initial = []) {

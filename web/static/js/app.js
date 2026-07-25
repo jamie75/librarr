@@ -2876,14 +2876,7 @@ async function loadSettingToggles() {
         }
       }
     }
-    const values = getLibraryImportFormValues();
-    const validation = validateLibraryImportSettings(values);
-    const completed = validation.errors.length === 0;
-    state.libraryImport.completed = completed;
-    state.libraryImport.dirty = false;
-    state.libraryImport.lastSaved = sanitizeLibraryImportValues(values);
-    setLibraryImportStep2State(completed, completed ? state.libraryImport.lastSaved : null);
-    updateLibraryImportSaveState();
+    applyLibraryImportLoadedState(getLibraryImportFormValues());
   } catch (err) {}
 }
 
@@ -2953,14 +2946,23 @@ function libraryImportSummaryLines(values) {
   ];
 }
 
+function applyLibraryImportLoadedState(values) {
+  const sanitized = sanitizeLibraryImportValues(values);
+  const validation = validateLibraryImportSettings(sanitized);
+  const completed = validation.errors.length === 0;
+  state.libraryImport.completed = completed;
+  state.libraryImport.dirty = false;
+  state.libraryImport.lastSaved = sanitized;
+  setLibraryImportStep2State(completed, completed ? sanitized : null);
+  updateLibraryImportSaveState();
+}
+
 function setLibraryImportStep2State(unlocked, values = null) {
   const panel = document.getElementById('settings-library-import-step2');
   const icon = document.getElementById('settings-library-import-step2-icon');
   const copy = document.getElementById('settings-library-import-step2-copy');
   const summary = document.getElementById('settings-library-import-summary');
-  const saveButton = document.getElementById('settings-library-import-save-continue');
-  const completeState = document.getElementById('settings-library-import-complete');
-  if (!panel || !icon || !copy || !summary || !saveButton || !completeState) return;
+  if (!panel || !icon || !copy || !summary) return;
 
   panel.dataset.state = unlocked ? 'ready' : 'locked';
   panel.classList.toggle('opacity-75', !unlocked);
@@ -2968,9 +2970,6 @@ function setLibraryImportStep2State(unlocked, values = null) {
   panel.classList.toggle('bg-slate-800/20', !unlocked);
   panel.classList.toggle('border-emerald-500/30', unlocked);
   panel.classList.toggle('bg-emerald-500/10', unlocked);
-
-  saveButton.classList.toggle('hidden', unlocked);
-  completeState.classList.toggle('hidden', !unlocked);
 
   icon.textContent = unlocked ? '✅' : '🔒';
   icon.className = unlocked ? 'mt-0.5 text-emerald-300' : 'mt-0.5 text-slate-500';
@@ -2994,13 +2993,14 @@ function setLibraryImportStep2State(unlocked, values = null) {
 }
 
 function updateLibraryImportSaveState(flashMode = '') {
+  const standardSaveButton = document.getElementById('settings-library-import-save-standard');
   const saveButton = document.getElementById('settings-library-import-save-continue');
   const completeState = document.getElementById('settings-library-import-complete');
   const completeTitle = document.getElementById('settings-library-import-complete-title');
   const completeCopy = document.getElementById('settings-library-import-complete-copy');
   const unsaved = document.getElementById('settings-library-import-unsaved');
   const validationEl = document.getElementById('settings-library-import-validation');
-  if (!saveButton || !completeState || !completeTitle || !completeCopy || !unsaved || !validationEl) return;
+  if (!standardSaveButton || !saveButton || !completeState || !completeTitle || !completeCopy || !unsaved || !validationEl) return;
 
   const values = getLibraryImportFormValues();
   const validation = validateLibraryImportSettings(values);
@@ -3018,25 +3018,22 @@ function updateLibraryImportSaveState(flashMode = '') {
     validationEl.classList.add('hidden');
   }
 
-  if (state.libraryImport.completed) {
-    if (dirty) {
-      saveButton.textContent = 'Save Changes';
-      saveButton.disabled = validation.errors.length > 0;
-      saveButton.classList.toggle('opacity-50', saveButton.disabled);
-      saveButton.classList.toggle('cursor-not-allowed', saveButton.disabled);
-      saveButton.classList.remove('hidden');
-      completeState.classList.add('hidden');
-      unsaved.classList.remove('hidden');
-      return;
-    }
+  standardSaveButton.disabled = validation.errors.length > 0;
+  standardSaveButton.classList.toggle('opacity-50', standardSaveButton.disabled);
+  standardSaveButton.classList.toggle('cursor-not-allowed', standardSaveButton.disabled);
 
-    unsaved.classList.add('hidden');
+  if (state.libraryImport.completed) {
     saveButton.classList.add('hidden');
     completeState.classList.remove('hidden');
     completeTitle.textContent = flashMode === 'saved' ? 'Changes Saved' : 'Step 1 Complete';
     completeCopy.textContent = flashMode === 'saved'
       ? 'Library folder changes saved successfully.'
       : 'Library folders configured successfully.';
+    if (dirty) {
+      unsaved.classList.remove('hidden');
+    } else {
+      unsaved.classList.add('hidden');
+    }
     return;
   }
 
@@ -3077,9 +3074,9 @@ async function saveLibraryImportSettings(continueAfterSave = false) {
     });
     if (res.success) {
       showToast('Library and import settings saved', 'success');
-      state.libraryImport.completed = true;
+      state.libraryImport.completed = state.libraryImport.completed || continueAfterSave;
       state.libraryImport.lastSaved = payload;
-      setLibraryImportStep2State(true, payload);
+      setLibraryImportStep2State(state.libraryImport.completed, state.libraryImport.completed ? payload : null);
       if (state.libraryImport.flashTimer) window.clearTimeout(state.libraryImport.flashTimer);
       updateLibraryImportSaveState(state.libraryImport.completed && !continueAfterSave ? 'saved' : '');
       state.libraryImport.flashTimer = window.setTimeout(() => {
@@ -3668,7 +3665,7 @@ init();
 const CLICK_ACTIONS = {
   switchTab: el => switchTab(el.dataset.arg),
   openImportSettings: () => openImportSettings(),
-  saveLibraryImportSettings: () => saveLibraryImportSettings(),
+  saveLibraryImportStandard: () => saveLibraryImportSettings(false),
   saveLibraryImportContinue: () => saveLibraryImportSettings(true),
   switchSearchTab: el => switchSearchTab(el.dataset.arg),
   switchLibraryTab: el => switchLibraryTab(el.dataset.arg),
