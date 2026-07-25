@@ -29,12 +29,13 @@ services:
       WISHLIST_CLEANUP_DRY_RUN: "true"
       OIDC_PROXY_HEADERS_ENABLED: "false"
     volumes:
-      - ./.dogfood/librarr-v2-data:/data
-      - ./.dogfood/librarr-v2-library/ebooks:/books/ebooks
-      - ./.dogfood/librarr-v2-library/audiobooks:/books/audiobooks
-      - ./.dogfood/librarr-v2-library/manga:/books/manga
-      - ./.dogfood/librarr-v2-incoming:/data/incoming
-      - ./.dogfood/librarr-v2-manga-incoming:/data/manga-incoming
+    - /opt/docker/compose/librarr-v2/data:/data
+    - /opt/docker/compose/librarr-v2/library/ebooks:/books/ebooks
+    - /opt/docker/compose/librarr-v2/library/audiobooks:/books/audiobooks
+    - /opt/docker/compose/librarr-v2/library/manga:/books/manga
+    - /opt/docker/compose/librarr-v2/incoming:/data/incoming
+    - /opt/docker/compose/librarr-v2/manga-incoming:/data/manga-incoming
+
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5050/api/health >/dev/null 2>&1 || exit 1"]
       interval: 10s
