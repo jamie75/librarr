@@ -2872,7 +2872,7 @@ async function loadSettingToggles() {
   } catch (err) {}
 }
 
-async function saveLibraryImportSettings() {
+async function saveLibraryImportSettings(continueAfterSave = false) {
   const payload = {};
   for (const key of LIBRARY_IMPORT_FIELDS) {
     const el = document.getElementById(`setting-${key}`);
@@ -2892,6 +2892,10 @@ async function saveLibraryImportSettings() {
     });
     if (res.success) {
       showToast('Library and import settings saved', 'success');
+      if (continueAfterSave) {
+        scrollToSettingsSection('settings-library-import-step2');
+        document.getElementById('settings-library-import-step2')?.focus();
+      }
     } else {
       showToast(res.error || 'Failed to save', 'error');
     }
@@ -3466,6 +3470,7 @@ const CLICK_ACTIONS = {
   switchTab: el => switchTab(el.dataset.arg),
   openImportSettings: () => openImportSettings(),
   saveLibraryImportSettings: () => saveLibraryImportSettings(),
+  saveLibraryImportContinue: () => saveLibraryImportSettings(true),
   switchSearchTab: el => switchSearchTab(el.dataset.arg),
   switchLibraryTab: el => switchLibraryTab(el.dataset.arg),
   setSortMode: el => setSortMode(el.dataset.arg),

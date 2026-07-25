@@ -291,21 +291,21 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label class="block text-xs text-slate-500 mb-1">Incoming Directory</label>
+            <label class="block text-xs text-slate-500 mb-1">Import Folder (Downloads)</label>
             <input type="text" id="setting-incoming_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/downloads">
-            <p class="text-xs text-slate-500 mt-1">Path Librarr scans for newly available ebook files.</p>
+            <p class="text-xs text-slate-500 mt-1">Folder where Librarr watches for newly downloaded books.</p>
           </div>
           <div>
-            <label class="block text-xs text-slate-500 mb-1">Ebook Library Directory</label>
+            <label class="block text-xs text-slate-500 mb-1">Ebook Library</label>
             <input type="text" id="setting-ebook_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/books">
             <p class="text-xs text-slate-500 mt-1">Destination for organized ebook files after import.</p>
           </div>
           <div>
-            <label class="block text-xs text-slate-500 mb-1">Audiobook Directory</label>
+            <label class="block text-xs text-slate-500 mb-1">Audiobook Library</label>
             <input type="text" id="setting-audiobook_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/audiobooks">
           </div>
           <div>
-            <label class="block text-xs text-slate-500 mb-1">Manga Directory</label>
+            <label class="block text-xs text-slate-500 mb-1">Manga Library</label>
             <input type="text" id="setting-manga_dir" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-600" placeholder="/manga">
           </div>
         </div>
@@ -319,9 +319,12 @@
             <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
           </label>
         </div>
-        <div class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/25 px-4 py-3">
-          <p class="text-sm font-medium text-slate-300">Next: Scan Existing Collection</p>
-          <p class="mt-1 text-xs text-slate-500">Library scanning will be available here after folder configuration.</p>
+        <div id="settings-library-import-step2" tabindex="-1" class="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-800/25 px-4 py-3 outline-none">
+          <p class="text-sm font-medium text-slate-300">Step 2 – Scan Your Existing Library</p>
+          <p class="mt-1 text-xs text-slate-500">After saving your folders, Librarr will scan your collection and import your books.</p>
+        </div>
+        <div class="mt-5 flex justify-end">
+          <button data-action="saveLibraryImportContinue" class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-medium transition-colors">Save & Continue</button>
         </div>
       </div>
 
