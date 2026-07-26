@@ -30,29 +30,30 @@ var indexHTML = web.IndexHTML
 
 // Server holds the API dependencies.
 type Server struct {
-	cfg            *config.Config
-	db             *db.DB
-	libraryService *library.LibraryService
-	importEngine   libraryimport.ImportEngine
-	libraryScanner *libraryscanner.Manager
-	searchMgr      *search.Manager
-	downloadMgr    *download.Manager
-	qb             *download.QBittorrentClient
-	transmission   *download.TransmissionClient
-	sab            *download.SABnzbdClient
-	mux            *http.ServeMux
-	sessions       *SessionStore
-	metrics        *MetricsCollector
-	rateLimiter    *RateLimiter
-	oidc           *OIDCHandler
-	metadataClient *metadata.Client
-	organizer      *organize.Organizer
-	targets        *organize.LibraryTargets
-	webhookSender  *webhook.Sender
-	scheduler      *scheduler.Scheduler
-	wishlistClean  *scheduler.WishlistCleaner
-	seriesDetector *scheduler.SeriesDetector
-	authorMonitor  *scheduler.AuthorMonitor
+	cfg                 *config.Config
+	db                  *db.DB
+	libraryService      *library.LibraryService
+	importEngine        libraryimport.ImportEngine
+	libraryScanner      *libraryscanner.Manager
+	libraryScanImporter *libraryImportJobManager
+	searchMgr           *search.Manager
+	downloadMgr         *download.Manager
+	qb                  *download.QBittorrentClient
+	transmission        *download.TransmissionClient
+	sab                 *download.SABnzbdClient
+	mux                 *http.ServeMux
+	sessions            *SessionStore
+	metrics             *MetricsCollector
+	rateLimiter         *RateLimiter
+	oidc                *OIDCHandler
+	metadataClient      *metadata.Client
+	organizer           *organize.Organizer
+	targets             *organize.LibraryTargets
+	webhookSender       *webhook.Sender
+	scheduler           *scheduler.Scheduler
+	wishlistClean       *scheduler.WishlistCleaner
+	seriesDetector      *scheduler.SeriesDetector
+	authorMonitor       *scheduler.AuthorMonitor
 }
 
 // NewServer creates the HTTP API server.
@@ -380,6 +381,9 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("POST /api/v1/library/scan", requireAdmin(s.handleV1LibraryScanStart))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}", requireAdmin(s.handleV1LibraryScanJob))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/results", requireAdmin(s.handleV1LibraryScanResults))
+	s.mux.HandleFunc("POST /api/v1/library/import", requireAdmin(s.handleV1LibraryImportStart))
+	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}", requireAdmin(s.handleV1LibraryImportJob))
+	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}/results", requireAdmin(s.handleV1LibraryImportResults))
 
 	// Library.
 	s.mux.HandleFunc("GET /api/library", s.handleLibrary)

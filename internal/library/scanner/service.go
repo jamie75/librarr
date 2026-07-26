@@ -105,6 +105,40 @@ func (m *Manager) Result(jobID string) (*Result, bool) {
 	return &result, true
 }
 
+func (m *Manager) UpdateCandidates(jobID string, updates []CandidateUpdate) (*Result, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job := m.jobs[jobID]
+	if job == nil || job.Result == nil {
+		return nil, false
+	}
+	byID := make(map[string]CandidateUpdate, len(updates))
+	for _, update := range updates {
+		if strings.TrimSpace(update.ID) != "" {
+			byID[update.ID] = update
+		}
+	}
+	for i := range job.Result.Candidates {
+		update, ok := byID[job.Result.Candidates[i].ID]
+		if !ok {
+			continue
+		}
+		if update.Classification != "" {
+			job.Result.Candidates[i].Classification = update.Classification
+		}
+		job.Result.Candidates[i].ClassificationReason = update.ClassificationReason
+		if update.ExistingPath != "" {
+			job.Result.Candidates[i].ExistingPath = update.ExistingPath
+		}
+		job.Result.Candidates[i].Error = update.Error
+	}
+	job.Result.Totals = countTotals(job.Result.Candidates)
+	result := *job.Result
+	result.Candidates = append([]Candidate(nil), job.Result.Candidates...)
+	result.Warnings = append([]Warning(nil), job.Result.Warnings...)
+	return &result, true
+}
+
 func (m *Manager) run(ctx context.Context, jobID string, roots Roots) {
 	result, err := m.scan(ctx, jobID, roots)
 	m.mu.Lock()

@@ -619,6 +619,17 @@ const state = {
       result: null,
       filter: 'all',
       search: '',
+      selected: new Set(),
+      skipped: new Set(),
+      import: {
+        running: false,
+        jobId: '',
+        pollTimer: null,
+        startedAt: null,
+        progress: null,
+        result: null,
+        error: '',
+      },
       sections: {
         new: true,
         already_imported: false,
@@ -3079,6 +3090,58 @@ function renderLibraryScanProgressMetric(label, value) {
   `;
 }
 
+function renderLibraryImportProgress(importState) {
+  const progress = importState.progress || {};
+  const total = progress.total || 0;
+  const imported = progress.imported || 0;
+  const duplicates = progress.duplicates || 0;
+  const failed = progress.failed || 0;
+  const completed = imported + duplicates + failed + (progress.skipped || 0);
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const elapsed = formatLibraryScanElapsed(importState.startedAt || progress.started_at);
+  return `
+    <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/8 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-sm font-medium text-emerald-100">Importing selected books...</p>
+          <p class="mt-1 text-xs text-stone-400">${escapeHtml(completed)} / ${escapeHtml(total)} books · ${escapeHtml(elapsed)}</p>
+        </div>
+        <div class="h-5 w-5 animate-spin rounded-full border-2 border-emerald-300 border-t-transparent" aria-label="Importing"></div>
+      </div>
+      <div class="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+        <div class="h-full rounded-full bg-emerald-400 transition-all" style="width:${percent}%"></div>
+      </div>
+      <div class="mt-4 grid grid-cols-3 gap-3">
+        ${renderLibraryScanProgressMetric('Imported', imported)}
+        ${renderLibraryScanProgressMetric('Duplicates', duplicates)}
+        ${renderLibraryScanProgressMetric('Failed', failed)}
+      </div>
+      ${progress.current_title ? `<p class="mt-3 text-sm text-emerald-100">Current: ${escapeHtml(progress.current_title)}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderLibraryImportSummary(result) {
+  if (!result) return '';
+  const summary = result.summary || {};
+  const failed = summary.failed || 0;
+  const failures = (result.items || []).filter(item => item.status === 'failed');
+  return `
+    <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/8 p-4">
+      <p class="text-sm font-semibold text-emerald-100">Import Complete</p>
+      <p class="mt-1 text-xs text-emerald-200">${escapeHtml(summary.imported || 0)} imported · ${escapeHtml(summary.duplicates || 0)} duplicates skipped · ${escapeHtml(failed)} failed</p>
+      ${failed && failures.length ? `
+        <details class="mt-3 rounded-md border border-red-500/20 bg-red-500/10 p-3">
+          <summary class="cursor-pointer text-xs font-medium text-red-100">Show Details</summary>
+          <div class="mt-2 space-y-2">
+            ${failures.map(item => `<p class="text-xs text-red-200">${escapeHtml(item.title || item.path || 'Import candidate')}: ${escapeHtml(item.error || 'Import failed')}</p>`).join('')}
+          </div>
+        </details>
+      ` : ''}
+    </div>
+  `;
+}
+
 function renderLibraryScanError(message) {
   return `
     <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
@@ -3094,6 +3157,7 @@ function renderLibraryScanReview(result) {
   const totals = result.totals || {};
   const filtered = filterLibraryScanCandidates(candidates, state.libraryImport.scan.filter, state.libraryImport.scan.search);
   const grouped = groupLibraryScanCandidates(filtered);
+  const importState = state.libraryImport.scan.import;
   if ((totals.found || 0) === 0) {
     return `
       ${renderLibraryScanToolbar()}
@@ -3108,7 +3172,11 @@ function renderLibraryScanReview(result) {
   return `
     <div class="space-y-4">
       ${allDuplicates ? `<div class="rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">Everything found in this scan already appears to be in the library.</div>` : ''}
+      ${importState.running || importState.progress ? renderLibraryImportProgress(importState) : ''}
+      ${importState.error ? `<div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">${escapeHtml(importState.error)}</div>` : ''}
+      ${importState.result ? renderLibraryImportSummary(importState.result) : ''}
       ${renderLibraryScanTotals(totals)}
+      ${renderLibraryScanImportActions(result)}
       ${renderLibraryScanToolbar()}
       <div class="space-y-3">
         ${renderLibraryScanSection('Ready to Import', 'new', grouped.new || [])}
@@ -3116,6 +3184,29 @@ function renderLibraryScanReview(result) {
         ${renderLibraryScanSection('Already Imported', 'already_imported', grouped.already_imported || [])}
         ${renderLibraryScanSection('Unsupported', 'unsupported', grouped.unsupported || [])}
         ${renderLibraryScanSection('Unreadable', 'unreadable', grouped.unreadable || [])}
+      </div>
+    </div>
+  `;
+}
+
+function renderLibraryScanImportActions(result) {
+  const ready = readyLibraryScanCandidates(result);
+  const selected = selectedReadyLibraryScanCandidates(result);
+  const importing = state.libraryImport.scan.import.running;
+  const allSelected = ready.length > 0 && selected.length === ready.length;
+  const disabledSelected = importing || selected.length === 0;
+  const disabledReady = importing || ready.length === 0;
+  return `
+    <div class="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3 md:flex-row md:items-center md:justify-between">
+      <label class="inline-flex items-center gap-2 text-sm text-slate-200">
+        <input data-action-change="toggleLibraryScanSelectAllReady" type="checkbox" ${allSelected ? 'checked' : ''} ${ready.length === 0 || importing ? 'disabled' : ''} class="rounded border-slate-600 bg-slate-900 text-amber-500">
+        <span>Select All Ready</span>
+      </label>
+      <div class="flex flex-wrap gap-2">
+        <button data-action="startLibraryImportSelected" ${disabledSelected ? 'disabled' : ''} class="rounded-md bg-emerald-500 px-3 py-2 text-xs font-medium text-stone-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">Import Selected</button>
+        <button data-action="startLibraryImportAllReady" ${disabledReady ? 'disabled' : ''} class="rounded-md bg-amber-500 px-3 py-2 text-xs font-medium text-stone-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">Import All Ready</button>
+        <button data-action="clearLibraryScanSelection" ${disabledSelected ? 'disabled' : ''} class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:text-slate-500">Clear Selection</button>
+        <button data-action="skipLibraryScanSelected" ${disabledSelected ? 'disabled' : ''} class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:text-slate-500">Skip Selected</button>
       </div>
     </div>
   `;
@@ -3182,9 +3273,11 @@ function renderLibraryScanCandidate(candidate) {
   const path = candidate.path || candidate.relative_path || '';
   const isReady = candidate.classification === 'new';
   const existingPath = candidate.existing_path || '';
+  const selected = state.libraryImport.scan.selected.has(candidate.id);
+  const importing = state.libraryImport.scan.import.running;
   return `
     <div class="grid gap-3 border-b border-slate-800 px-4 py-3 last:border-b-0 md:grid-cols-[auto_3rem_1fr]">
-      <div class="flex items-start pt-1">${isReady ? `<input type="checkbox" checked disabled aria-label="Ready to import candidate" class="rounded border-slate-600 bg-slate-900 text-amber-500">` : ''}</div>
+      <div class="flex items-start pt-1">${isReady ? `<input data-action-change="toggleLibraryScanCandidateSelection" data-candidate-id="${escapeHtml(candidate.id)}" type="checkbox" ${selected ? 'checked' : ''} ${importing ? 'disabled' : ''} aria-label="Select ${escapeHtml(title)}" class="rounded border-slate-600 bg-slate-900 text-amber-500">` : ''}</div>
       <div class="flex h-12 w-9 items-center justify-center rounded-md bg-gradient-to-br from-stone-700 to-slate-900 text-xs font-semibold text-stone-300">${escapeHtml(format || '?')}</div>
       <div class="min-w-0">
         <div class="flex flex-wrap items-start justify-between gap-2">
@@ -3205,7 +3298,9 @@ function renderLibraryScanCandidate(candidate) {
 
 function filterLibraryScanCandidates(candidates, filter = 'all', search = '') {
   const query = String(search || '').trim().toLowerCase();
+  const skipped = state.libraryImport.scan.skipped || new Set();
   return candidates.filter(candidate => {
+    if (skipped.has(candidate.id)) return false;
     if (filter !== 'all' && candidate.classification !== filter) return false;
     if (!query) return true;
     const haystack = [
@@ -3226,6 +3321,16 @@ function groupLibraryScanCandidates(candidates) {
     groups[key].push(candidate);
     return groups;
   }, {});
+}
+
+function readyLibraryScanCandidates(result) {
+  const skipped = state.libraryImport.scan.skipped || new Set();
+  return (result?.candidates || []).filter(candidate => candidate.classification === 'new' && !skipped.has(candidate.id));
+}
+
+function selectedReadyLibraryScanCandidates(result) {
+  const selected = state.libraryImport.scan.selected || new Set();
+  return readyLibraryScanCandidates(result).filter(candidate => selected.has(candidate.id));
 }
 
 function formatLibraryScanPhase(phase) {
@@ -3251,6 +3356,17 @@ async function startLibraryScan() {
   scan.progress = { status: 'pending', current_phase: 'starting', started_at: scan.startedAt };
   scan.result = null;
   scan.error = '';
+  scan.selected.clear();
+  scan.skipped.clear();
+  scan.import = {
+    running: false,
+    jobId: '',
+    pollTimer: null,
+    startedAt: null,
+    progress: null,
+    result: null,
+    error: '',
+  };
   renderLibraryScanWorkspace();
   try {
     const data = await apiJson('/api/v1/library/scan', { method: 'POST' });
@@ -3307,6 +3423,112 @@ async function loadLibraryScanResults(jobId) {
   scan.error = '';
   renderLibraryScanWorkspace();
   showToast('Library scan complete', 'success');
+}
+
+async function startLibraryImport(allReady = false) {
+  const scan = state.libraryImport.scan;
+  const importState = scan.import;
+  if (!scan.result || importState.running) return;
+  const candidates = allReady ? readyLibraryScanCandidates(scan.result) : selectedReadyLibraryScanCandidates(scan.result);
+  if (candidates.length === 0) {
+    showToast('Select at least one ready book to import', 'error');
+    return;
+  }
+  if (importState.pollTimer) {
+    window.clearTimeout(importState.pollTimer);
+  }
+  importState.running = true;
+  importState.jobId = '';
+  importState.startedAt = new Date().toISOString();
+  importState.progress = { status: 'pending', imported: 0, failed: 0, duplicates: 0, skipped: 0, total: candidates.length, started_at: importState.startedAt };
+  importState.result = null;
+  importState.error = '';
+  renderLibraryScanWorkspace();
+  try {
+    const data = await apiJson('/api/v1/library/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        scan_job_id: scan.result.job_id || scan.jobId,
+        all_ready: !!allReady,
+        candidate_ids: allReady ? [] : candidates.map(candidate => candidate.id),
+      }),
+    });
+    importState.jobId = data.job_id || data.job?.id || '';
+    if (data.job?.progress) {
+      importState.progress = data.job.progress;
+      importState.startedAt = data.job.started_at || importState.startedAt;
+    }
+    await pollLibraryImportJob();
+  } catch (err) {
+    importState.running = false;
+    importState.progress = null;
+    importState.error = err.message || 'Failed to start library import';
+    renderLibraryScanWorkspace();
+    showToast(importState.error, 'error');
+  }
+}
+
+async function pollLibraryImportJob() {
+  const importState = state.libraryImport.scan.import;
+  if (!importState.running || !importState.jobId) return;
+  try {
+    const job = await apiJson(`/api/v1/library/import/${encodeURIComponent(importState.jobId)}`);
+    importState.progress = job.progress || importState.progress;
+    importState.startedAt = job.started_at || importState.startedAt;
+    if (job.status === 'completed') {
+      await loadLibraryImportResults(importState.jobId);
+      return;
+    }
+    if (job.status === 'failed') {
+      importState.running = false;
+      importState.progress = null;
+      importState.error = job.error || 'Library import failed';
+      renderLibraryScanWorkspace();
+      showToast(importState.error, 'error');
+      return;
+    }
+    renderLibraryScanWorkspace();
+    importState.pollTimer = window.setTimeout(pollLibraryImportJob, 1200);
+  } catch (err) {
+    importState.running = false;
+    importState.progress = null;
+    importState.error = err.message || 'Failed to poll library import';
+    renderLibraryScanWorkspace();
+    showToast(importState.error, 'error');
+  }
+}
+
+async function loadLibraryImportResults(jobId) {
+  const scan = state.libraryImport.scan;
+  const importState = scan.import;
+  const result = await apiJson(`/api/v1/library/import/${encodeURIComponent(jobId)}/results`);
+  importState.running = false;
+  importState.progress = null;
+  importState.result = result;
+  importState.error = '';
+  const updatedScan = await apiJson(`/api/v1/library/scan/${encodeURIComponent(result.scan_job_id || scan.result?.job_id || scan.jobId)}/results`);
+  scan.result = updatedScan;
+  for (const candidate of updatedScan.candidates || []) {
+    if (candidate.classification !== 'new') {
+      scan.selected.delete(candidate.id);
+    }
+  }
+  renderLibraryScanWorkspace();
+  await refreshLibraryAfterScanImport();
+  showToast('Library import complete', (result.summary?.failed || 0) > 0 ? 'error' : 'success');
+}
+
+async function refreshLibraryAfterScanImport() {
+  const tasks = [];
+  if (state.currentTab === 'home' && typeof loadHomeDashboard === 'function') {
+    tasks.push(loadHomeDashboard());
+  }
+  if (state.currentTab === 'library' && typeof loadLibrary === 'function') {
+    tasks.push(loadLibrary());
+  }
+  if (tasks.length) {
+    await Promise.allSettled(tasks);
+  }
 }
 
 function updateLibraryImportSaveState(flashMode = '') {
@@ -3985,6 +4207,19 @@ const CLICK_ACTIONS = {
   saveLibraryImportStandard: () => saveLibraryImportSettings(false),
   saveLibraryImportContinue: () => saveLibraryImportSettings(true),
   startLibraryScan: () => startLibraryScan(),
+  startLibraryImportSelected: () => startLibraryImport(false),
+  startLibraryImportAllReady: () => startLibraryImport(true),
+  clearLibraryScanSelection: () => {
+    state.libraryImport.scan.selected.clear();
+    renderLibraryScanWorkspace();
+  },
+  skipLibraryScanSelected: () => {
+    for (const candidate of selectedReadyLibraryScanCandidates(state.libraryImport.scan.result)) {
+      state.libraryImport.scan.skipped.add(candidate.id);
+      state.libraryImport.scan.selected.delete(candidate.id);
+    }
+    renderLibraryScanWorkspace();
+  },
   setLibraryScanFilter: el => {
     state.libraryImport.scan.filter = el.dataset.filter || 'all';
     renderLibraryScanWorkspace();
@@ -4046,6 +4281,29 @@ const CHANGE_ACTIONS = {
   changeUserRole: el => changeUserRole(+el.dataset.id, el.value),
   toggleForeignLangFilter: () => toggleForeignLangFilter(),
   toggleRemoveTorrent: () => toggleRemoveTorrent(),
+  toggleLibraryScanCandidateSelection: el => {
+    const id = el.dataset.candidateId;
+    if (!id) return;
+    if (el.checked) {
+      state.libraryImport.scan.selected.add(id);
+    } else {
+      state.libraryImport.scan.selected.delete(id);
+    }
+    renderLibraryScanWorkspace();
+  },
+  toggleLibraryScanSelectAllReady: el => {
+    const ready = readyLibraryScanCandidates(state.libraryImport.scan.result);
+    if (el.checked) {
+      for (const candidate of ready) {
+        state.libraryImport.scan.selected.add(candidate.id);
+      }
+    } else {
+      for (const candidate of ready) {
+        state.libraryImport.scan.selected.delete(candidate.id);
+      }
+    }
+    renderLibraryScanWorkspace();
+  },
 };
 
 document.addEventListener('change', e => {

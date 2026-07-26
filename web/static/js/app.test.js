@@ -66,19 +66,28 @@ const functionBundle = [
   extractFunctionSource('renderLibraryScanReady'),
   extractFunctionSource('renderLibraryScanProgress'),
   extractFunctionSource('renderLibraryScanProgressMetric'),
+  extractFunctionSource('renderLibraryImportProgress'),
+  extractFunctionSource('renderLibraryImportSummary'),
   extractFunctionSource('renderLibraryScanError'),
   extractFunctionSource('renderLibraryScanReview'),
+  extractFunctionSource('renderLibraryScanImportActions'),
   extractFunctionSource('renderLibraryScanTotals'),
   extractFunctionSource('renderLibraryScanToolbar'),
   extractFunctionSource('renderLibraryScanSection'),
   extractFunctionSource('renderLibraryScanCandidate'),
   extractFunctionSource('filterLibraryScanCandidates'),
   extractFunctionSource('groupLibraryScanCandidates'),
+  extractFunctionSource('readyLibraryScanCandidates'),
+  extractFunctionSource('selectedReadyLibraryScanCandidates'),
   extractFunctionSource('formatLibraryScanPhase'),
   extractFunctionSource('formatLibraryScanElapsed'),
   extractFunctionSource('startLibraryScan'),
   extractFunctionSource('pollLibraryScanJob'),
   extractFunctionSource('loadLibraryScanResults'),
+  extractFunctionSource('startLibraryImport'),
+  extractFunctionSource('pollLibraryImportJob'),
+  extractFunctionSource('loadLibraryImportResults'),
+  extractFunctionSource('refreshLibraryAfterScanImport'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
 ].join('\n\n');
@@ -98,6 +107,17 @@ function libraryImportState(overrides = {}) {
       result: null,
       filter: 'all',
       search: '',
+      selected: new Set(),
+      skipped: new Set(),
+      import: {
+        running: false,
+        jobId: '',
+        pollTimer: null,
+        startedAt: null,
+        progress: null,
+        result: null,
+        error: '',
+      },
       sections: {
         new: true,
         already_imported: false,
@@ -677,6 +697,130 @@ test('scan failure renders retry state', async () => {
   assert.match(workspace.innerHTML, /Retry/);
 });
 
+test('renderLibraryScanReview shows import actions and selectable ready rows', () => {
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: { ...libraryImportState().scan, result: sampleScanResult(), selected: new Set(['ready-1']) } }) },
+  });
+
+  const html = context.renderLibraryScanReview(sampleScanResult());
+
+  assert.match(html, /Select All Ready/);
+  assert.match(html, /Import Selected/);
+  assert.match(html, /Import All Ready/);
+  assert.match(html, /Skip Selected/);
+  assert.match(html, /data-candidate-id="ready-1"/);
+});
+
+test('selection helpers exclude skipped and non-ready candidates', () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = sampleScanResult();
+  scanState.selected = new Set(['ready-1', 'dup-1']);
+  scanState.skipped = new Set(['ready-1']);
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+  });
+
+  assert.equal(context.readyLibraryScanCandidates(sampleScanResult()).length, 0);
+  assert.equal(context.selectedReadyLibraryScanCandidates(sampleScanResult()).length, 0);
+  assert.equal(context.filterLibraryScanCandidates(sampleScanResult().candidates, 'all', '').length, 1);
+});
+
+test('successful import selected posts, polls, refreshes review, and clears imported selection', async () => {
+  const workspace = { innerHTML: '' };
+  const scanState = libraryImportState().scan;
+  scanState.result = sampleScanResult();
+  scanState.selected = new Set(['ready-1']);
+  const calls = [];
+  const context = createContext({
+    state: { currentTab: 'home', libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+    loadHomeDashboard: async () => calls.push({ url: 'home-refresh', method: 'CALL' }),
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body || '' });
+      if (url === '/api/v1/library/import') return { job_id: 'imp-1', job: { started_at: '2026-01-01T00:00:00Z', progress: { status: 'importing', total: 1, imported: 0, started_at: '2026-01-01T00:00:00Z' } } };
+      if (url === '/api/v1/library/import/imp-1') return { id: 'imp-1', status: 'completed', progress: { status: 'completed', total: 1, imported: 1 } };
+      if (url === '/api/v1/library/import/imp-1/results') return { job_id: 'imp-1', scan_job_id: 'job-1', summary: { imported: 1, duplicates: 0, failed: 0 }, items: [{ candidate_id: 'ready-1', status: 'imported' }] };
+      if (url === '/api/v1/library/scan/job-1/results') return importedScanResult();
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.startLibraryImport(false);
+
+  assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), [
+    'POST /api/v1/library/import',
+    'GET /api/v1/library/import/imp-1',
+    'GET /api/v1/library/import/imp-1/results',
+    'GET /api/v1/library/scan/job-1/results',
+    'CALL home-refresh',
+  ]);
+  assert.match(calls[0].body, /"candidate_ids":\["ready-1"\]/);
+  assert.equal(context.state.libraryImport.scan.selected.has('ready-1'), false);
+  assert.match(workspace.innerHTML, /Import Complete/);
+  assert.match(workspace.innerHTML, /Already Imported/);
+});
+
+test('import all ready sends all_ready and import progress renders counts', async () => {
+  const workspace = { innerHTML: '' };
+  const scanState = libraryImportState().scan;
+  scanState.result = sampleScanResult();
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body || '' });
+      if (url === '/api/v1/library/import') return { job_id: 'imp-2', job: { progress: { status: 'importing', total: 1, imported: 0, current_title: 'The Guardian', started_at: new Date().toISOString() } } };
+      if (url === '/api/v1/library/import/imp-2') return { id: 'imp-2', status: 'completed', progress: { status: 'completed', total: 1, imported: 1 } };
+      if (url === '/api/v1/library/import/imp-2/results') return { job_id: 'imp-2', scan_job_id: 'job-1', summary: { imported: 1, duplicates: 0, failed: 0 }, items: [] };
+      if (url === '/api/v1/library/scan/job-1/results') return importedScanResult();
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  assert.match(context.renderLibraryImportProgress({ startedAt: new Date().toISOString(), progress: { total: 17, imported: 8, failed: 0, duplicates: 0, current_title: 'The War of the Worlds' } }), /8 \/ 17 books/);
+  await context.startLibraryImport(true);
+
+  assert.match(calls[0].body, /"all_ready":true/);
+});
+
+test('import failure keeps review visible and reports error', async () => {
+  const workspace = { innerHTML: '' };
+  const scanState = libraryImportState().scan;
+  scanState.result = sampleScanResult();
+  scanState.selected = new Set(['ready-1']);
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+    apiJson: async url => {
+      if (url === '/api/v1/library/import') return { job_id: 'imp-err' };
+      if (url === '/api/v1/library/import/imp-err') return { id: 'imp-err', status: 'failed', error: 'permission denied' };
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.startLibraryImport(false);
+
+  assert.match(workspace.innerHTML, /permission denied/);
+  assert.match(workspace.innerHTML, /Ready to Import/);
+});
+
+test('import completion summary renders partial failures', () => {
+  const context = createContext();
+  const html = context.renderLibraryImportSummary({
+    summary: { imported: 15, duplicates: 0, failed: 2 },
+    items: [
+      { status: 'failed', title: 'Missing Book', error: 'file disappeared' },
+      { status: 'failed', path: '/books/locked.epub', error: 'permission denied' },
+    ],
+  });
+
+  assert.match(html, /15 imported/);
+  assert.match(html, /2 failed/);
+  assert.match(html, /Show Details/);
+  assert.match(html, /file disappeared/);
+});
+
 function sampleScanResult() {
   return {
     job_id: 'job-1',
@@ -715,6 +859,37 @@ function sampleScanResult() {
         metadata: { source: 'filename_fallback' },
         classification_reason: 'Existing library file already has matching content',
       },
+    ],
+  };
+}
+
+function importedScanResult() {
+  return {
+    job_id: 'job-1',
+    status: 'completed',
+    totals: {
+      found: 2,
+      ready_to_import: 0,
+      duplicates: 1,
+      already_imported: 1,
+      unsupported: 0,
+      unreadable: 0,
+    },
+    candidates: [
+      {
+        id: 'ready-1',
+        classification: 'already_imported',
+        title: 'The Guardian',
+        author: 'Carla Jablonski',
+        filename: 'guardian.epub',
+        format: 'epub',
+        media_type: 'ebook',
+        path: '/books/guardian.epub',
+        existing_path: '/books/guardian.epub',
+        metadata: { source: 'embedded_metadata', title: 'The Guardian', author: 'Carla Jablonski' },
+        classification_reason: 'Imported into library',
+      },
+      sampleScanResult().candidates[1],
     ],
   };
 }

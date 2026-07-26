@@ -119,6 +119,30 @@
           "started_at": {"type": "string", "format": "date-time"},
           "completed_at": {"type": "string", "format": "date-time"}
         }
+      },
+      "LibraryImportJob": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "scan_job_id": {"type": "string"},
+          "status": {"type": "string", "enum": ["pending", "importing", "completed", "failed"]},
+          "progress": {"type": "object"},
+          "error": {"type": "string"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "LibraryImportResult": {
+        "type": "object",
+        "properties": {
+          "job_id": {"type": "string"},
+          "scan_job_id": {"type": "string"},
+          "status": {"type": "string"},
+          "summary": {"type": "object"},
+          "items": {"type": "array", "items": {"type": "object"}},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"}
+        }
       }
     }
   },
@@ -315,6 +339,50 @@
           "200": {"description": "Completed review payload", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LibraryScanResult"}}}},
           "409": {"description": "Scan results are not ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "Unknown scan job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/library/import": {
+      "post": {
+        "summary": "Start a Librarr 2.0 library import job from scan review results",
+        "description": "Imports only ready_to_import candidates from a completed scan review. Duplicates, already imported, unsupported, and unreadable entries are never imported.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "scan_job_id": {"type": "string"},
+            "candidate_ids": {"type": "array", "items": {"type": "string"}},
+            "all_ready": {"type": "boolean"}
+          }, "required": ["scan_job_id"]}}}
+        },
+        "responses": {
+          "202": {"description": "Import accepted", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "success": {"type": "boolean"},
+            "job_id": {"type": "string"},
+            "job": {"$ref": "#/components/schemas/LibraryImportJob"}
+          }}}}},
+          "400": {"description": "No ready candidates selected", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "409": {"description": "An import is already running", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/library/import/{job_id}": {
+      "get": {
+        "summary": "Get library import job progress",
+        "parameters": [{"name": "job_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Import job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LibraryImportJob"}}}},
+          "404": {"description": "Unknown import job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/library/import/{job_id}/results": {
+      "get": {
+        "summary": "Get completed library import result",
+        "parameters": [{"name": "job_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Completed import result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LibraryImportResult"}}}},
+          "409": {"description": "Import results are not ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "Unknown import job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

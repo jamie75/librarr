@@ -83,6 +83,14 @@ type Candidate struct {
 	Error                string            `json:"error,omitempty"`
 }
 
+type CandidateUpdate struct {
+	ID                   string         `json:"id"`
+	Classification       Classification `json:"classification"`
+	ClassificationReason string         `json:"classification_reason,omitempty"`
+	ExistingPath         string         `json:"existing_path,omitempty"`
+	Error                string         `json:"error,omitempty"`
+}
+
 type Totals struct {
 	Found           int `json:"found"`
 	ReadyToImport   int `json:"ready_to_import"`
