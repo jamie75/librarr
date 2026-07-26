@@ -583,9 +583,11 @@ Librarr should provide:
 - Prometheus metrics where useful
 
 Diagnostics should be useful without requiring permanent verbose instrumentation
-in normal operation. The next diagnostics milestone should report steps such as
-DNS, TCP, TLS/HTTPS, authentication, API version, and latency, with actionable
-next steps and without exposing secrets.
+in normal operation. Prowlarr and qBittorrent now use the shared diagnostics
+pipeline to report configuration, URL validation, DNS, TCP, TLS/HTTPS,
+authentication, API validation, version, and latency, with actionable next steps
+and without exposing secrets. Future services should reuse the same structured
+result model.
 
 ## Migration from library_items
 

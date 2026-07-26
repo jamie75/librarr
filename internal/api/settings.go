@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JeremiahM37/librarr/internal/diagnostics"
 	"github.com/JeremiahM37/librarr/internal/netutil"
 	"github.com/JeremiahM37/librarr/internal/sources"
 )
@@ -202,15 +204,15 @@ func validateTestURL(rawURL string) error {
 	return netutil.ValidateIntegrationURL(rawURL)
 }
 
-// handleTestProwlarr actually tests the Prowlarr API connection.
+// handleTestProwlarr runs staged Prowlarr diagnostics.
 func (s *Server) handleTestProwlarr(w http.ResponseWriter, r *http.Request) {
 	var data struct {
 		URL    string `json:"url"`
 		APIKey string `json:"api_key"`
 	}
-	json.NewDecoder(r.Body).Decode(&data)
+	_ = json.NewDecoder(r.Body).Decode(&data)
 
-	testURL := strings.TrimRight(data.URL, "/")
+	testURL := data.URL
 	apiKey := data.APIKey
 	if testURL == "" {
 		testURL = s.cfg.ProwlarrURL
@@ -219,42 +221,44 @@ func (s *Server) handleTestProwlarr(w http.ResponseWriter, r *http.Request) {
 		apiKey = s.cfg.ProwlarrAPIKey
 	}
 
-	if testURL == "" || apiKey == "" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success": false, "error": "Prowlarr URL and API key required",
-		})
-		return
-	}
-
-	if err := validateTestURL(testURL); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false, "error": err.Error(),
-		})
-		return
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, _ := http.NewRequest("GET", testURL+"/api/v1/health", nil)
-	req.Header.Set("X-Api-Key", apiKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success": false, "error": "Connection failed",
-		})
-		return
-	}
-	resp.Body.Close()
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success": resp.StatusCode == 200,
-		"status":  resp.StatusCode,
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	result := diagnostics.DiagnoseProwlarr(ctx, diagnostics.ProwlarrConfig{
+		URL:     strings.TrimRight(testURL, "/"),
+		APIKey:  apiKey,
+		Timeout: 5 * time.Second,
 	})
+	writeJSON(w, http.StatusOK, result)
 }
 
-// handleTestQBittorrent actually tests qBittorrent login.
-func (s *Server) handleTestQBittorrent(w http.ResponseWriter, _ *http.Request) {
-	result := s.qb.Diagnose()
+// handleTestQBittorrent runs staged qBittorrent diagnostics.
+func (s *Server) handleTestQBittorrent(w http.ResponseWriter, r *http.Request) {
+	var data struct {
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&data)
+	testURL := data.URL
+	username := data.Username
+	password := data.Password
+	if testURL == "" {
+		testURL = s.cfg.QBUrl
+	}
+	if username == "" {
+		username = s.cfg.QBUser
+	}
+	if password == "" || password == maskedValue {
+		password = s.cfg.QBPass
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	result := diagnostics.DiagnoseQBittorrent(ctx, diagnostics.QBittorrentConfig{
+		URL:      strings.TrimRight(testURL, "/"),
+		Username: username,
+		Password: password,
+		Timeout:  5 * time.Second,
+	})
 	writeJSON(w, http.StatusOK, result)
 }
 

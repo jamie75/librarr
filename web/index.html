@@ -594,51 +594,34 @@
         </div>
       </div>
 
-      <!-- Connection Tests -->
+      <!-- Connection Diagnostics -->
       <div id="settings-connections" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
-        <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4" data-i18n="s_connection_tests">Connection Tests</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="connection-tests">
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_prowlarr">Prowlarr</span>
-            <div class="flex items-center gap-2">
-              <span id="test-prowlarr-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="prowlarr" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
-            </div>
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider" data-i18n="s_connection_tests">Connection Diagnostics</h3>
+            <p class="mt-1 text-xs text-slate-500">Run staged checks for configuration, DNS, TCP, TLS, authentication, API validation, version, and latency.</p>
           </div>
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_qbittorrent">qBittorrent</span>
-            <div class="flex items-center gap-2">
-              <span id="test-qbittorrent-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="qbittorrent" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" id="connection-tests">
+          <div id="diagnostic-prowlarr" data-diagnostic-service="prowlarr" data-service-label="Prowlarr" class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-slate-100">Prowlarr</p>
+                <p id="test-prowlarr-status" class="mt-1 text-xs text-slate-500">Not tested</p>
+              </div>
+              <button data-action="testConnection" data-arg="prowlarr" class="px-3 py-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md transition-colors">Run Diagnostics</button>
             </div>
+            <div id="diagnostic-prowlarr-result" class="mt-4"></div>
           </div>
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_transmission">Transmission</span>
-            <div class="flex items-center gap-2">
-              <span id="test-transmission-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="transmission" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
+          <div id="diagnostic-qbittorrent" data-diagnostic-service="qbittorrent" data-service-label="qBittorrent" class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-slate-100">qBittorrent</p>
+                <p id="test-qbittorrent-status" class="mt-1 text-xs text-slate-500">Not tested</p>
+              </div>
+              <button data-action="testConnection" data-arg="qbittorrent" class="px-3 py-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md transition-colors">Run Diagnostics</button>
             </div>
-          </div>
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_sabnzbd">SABnzbd</span>
-            <div class="flex items-center gap-2">
-              <span id="test-sabnzbd-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="sabnzbd" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
-            </div>
-          </div>
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_audiobookshelf">Audiobookshelf</span>
-            <div class="flex items-center gap-2">
-              <span id="test-audiobookshelf-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="audiobookshelf" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
-            </div>
-          </div>
-          <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-            <span class="text-sm text-slate-300" data-i18n="conn_kavita">Kavita</span>
-            <div class="flex items-center gap-2">
-              <span id="test-kavita-status" class="text-xs text-slate-500" data-i18n="not_tested">Not tested</span>
-              <button data-action="testConnection" data-arg="kavita" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" data-i18n="btn_test">Test</button>
-            </div>
+            <div id="diagnostic-qbittorrent-result" class="mt-4"></div>
           </div>
         </div>
       </div>

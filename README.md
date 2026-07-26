@@ -40,6 +40,7 @@ Librarr 2.0 currently has:
 - manual-review detection and resolution controls
 - explicit import actions from scan review results
 - partial-failure reporting and retry of failed imports
+- rich connection diagnostics for Prowlarr and qBittorrent
 - normalized `/api/v1` read endpoints
 - compatibility endpoints for existing legacy behavior
 - optional Prowlarr and download-client integration
@@ -231,18 +232,16 @@ focused on a practical personal-library experience:
 - ✅ Review UI
 - ✅ Explicit Import from Review
 - ✅ Manual Review Improvements
-- ⬜ Connection Diagnostics
+- ✅ Connection Diagnostics for Prowlarr and qBittorrent
 - ⬜ Metadata Provider Integration
 - ⬜ Cover Improvements
 - ⬜ OPDS v2 / Delivery
 - ⬜ Media Assistant Integration
 
-## Immediate Next Priority
+## Connection Diagnostics
 
-The next engineering priority is improved connection diagnostics.
-
-Current connection tests should evolve into detailed, user-friendly diagnostics
-similar to Portainer or Unraid:
+Prowlarr and qBittorrent diagnostics now run staged checks similar to Portainer
+or Unraid:
 
 ```text
 DNS               ✓
@@ -268,6 +267,10 @@ Connected
 Authentication failed (401)
 Check API key
 ```
+
+Each step reports status, elapsed time where useful, detail text, and an
+actionable suggestion. Future diagnostics should extend the same engine to
+Audiobookshelf, Kavita, Komga, SABnzbd, and Transmission.
 
 ## Architecture Overview
 

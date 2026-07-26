@@ -194,8 +194,10 @@ If you want to walk the flow manually in the UI:
    Unreadable sections.
 8. Use Import Selected or Import All Ready.
 9. Verify the review refreshes and imported books move to Already Imported.
-10. Restart the container.
-11. Verify onboarding remains complete and imported books remain present.
+10. If Prowlarr or qBittorrent are configured, run Connection Diagnostics and
+    verify staged results render in Settings.
+11. Restart the container.
+12. Verify onboarding remains complete and imported books remain present.
 
 ## Health check
 

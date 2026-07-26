@@ -29,6 +29,7 @@ The current codebase already provides a useful foundation, including:
 - recursive library scanner
 - scan review with filters, search, duplicate details, and manual review
 - explicit import from scan review results
+- staged connection diagnostics for Prowlarr and qBittorrent
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
 
@@ -123,11 +124,12 @@ Replace the file-centric library core with a normalized domain model while prese
 
 ### 2.0.8 Connection diagnostics
 
-- [ ] Replace simple connection tests with step-by-step diagnostics.
-- [ ] Report DNS, TCP, TLS/HTTPS, authentication, API version, and latency.
-- [ ] Return actionable next steps for timeouts, 401/403 errors, bad URLs, and unreachable hosts.
-- [ ] Keep secrets, headers, cookies, and sensitive URLs out of logs and responses.
-- [ ] Present diagnostics in Settings with clear success/failure rows.
+- [x] Replace simple Prowlarr and qBittorrent connection tests with step-by-step diagnostics.
+- [x] Report DNS, TCP, TLS/HTTPS, authentication, API version, and latency.
+- [x] Return actionable next steps for timeouts, 401/403 errors, bad URLs, and unreachable hosts.
+- [x] Keep secrets, headers, cookies, and sensitive URLs out of logs and responses.
+- [x] Present diagnostics in Settings with clear success/failure rows.
+- [ ] Extend diagnostics to Audiobookshelf, Kavita, Komga, SABnzbd, and Transmission.
 
 ### 2.0 exit criteria
 
@@ -404,7 +406,7 @@ The following apply across all milestones.
 
 The next implementation sequence should be:
 
-1. Improve connection diagnostics for Prowlarr, qBittorrent, and optional integrations.
+1. Extend rich diagnostics to Audiobookshelf, Kavita, Komga, SABnzbd, and Transmission.
 2. Continue dogfooding the scanner/review/import path with real libraries.
 3. Add focused fixes for manual-review edge cases found during dogfooding.
 4. Refine logical book cards and details using the normalized read API.

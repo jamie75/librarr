@@ -46,6 +46,83 @@ func settingsTestServer(t *testing.T) (*Server, string) {
 	return &Server{cfg: cfg, db: database, searchMgr: searchMgr}, settingsPath
 }
 
+func TestHandleTestProwlarrReturnsStructuredDiagnostics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/system/status" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("X-Api-Key") != "test-key" {
+			t.Fatalf("missing api key")
+		}
+		_, _ = w.Write([]byte(`{"version":"2.0.5"}`))
+	}))
+	defer upstream.Close()
+	s, _ := settingsTestServer(t)
+
+	body, _ := json.Marshal(map[string]interface{}{"url": upstream.URL, "api_key": "test-key"})
+	req := httptest.NewRequest(http.MethodPost, "/api/test/prowlarr", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleTestProwlarr(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Service string `json:"service"`
+		Success bool   `json:"success"`
+		Status  string `json:"status"`
+		Steps   []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Service != "prowlarr" || !resp.Success || resp.Status != "connected" {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(resp.Steps) == 0 {
+		t.Fatal("missing diagnostic steps")
+	}
+}
+
+func TestHandleTestQBittorrentReturnsAuthenticationSuggestion(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Fails.", http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	s, _ := settingsTestServer(t)
+
+	body, _ := json.Marshal(map[string]interface{}{"url": upstream.URL, "username": "admin", "password": "bad"})
+	req := httptest.NewRequest(http.MethodPost, "/api/test/qbittorrent", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleTestQBittorrent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Service string `json:"service"`
+		Success bool   `json:"success"`
+		Steps   []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Suggestion string `json:"suggestion"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Service != "qbittorrent" || resp.Success {
+		t.Fatalf("resp = %+v", resp)
+	}
+	for _, step := range resp.Steps {
+		if step.Name == "Authentication" && step.Status == "failed" && step.Suggestion != "" {
+			return
+		}
+	}
+	t.Fatalf("missing failed auth step with suggestion: %+v", resp.Steps)
+}
+
 func saveSettings(t *testing.T, s *Server, payload map[string]interface{}) {
 	t.Helper()
 	body, _ := json.Marshal(payload)

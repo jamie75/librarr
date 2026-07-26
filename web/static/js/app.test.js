@@ -103,6 +103,13 @@ const functionBundle = [
   extractFunctionSource('editLibraryScanCandidateMetadata'),
   extractFunctionSource('retryFailedLibraryImport'),
   extractFunctionSource('refreshLibraryAfterScanImport'),
+  extractFunctionSource('diagnosticPayload'),
+  extractFunctionSource('renderDiagnosticResult'),
+  extractFunctionSource('renderDiagnosticStep'),
+  extractFunctionSource('diagnosticStatusClass'),
+  extractFunctionSource('diagnosticStatusIcon'),
+  extractFunctionSource('diagnosticStatusLabel'),
+  extractFunctionSource('testConnection'),
   extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
@@ -994,6 +1001,65 @@ test('retry failed import posts only failed ready candidates', async () => {
   assert.equal(calls[0].url, '/api/v1/library/import');
   assert.match(calls[0].body, /"candidate_ids":\["ready-1"\]/);
   assert.doesNotMatch(calls[0].body, /ready-2/);
+});
+
+test('renderDiagnosticResult shows staged actionable diagnostics', () => {
+  const context = createContext();
+  const html = context.renderDiagnosticResult({
+    service: 'prowlarr',
+    status: 'failed',
+    success: false,
+    duration_ms: 128,
+    summary: 'HTTP 401 Unauthorized',
+    steps: [
+      { name: 'DNS Lookup', status: 'success', duration_ms: 3, message: 'Resolved 1 address.' },
+      { name: 'Authentication', status: 'failed', message: 'HTTP 401 Unauthorized', suggestion: 'Verify API key.' },
+    ],
+  });
+
+  assert.match(html, /HTTP 401 Unauthorized/);
+  assert.match(html, /DNS Lookup/);
+  assert.match(html, /Authentication/);
+  assert.match(html, /Suggestion: Verify API key\./);
+  assert.match(html, /128 ms/);
+});
+
+test('testConnection posts current qBittorrent settings and renders diagnostics', async () => {
+  const elements = {
+    'setting-qb_url': { value: 'https://qb.example' },
+    'setting-qb_user': { value: 'admin' },
+    'setting-qb_pass': { value: 'secret' },
+    'test-qbittorrent-status': { textContent: '', className: '' },
+    'diagnostic-qbittorrent-result': { innerHTML: '' },
+    'diagnostic-qbittorrent': { querySelector: () => ({ disabled: false }) },
+  };
+  const calls = [];
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method, body: options.body });
+      return {
+        service: 'qbittorrent',
+        status: 'connected',
+        success: true,
+        duration_ms: 84,
+        summary: 'Connected',
+        steps: [{ name: 'API Version', status: 'success', message: 'v5.0.0' }],
+      };
+    },
+  });
+
+  await context.testConnection('qbittorrent');
+
+  assert.equal(calls[0].url, '/api/test/qbittorrent');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    url: 'https://qb.example',
+    username: 'admin',
+    password: 'secret',
+  });
+  assert.equal(elements['test-qbittorrent-status'].textContent, 'Connected');
+  assert.match(elements['diagnostic-qbittorrent-result'].innerHTML, /API Version/);
 });
 
 function sampleScanResult() {

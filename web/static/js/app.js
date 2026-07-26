@@ -198,7 +198,7 @@ const I18N = {
     last_login: 'Last login: {date}',
     never: 'Never',
     confirm_delete_user: 'Delete user "{username}"? This cannot be undone.',
-    s_connection_tests: 'Connection Tests',
+    s_connection_tests: 'Connection Diagnostics',
     conn_prowlarr: 'Prowlarr',
     conn_qbittorrent: 'qBittorrent',
     conn_transmission: 'Transmission',
@@ -444,7 +444,7 @@ const I18N = {
     last_login: 'Последний вход: {date}',
     never: 'Никогда',
     confirm_delete_user: 'Удалить пользователя «{username}»? Это нельзя отменить.',
-    s_connection_tests: 'Проверка подключений',
+    s_connection_tests: 'Диагностика подключений',
     conn_prowlarr: 'Prowlarr',
     conn_qbittorrent: 'qBittorrent',
     conn_transmission: 'Transmission',
@@ -3837,23 +3837,153 @@ async function toggleRemoveTorrent() {
   }
 }
 
+function diagnosticPayload(service) {
+  if (service === 'prowlarr') {
+    return {
+      url: document.getElementById('setting-prowlarr_url')?.value || '',
+      api_key: document.getElementById('setting-prowlarr_api_key')?.value || '',
+    };
+  }
+  if (service === 'qbittorrent') {
+    return {
+      url: document.getElementById('setting-qb_url')?.value || '',
+      username: document.getElementById('setting-qb_user')?.value || '',
+      password: document.getElementById('setting-qb_pass')?.value || '',
+    };
+  }
+  return {};
+}
+
+function renderDiagnosticResult(result) {
+  const steps = Array.isArray(result?.steps) ? result.steps : [];
+  const status = result?.status || (result?.success ? 'connected' : 'failed');
+  const summaryClass = diagnosticStatusClass(status);
+  return `
+    <div class="rounded-lg border ${summaryClass.border} ${summaryClass.bg} p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p class="text-xs uppercase tracking-wider ${summaryClass.label}">Status</p>
+          <p class="mt-1 text-sm font-medium ${summaryClass.text}">${escapeHtml(result?.summary || diagnosticStatusLabel(status))}</p>
+        </div>
+        ${Number.isFinite(result?.duration_ms) ? `<span class="rounded-full bg-slate-900/70 px-2 py-1 text-[11px] text-slate-300">${escapeHtml(result.duration_ms)} ms</span>` : ''}
+      </div>
+      <div class="mt-3 space-y-2">
+        ${steps.map(renderDiagnosticStep).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderDiagnosticStep(step) {
+  const status = step?.status || 'skipped';
+  const style = diagnosticStatusClass(status);
+  return `
+    <div class="rounded-md border border-slate-800 bg-slate-950/50 px-3 py-2">
+      <div class="flex flex-wrap items-start justify-between gap-2">
+        <div class="flex min-w-0 items-start gap-2">
+          <span class="${style.text}" aria-hidden="true">${diagnosticStatusIcon(status)}</span>
+          <div class="min-w-0">
+            <p class="text-xs font-medium text-slate-100">${escapeHtml(step?.name || 'Diagnostic step')}</p>
+            ${step?.message ? `<p class="mt-0.5 text-xs text-slate-400">${escapeHtml(step.message)}</p>` : ''}
+            ${step?.suggestion ? `<p class="mt-1 text-xs text-amber-200">Suggestion: ${escapeHtml(step.suggestion)}</p>` : ''}
+          </div>
+        </div>
+        ${Number.isFinite(step?.duration_ms) ? `<span class="shrink-0 text-[11px] text-slate-500">${escapeHtml(step.duration_ms)} ms</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function diagnosticStatusClass(status) {
+  switch (status) {
+    case 'success':
+    case 'connected':
+      return { text: 'text-emerald-300', label: 'text-emerald-200', border: 'border-emerald-500/20', bg: 'bg-emerald-500/8' };
+    case 'warning':
+      return { text: 'text-amber-300', label: 'text-amber-200', border: 'border-amber-500/20', bg: 'bg-amber-500/8' };
+    case 'failed':
+    case 'error':
+      return { text: 'text-red-300', label: 'text-red-200', border: 'border-red-500/25', bg: 'bg-red-500/8' };
+    default:
+      return { text: 'text-slate-400', label: 'text-slate-500', border: 'border-slate-800', bg: 'bg-slate-900/40' };
+  }
+}
+
+function diagnosticStatusIcon(status) {
+  switch (status) {
+    case 'success':
+    case 'connected':
+      return '✓';
+    case 'warning':
+      return '!';
+    case 'failed':
+    case 'error':
+      return '✗';
+    default:
+      return '○';
+  }
+}
+
+function diagnosticStatusLabel(status) {
+  switch (status) {
+    case 'connected':
+    case 'success':
+      return 'Connected';
+    case 'warning':
+      return 'Connected with warnings';
+    case 'failed':
+    case 'error':
+      return 'Diagnostics failed';
+    default:
+      return 'Not tested';
+  }
+}
+
 async function testConnection(service) {
   const statusEl = document.getElementById(`test-${service}-status`);
-  statusEl.textContent = t('testing');
-  statusEl.className = 'text-xs text-yellow-400';
+  const resultEl = document.getElementById(`diagnostic-${service}-result`);
+  const cardEl = document.getElementById(`diagnostic-${service}`);
+  const button = cardEl?.querySelector('[data-action="testConnection"]');
+  if (!statusEl || !resultEl) return;
+  statusEl.textContent = 'Running diagnostics...';
+  statusEl.className = 'mt-1 text-xs text-yellow-400';
+  resultEl.innerHTML = `
+    <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-400">
+      <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-transparent align-[-2px]"></span>
+      Testing configuration, network, authentication, and API access...
+    </div>
+  `;
+  if (button) button.disabled = true;
 
   try {
-    const data = await apiJson(`/api/test/${service}`, { method: 'POST' });
+    const data = await apiJson(`/api/test/${service}`, {
+      method: 'POST',
+      body: JSON.stringify(diagnosticPayload(service)),
+    });
+    resultEl.innerHTML = renderDiagnosticResult(data);
     if (data.success) {
-      statusEl.textContent = t('connected');
-      statusEl.className = 'text-xs text-emerald-400';
+      statusEl.textContent = data.summary || 'Connected';
+      statusEl.className = 'mt-1 text-xs text-emerald-400';
     } else {
-      statusEl.textContent = data.error || t('conn_error');
-      statusEl.className = 'text-xs text-red-400';
+      statusEl.textContent = data.summary || 'Diagnostics failed';
+      statusEl.className = 'mt-1 text-xs text-red-400';
     }
   } catch (err) {
-    statusEl.textContent = t('conn_error');
-    statusEl.className = 'text-xs text-red-400';
+    statusEl.textContent = 'Diagnostics failed';
+    statusEl.className = 'mt-1 text-xs text-red-400';
+    resultEl.innerHTML = renderDiagnosticResult({
+      status: 'failed',
+      success: false,
+      summary: err.message || 'Diagnostics failed',
+      steps: [{
+        name: 'Request',
+        status: 'failed',
+        message: err.message || 'Librarr could not run diagnostics.',
+        suggestion: 'Verify your session and try again.',
+      }],
+    });
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 

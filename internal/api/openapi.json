@@ -147,6 +147,27 @@
           "started_at": {"type": "string", "format": "date-time"},
           "completed_at": {"type": "string", "format": "date-time"}
         }
+      },
+      "DiagnosticStep": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"type": "string", "enum": ["success", "warning", "failed", "skipped"]},
+          "duration_ms": {"type": "integer"},
+          "message": {"type": "string"},
+          "suggestion": {"type": "string"}
+        }
+      },
+      "DiagnosticResult": {
+        "type": "object",
+        "properties": {
+          "service": {"type": "string"},
+          "status": {"type": "string", "enum": ["connected", "warning", "failed"]},
+          "success": {"type": "boolean"},
+          "duration_ms": {"type": "integer"},
+          "summary": {"type": "string"},
+          "steps": {"type": "array", "items": {"$ref": "#/components/schemas/DiagnosticStep"}}
+        }
       }
     }
   },
@@ -180,6 +201,25 @@
     "/api/login/totp": {"post": {"summary": "TOTP 2FA verification step", "security": []}},
     "/api/logout": {"post": {"summary": "End session"}},
     "/api/register": {"post": {"summary": "Register new user (requires invite code when configured)", "security": []}},
+
+    "/api/test/prowlarr": {
+      "post": {
+        "summary": "Run staged Prowlarr connection diagnostics",
+        "description": "Checks configuration, URL validation, DNS, TCP, HTTPS, authentication, API validation, version, and latency. Secrets are not returned.",
+        "responses": {
+          "200": {"description": "Diagnostic result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiagnosticResult"}}}}
+        }
+      }
+    },
+    "/api/test/qbittorrent": {
+      "post": {
+        "summary": "Run staged qBittorrent connection diagnostics",
+        "description": "Checks configuration, URL validation, DNS, TCP, HTTPS, authentication, API validation, version, and latency. Secrets are not returned.",
+        "responses": {
+          "200": {"description": "Diagnostic result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiagnosticResult"}}}}
+        }
+      }
+    },
 
     "/api/search": {
       "get": {
