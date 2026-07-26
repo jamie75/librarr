@@ -275,6 +275,7 @@
         <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Configure the folders, services, accounts, and search behavior Librarr uses to manage your library.</p>
         <div class="mt-4 flex flex-wrap gap-2">
           <a href="#settings-library-import" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Library</a>
+          <a href="#settings-opds" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">OPDS</a>
           <a href="#settings-integrations" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Integrations</a>
           <a href="#settings-users" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Users</a>
           <a href="#settings-preferences" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Preferences</a>
@@ -430,6 +431,28 @@
       </div>
 
       <!-- Integrations -->
+      <div id="settings-opds" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">OPDS Catalog</h3>
+            <p class="mt-1 text-xs text-slate-500">Connect an OPDS-compatible reader to browse and download your Librarr books.</p>
+          </div>
+          <a href="/opds" target="_blank" rel="noreferrer" class="rounded-lg bg-amber-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-amber-400">Open Catalog</a>
+        </div>
+        <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Catalog URL</label>
+            <input type="text" readonly value="/opds" class="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200">
+            <p class="mt-1 text-[11px] text-slate-500">Use your external Librarr URL plus <code>/opds</code> in reader apps.</p>
+          </div>
+          <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs leading-5 text-slate-400">
+            <p><span class="text-slate-200">Authentication:</span> HTTP Basic Auth with your Librarr username and password.</p>
+            <p><span class="text-slate-200">Formats:</span> EPUB and PDF are preferred; MOBI/AZW3 are offered as raw downloads.</p>
+            <p><span class="text-slate-200">Remote access:</span> use HTTPS through your reverse proxy.</p>
+          </div>
+        </div>
+      </div>
+
       <div id="settings-integrations" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>

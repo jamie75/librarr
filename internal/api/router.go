@@ -547,12 +547,16 @@ func (s *Server) registerAdminRoutes() {
 // Torznab indexer API.
 func (s *Server) registerFeedRoutes() {
 	// OPDS feed (Feature 14).
-	s.mux.HandleFunc("GET /opds", s.handleOPDSRoot)
-	s.mux.HandleFunc("GET /opds/", s.handleOPDSRoot)
-	s.mux.HandleFunc("GET /opds/books", s.handleOPDSBooks)
-	s.mux.HandleFunc("GET /opds/search", s.handleOPDSSearch)
-	s.mux.HandleFunc("GET /opds/download/{id}", s.handleOPDSDownload)
-	s.mux.HandleFunc("GET /opds/opensearch.xml", s.handleOPDSOpenSearch)
+	s.mux.HandleFunc("GET /opds", s.requireOPDSAuth(s.handleOPDSRoot))
+	s.mux.HandleFunc("GET /opds/", s.requireOPDSAuth(s.handleOPDSRoot))
+	s.mux.HandleFunc("GET /opds/books", s.requireOPDSAuth(s.handleOPDSBooks))
+	s.mux.HandleFunc("GET /opds/recent", s.requireOPDSAuth(s.handleOPDSRecent))
+	s.mux.HandleFunc("GET /opds/authors", s.requireOPDSAuth(s.handleOPDSAuthors))
+	s.mux.HandleFunc("GET /opds/authors/{key}", s.requireOPDSAuth(s.handleOPDSAuthorBooks))
+	s.mux.HandleFunc("GET /opds/search", s.requireOPDSAuth(s.handleOPDSSearch))
+	s.mux.HandleFunc("GET /opds/download/{id}", s.requireOPDSAuth(s.handleOPDSDownload))
+	s.mux.HandleFunc("GET /opds/cover/{id}", s.requireOPDSAuth(s.handleOPDSCover))
+	s.mux.HandleFunc("GET /opds/opensearch.xml", s.requireOPDSAuth(s.handleOPDSOpenSearch))
 
 	// Prometheus metrics (Feature 16).
 	if s.cfg.MetricsEnabled {

@@ -44,6 +44,7 @@ Librarr 2.0 currently has:
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
 - normalized `/api/v1` read endpoints
+- OPDS 1.2 catalog browsing and downloads for compatible reader apps
 - compatibility endpoints for existing legacy behavior
 - optional Prowlarr and download-client integration
 
@@ -226,7 +227,7 @@ These are planned or in-progress and should not be treated as completed:
 - collections
 - author management
 - series management
-- OPDS improvements
+- OPDS 2.0 improvements
 - Kavita synchronization
 - Audiobookshelf synchronization
 - improved covers
@@ -274,6 +275,7 @@ focused on a practical personal-library experience:
 - ✅ Connection Diagnostics for Prowlarr and qBittorrent
 - ⬜ Metadata Provider Integration
 - ⬜ Cover Improvements
+- ✅ OPDS 1.2 Catalog
 - ⬜ OPDS v2 / Delivery
 - ⬜ Media Assistant Integration
 
@@ -563,6 +565,41 @@ Prefer Librarr 2.0 endpoints for new integrations.
 | POST | `/api/v1/library/import` | Start explicit import from scan results |
 | GET | `/api/v1/library/import/{id}` | Import job progress |
 | GET | `/api/v1/library/import/{id}/results` | Import completion results |
+
+### OPDS catalog
+
+Librarr exposes an OPDS 1.2 catalog for compatible ebook reader apps on:
+
+```text
+https://your-librarr.example.com/opds
+```
+
+Use the same Librarr username and password you use for the web app. OPDS
+endpoints use HTTP Basic authentication because many reader apps cannot use the
+browser session-login flow. API-key access remains available for scripted
+clients, but generated catalog URLs never include credentials.
+
+The catalog includes:
+
+- root navigation
+- all books
+- recently added books
+- authors
+- search
+- cover links when Librarr already has a local cached cover
+- one acquisition/download link for each available file format
+
+Format behavior:
+
+- EPUB and PDF are offered with standard reader-friendly MIME types.
+- MOBI and AZW3 are offered as raw downloads when present.
+- CBZ, CBR, MP3, and M4B may be listed for compatible clients, but Librarr does
+  not claim universal iOS reader support for those formats.
+
+Use HTTPS when exposing OPDS outside your local network. Apple Books itself is
+not an OPDS catalog client; install an OPDS-compatible reader app and add the
+`/opds` URL there. Reading progress sync, annotations, highlights, bookmarks,
+format conversion, and send-to-device workflows are not implemented yet.
 
 ### Compatibility APIs
 

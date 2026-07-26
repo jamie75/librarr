@@ -198,6 +198,11 @@ func (s *LibraryService) GetBookFiles(ctx context.Context, bookID int64) ([]Book
 	return files, translateLibraryError(err)
 }
 
+func (s *LibraryService) GetFile(ctx context.Context, id int64) (*BookFile, error) {
+	file, err := s.files.GetFile(ctx, id)
+	return file, translateLibraryError(err)
+}
+
 func (s *LibraryService) FindFileByPath(ctx context.Context, path string) (*BookFile, error) {
 	file, err := s.files.FindFileByPath(ctx, path)
 	return file, translateLibraryError(err)

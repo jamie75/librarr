@@ -525,13 +525,32 @@ Compatibility fields should be documented as transitional rather than treated as
 
 ## OPDS
 
-Librarr should preserve OPDS 1.2 compatibility where useful and plan for OPDS 2.0.
+Librarr preserves OPDS 1.2 compatibility for reader apps while leaving OPDS 2.0
+as a future delivery milestone.
 
-One logical book entry should provide multiple acquisition links, one per available compatible file.
+OPDS reads from the selected normalized library service, not from legacy
+`library_items` when normalized repository mode is active. A logical book is
+represented as one catalog entry, with one acquisition link per available
+compatible file. Downloads use stable normalized file IDs:
+
+```text
+/opds/download/{file_id}
+```
+
+The download handler resolves the file through `LibraryService`, verifies that
+it belongs to a known book, confines the path to configured library roots, sets
+safe content headers, and streams the file without loading it into memory.
 
 OPDS must not invent duplicate catalog entries solely because multiple formats exist.
 
-Authentication and access control should reuse the application's existing security model where protocol compatibility allows it.
+Authentication uses HTTP Basic Auth against existing Librarr users because many
+OPDS clients cannot use browser sessions. Disabled users are rejected. API-key
+access remains available for scripted clients. Generated absolute URLs honor
+trusted reverse-proxy headers only when the request comes from a configured
+trusted proxy.
+
+Cover links reuse existing local cover records. OPDS does not extract or
+download covers on its own.
 
 ## Device Delivery
 

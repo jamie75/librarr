@@ -22,6 +22,11 @@
         "in": "cookie",
         "name": "librarr_session",
         "description": "Set by POST /api/login. Used by the SPA."
+      },
+      "opdsBasic": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "HTTP Basic authentication for OPDS reader apps using existing enabled Librarr users."
       }
     },
     "schemas": {
@@ -607,9 +612,79 @@
     "/opds": {
       "get": {
         "summary": "OPDS 1.2 catalog root",
-        "description": "Browse your library from e-reader apps (KOReader, Moon+ Reader, Librera).",
-        "security": [],
-        "responses": {"200": {"description": "Atom feed", "content": {"application/atom+xml": {}}}}
+        "description": "Browse your normalized Librarr library from OPDS-compatible reader apps.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "responses": {"200": {"description": "Navigation Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/books": {
+      "get": {
+        "summary": "OPDS all-books feed",
+        "description": "Returns one OPDS entry per logical book with acquisition links for available files.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}],
+        "responses": {"200": {"description": "Acquisition Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/recent": {
+      "get": {
+        "summary": "OPDS recently added feed",
+        "description": "Returns recently added logical books with acquisition links.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}],
+        "responses": {"200": {"description": "Acquisition Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/authors": {
+      "get": {
+        "summary": "OPDS author navigation feed",
+        "description": "Groups catalog entries by primary author.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "responses": {"200": {"description": "Navigation Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/authors/{key}": {
+      "get": {
+        "summary": "OPDS books by author",
+        "description": "Returns books whose primary author matches the author key.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "key", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Acquisition Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/search": {
+      "get": {
+        "summary": "OPDS search feed",
+        "description": "Searches normalized library books by title and author.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "q", "in": "query", "schema": {"type": "string"}}, {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}}],
+        "responses": {"200": {"description": "Acquisition Atom feed", "content": {"application/atom+xml": {}}}, "401": {"description": "Authentication required"}}
+      }
+    },
+    "/opds/download/{id}": {
+      "get": {
+        "summary": "Download a library file for OPDS acquisition",
+        "description": "Streams a normalized library file by stable file ID without exposing filesystem paths.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+        "responses": {"200": {"description": "Library file stream"}, "401": {"description": "Authentication required"}, "404": {"description": "File not found"}}
+      }
+    },
+    "/opds/cover/{id}": {
+      "get": {
+        "summary": "Serve a local book cover for OPDS",
+        "description": "Serves the existing cached primary cover for a normalized book when available.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}}],
+        "responses": {"200": {"description": "Cover image"}, "401": {"description": "Authentication required"}, "404": {"description": "Cover not found"}}
+      }
+    },
+    "/opds/opensearch.xml": {
+      "get": {
+        "summary": "OPDS OpenSearch description",
+        "description": "Returns OpenSearch discovery metadata for OPDS clients.",
+        "security": [{"opdsBasic": []}, {"apiKey": []}],
+        "responses": {"200": {"description": "OpenSearch description", "content": {"application/opensearchdescription+xml": {}}}, "401": {"description": "Authentication required"}}
       }
     },
     "/metrics": {

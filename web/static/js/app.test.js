@@ -1464,6 +1464,15 @@ test('qBittorrent integration save includes remote save paths and categories', (
   assert.match(indexHTML, /Remote path as seen by qBittorrent/);
 });
 
+test('settings exposes OPDS catalog connection details', () => {
+  assert.match(indexHTML, /id="settings-opds"/);
+  assert.match(indexHTML, /OPDS Catalog/);
+  assert.match(indexHTML, /value="\/opds"/);
+  assert.match(indexHTML, /HTTP Basic Auth/);
+  assert.match(indexHTML, /EPUB and PDF are preferred/);
+  assert.match(indexHTML, /use HTTPS/);
+});
+
 test('diagnosticPayload reads current unsaved Prowlarr form values', () => {
   const elements = {
     'setting-prowlarr_url': { value: 'http://unsaved-prowlarr:9697' },

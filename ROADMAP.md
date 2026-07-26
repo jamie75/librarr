@@ -295,11 +295,11 @@ Make acquired books easy to consume.
 
 ### Downloads and OPDS
 
-- [ ] Download a specific file by file ID.
+- [x] Download a specific file by file ID.
 - [ ] Download a book using a requested or preferred format.
-- [ ] Expose one OPDS entry per logical book.
-- [ ] Include multiple acquisition links for available formats.
-- [ ] Preserve OPDS 1.2 compatibility where needed.
+- [x] Expose one OPDS entry per logical book.
+- [x] Include multiple acquisition links for available formats.
+- [x] Preserve OPDS 1.2 compatibility where needed.
 - [ ] Add OPDS 2.0 support.
 
 ### Device destinations
