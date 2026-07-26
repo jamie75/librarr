@@ -22,6 +22,7 @@ type Classification string
 
 const (
 	ClassificationNew             Classification = "new"
+	ClassificationManualReview    Classification = "manual_review"
 	ClassificationAlreadyImported Classification = "already_imported"
 	ClassificationDuplicate       Classification = "duplicate"
 	ClassificationUnsupported     Classification = "unsupported"
@@ -63,24 +64,45 @@ type Metadata struct {
 	Confidence library.Confidence `json:"confidence,omitempty"`
 }
 
+type ManualReviewDetails struct {
+	Reason               string             `json:"reason,omitempty"`
+	PlannerDisposition   string             `json:"planner_disposition,omitempty"`
+	SuggestedDestination string             `json:"suggested_destination,omitempty"`
+	MetadataSource       string             `json:"metadata_source,omitempty"`
+	Confidence           library.Confidence `json:"confidence,omitempty"`
+}
+
+type DuplicateDetails struct {
+	Reason         string `json:"reason,omitempty"`
+	Signal         string `json:"signal,omitempty"`
+	ExistingTitle  string `json:"existing_title,omitempty"`
+	ExistingAuthor string `json:"existing_author,omitempty"`
+	ExistingFormat string `json:"existing_format,omitempty"`
+	ExistingPath   string `json:"existing_path,omitempty"`
+}
+
 type Candidate struct {
-	ID                   string            `json:"id"`
-	MediaType            library.MediaType `json:"media_type"`
-	Format               string            `json:"format"`
-	Path                 string            `json:"path"`
-	RelativePath         string            `json:"relative_path"`
-	Filename             string            `json:"filename"`
-	Size                 int64             `json:"size"`
-	ModifiedAt           time.Time         `json:"modified_at"`
-	Title                string            `json:"title,omitempty"`
-	Author               string            `json:"author,omitempty"`
-	Series               string            `json:"series,omitempty"`
-	Volume               string            `json:"volume,omitempty"`
-	Metadata             Metadata          `json:"metadata"`
-	Classification       Classification    `json:"classification"`
-	ClassificationReason string            `json:"classification_reason,omitempty"`
-	ExistingPath         string            `json:"existing_path,omitempty"`
-	Error                string            `json:"error,omitempty"`
+	ID                   string               `json:"id"`
+	MediaType            library.MediaType    `json:"media_type"`
+	Format               string               `json:"format"`
+	Path                 string               `json:"path"`
+	RelativePath         string               `json:"relative_path"`
+	Filename             string               `json:"filename"`
+	Size                 int64                `json:"size"`
+	ModifiedAt           time.Time            `json:"modified_at"`
+	Title                string               `json:"title,omitempty"`
+	Author               string               `json:"author,omitempty"`
+	Series               string               `json:"series,omitempty"`
+	Volume               string               `json:"volume,omitempty"`
+	CoverURL             string               `json:"cover_url,omitempty"`
+	Metadata             Metadata             `json:"metadata"`
+	Classification       Classification       `json:"classification"`
+	ClassificationReason string               `json:"classification_reason,omitempty"`
+	ExistingPath         string               `json:"existing_path,omitempty"`
+	DestinationPath      string               `json:"destination_path,omitempty"`
+	ManualReview         *ManualReviewDetails `json:"manual_review,omitempty"`
+	Duplicate            *DuplicateDetails    `json:"duplicate,omitempty"`
+	Error                string               `json:"error,omitempty"`
 }
 
 type CandidateUpdate struct {
@@ -91,9 +113,17 @@ type CandidateUpdate struct {
 	Error                string         `json:"error,omitempty"`
 }
 
+type CandidateResolution struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Title  string `json:"title,omitempty"`
+	Author string `json:"author,omitempty"`
+}
+
 type Totals struct {
 	Found           int `json:"found"`
 	ReadyToImport   int `json:"ready_to_import"`
+	ManualReview    int `json:"manual_review"`
 	AlreadyImported int `json:"already_imported"`
 	Duplicates      int `json:"duplicates"`
 	Unsupported     int `json:"unsupported"`

@@ -101,10 +101,14 @@
           "author": {"type": "string"},
           "series": {"type": "string"},
           "volume": {"type": "string"},
+          "cover_url": {"type": "string"},
           "metadata": {"type": "object"},
-          "classification": {"type": "string", "enum": ["new", "already_imported", "duplicate", "unsupported", "unreadable"]},
+          "classification": {"type": "string", "enum": ["new", "manual_review", "already_imported", "duplicate", "unsupported", "unreadable"]},
           "classification_reason": {"type": "string"},
           "existing_path": {"type": "string"},
+          "destination_path": {"type": "string"},
+          "manual_review": {"type": "object"},
+          "duplicate": {"type": "object"},
           "error": {"type": "string"}
         }
       },
@@ -338,6 +342,27 @@
         "responses": {
           "200": {"description": "Completed review payload", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LibraryScanResult"}}}},
           "409": {"description": "Scan results are not ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "Unknown scan job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/library/scan/{job_id}/resolve": {
+      "post": {
+        "summary": "Resolve a manual-review scan candidate in memory",
+        "description": "Marks a manual_review candidate in a completed scan result as ready_to_import using suggested or manually edited metadata. This does not write library data.",
+        "parameters": [{"name": "job_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "action": {"type": "string", "enum": ["use_suggested", "edit_metadata"]},
+            "title": {"type": "string"},
+            "author": {"type": "string"}
+          }, "required": ["id", "action"]}}}
+        },
+        "responses": {
+          "200": {"description": "Updated scan review payload", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LibraryScanResult"}}}},
+          "400": {"description": "Invalid resolution", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "Unknown scan job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }

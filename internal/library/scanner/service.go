@@ -139,6 +139,52 @@ func (m *Manager) UpdateCandidates(jobID string, updates []CandidateUpdate) (*Re
 	return &result, true
 }
 
+func (m *Manager) ResolveCandidate(jobID string, resolution CandidateResolution) (*Result, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job := m.jobs[jobID]
+	if job == nil || job.Result == nil {
+		return nil, false, nil
+	}
+	id := strings.TrimSpace(resolution.ID)
+	action := strings.TrimSpace(resolution.Action)
+	if id == "" {
+		return nil, true, fmt.Errorf("candidate_id is required")
+	}
+	if action != "use_suggested" && action != "edit_metadata" {
+		return nil, true, fmt.Errorf("unsupported resolution action")
+	}
+	for i := range job.Result.Candidates {
+		if job.Result.Candidates[i].ID != id {
+			continue
+		}
+		candidate := &job.Result.Candidates[i]
+		if candidate.Classification != ClassificationManualReview {
+			return nil, true, fmt.Errorf("candidate does not require manual review")
+		}
+		title := firstNonBlank(resolution.Title, candidate.Title, candidate.Metadata.Title, candidate.Filename)
+		author := firstNonBlank(resolution.Author, candidate.Author, candidate.Metadata.Author)
+		candidate.Title = title
+		candidate.Author = author
+		candidate.Metadata.Title = title
+		candidate.Metadata.Author = author
+		if action == "edit_metadata" {
+			candidate.Metadata.Source = "manual_edit"
+			candidate.Metadata.Confidence = library.ConfidenceHigh
+		}
+		candidate.Classification = ClassificationNew
+		candidate.ClassificationReason = "Ready to import after manual review"
+		candidate.ManualReview = nil
+		candidate.Error = ""
+		job.Result.Totals = countTotals(job.Result.Candidates)
+		result := *job.Result
+		result.Candidates = append([]Candidate(nil), job.Result.Candidates...)
+		result.Warnings = append([]Warning(nil), job.Result.Warnings...)
+		return &result, true, nil
+	}
+	return nil, true, fmt.Errorf("candidate not found")
+}
+
 func (m *Manager) run(ctx context.Context, jobID string, roots Roots) {
 	result, err := m.scan(ctx, jobID, roots)
 	m.mu.Lock()
@@ -406,6 +452,7 @@ func applyPlan(candidate *Candidate, plan libraryimport.ImportPlan) {
 	candidate.Metadata = meta
 	candidate.Title = meta.Title
 	candidate.Author = meta.Author
+	candidate.DestinationPath = proposedDestination(plan)
 	candidate.Classification = ClassificationNew
 	candidate.ClassificationReason = "Ready to import"
 
@@ -414,27 +461,48 @@ func applyPlan(candidate *Candidate, plan libraryimport.ImportPlan) {
 		if plan.File.Existing != nil {
 			candidate.ExistingPath = plan.File.Existing.Path
 		}
-		reason := duplicateReason(plan)
-		if reason == "path" {
+		signal, reason := duplicateReason(plan)
+		candidate.Duplicate = duplicateDetails(plan, signal, reason, candidate)
+		if signal == "duplicate_path" {
 			candidate.Classification = ClassificationAlreadyImported
-			candidate.ClassificationReason = "Existing library file already uses this path"
+			candidate.ClassificationReason = reason
 		} else {
 			candidate.Classification = ClassificationDuplicate
-			candidate.ClassificationReason = "Existing library file already has matching content"
+			candidate.ClassificationReason = reason
 		}
 	case libraryimport.DispositionConflict:
 		if plan.File.Existing != nil {
 			candidate.ExistingPath = plan.File.Existing.Path
 		}
+		signal, reason := duplicateReason(plan)
 		candidate.Classification = ClassificationDuplicate
-		candidate.ClassificationReason = firstEvidenceExplanation(plan, "Import planner found a duplicate or conflicting file")
+		candidate.ClassificationReason = firstNonBlank(reason, firstEvidenceExplanation(plan, "Import planner found a duplicate or conflicting file"))
+		candidate.Duplicate = duplicateDetails(plan, signal, candidate.ClassificationReason, candidate)
 	case libraryimport.DispositionNeedsManualReview:
-		candidate.Classification = ClassificationNew
-		candidate.ClassificationReason = firstEvidenceExplanation(plan, "Needs manual review before import")
+		reason := firstEvidenceExplanation(plan, "Needs manual review before import")
+		candidate.Classification = ClassificationManualReview
+		candidate.ClassificationReason = reason
+		candidate.ManualReview = &ManualReviewDetails{
+			Reason:               reason,
+			PlannerDisposition:   string(plan.Disposition),
+			SuggestedDestination: candidate.DestinationPath,
+			MetadataSource:       meta.Source,
+			Confidence:           meta.Confidence,
+		}
 	default:
 		candidate.Classification = ClassificationNew
 		candidate.ClassificationReason = "Ready to import"
 	}
+}
+
+func proposedDestination(plan libraryimport.ImportPlan) string {
+	if plan.File.Proposed != nil {
+		return strings.TrimSpace(plan.File.Proposed.Path)
+	}
+	if plan.File.Existing != nil {
+		return strings.TrimSpace(plan.File.Existing.Path)
+	}
+	return strings.TrimSpace(plan.Candidate.Path)
 }
 
 func metadataFromPlan(candidate libraryimport.ImportCandidate) Metadata {
@@ -462,16 +530,42 @@ func metadataFromPlan(candidate libraryimport.ImportCandidate) Metadata {
 	return meta
 }
 
-func duplicateReason(plan libraryimport.ImportPlan) string {
+func duplicateReason(plan libraryimport.ImportPlan) (string, string) {
 	for _, evidence := range plan.File.Evidence {
 		switch evidence.Signal {
 		case "duplicate_path":
-			return "path"
+			return evidence.Signal, "Same destination already exists"
 		case "duplicate_content_hash":
-			return "content_hash"
+			return evidence.Signal, "Identical hash"
+		case "duplicate_format", "planned_duplicate_format":
+			return evidence.Signal, "A file with the same format is already planned or imported"
 		}
 	}
-	return ""
+	for _, evidence := range plan.Evidence {
+		if strings.TrimSpace(evidence.Signal) != "" && strings.Contains(evidence.Signal, "duplicate") {
+			return evidence.Signal, firstNonBlank(evidence.Explanation, "Duplicate metadata or destination")
+		}
+	}
+	return "", firstEvidenceExplanation(plan, "Duplicate")
+}
+
+func duplicateDetails(plan libraryimport.ImportPlan, signal, reason string, candidate *Candidate) *DuplicateDetails {
+	details := &DuplicateDetails{
+		Reason:         reason,
+		Signal:         signal,
+		ExistingTitle:  candidate.Title,
+		ExistingAuthor: candidate.Author,
+	}
+	if plan.File.Existing != nil {
+		details.ExistingFormat = plan.File.Existing.Format
+		details.ExistingPath = plan.File.Existing.Path
+		details.ExistingTitle = firstNonBlank(plan.File.Existing.EmbeddedMetadata["title"], details.ExistingTitle)
+		details.ExistingAuthor = firstNonBlank(plan.File.Existing.EmbeddedMetadata["author"], details.ExistingAuthor)
+	}
+	if details.ExistingPath == "" {
+		details.ExistingPath = candidate.ExistingPath
+	}
+	return details
 }
 
 func firstEvidenceExplanation(plan libraryimport.ImportPlan, fallback string) string {
@@ -488,12 +582,23 @@ func firstEvidenceExplanation(plan libraryimport.ImportPlan, fallback string) st
 	return fallback
 }
 
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func countTotals(candidates []Candidate) Totals {
 	totals := Totals{Found: len(candidates)}
 	for _, c := range candidates {
 		switch c.Classification {
 		case ClassificationNew:
 			totals.ReadyToImport++
+		case ClassificationManualReview:
+			totals.ManualReview++
 		case ClassificationAlreadyImported:
 			totals.AlreadyImported++
 		case ClassificationDuplicate:

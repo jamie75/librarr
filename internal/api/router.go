@@ -381,6 +381,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("POST /api/v1/library/scan", requireAdmin(s.handleV1LibraryScanStart))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}", requireAdmin(s.handleV1LibraryScanJob))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/results", requireAdmin(s.handleV1LibraryScanResults))
+	s.mux.HandleFunc("POST /api/v1/library/scan/{job_id}/resolve", requireAdmin(s.handleV1LibraryScanResolve))
 	s.mux.HandleFunc("POST /api/v1/library/import", requireAdmin(s.handleV1LibraryImportStart))
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}", requireAdmin(s.handleV1LibraryImportJob))
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}/results", requireAdmin(s.handleV1LibraryImportResults))

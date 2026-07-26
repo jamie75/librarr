@@ -211,6 +211,45 @@ func TestV1LibraryImportAllReadyExcludesDuplicates(t *testing.T) {
 	}
 }
 
+func TestV1LibraryScanResolveManualReviewCandidate(t *testing.T) {
+	s, cleanup := newLibraryScanAPIServer(t)
+	defer cleanup()
+	scanJobID := startCompletedAPIScan(t, s, []string{"Review.epub"})
+	result := getAPIScanResult(t, s, scanJobID)
+	candidateID := result.Candidates[0].ID
+	s.libraryScanner.UpdateCandidates(scanJobID, []libraryscanner.CandidateUpdate{{
+		ID:                   candidateID,
+		Classification:       libraryscanner.ClassificationManualReview,
+		ClassificationReason: "Existing title match did not cleanly agree on author",
+	}})
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     candidateID,
+		"action": "edit_metadata",
+		"title":  "Resolved Title",
+		"author": "Resolved Author",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan/"+scanJobID+"/resolve", bytes.NewReader(body))
+	req.SetPathValue("job_id", scanJobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resolved libraryscanner.Result
+	if err := json.Unmarshal(rr.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	got := resolved.Candidates[0]
+	if got.Classification != libraryscanner.ClassificationNew || got.Title != "Resolved Title" || got.Author != "Resolved Author" || got.Metadata.Source != "manual_edit" {
+		t.Fatalf("resolved candidate = %+v", got)
+	}
+	if resolved.Totals.ReadyToImport != 1 || resolved.Totals.ManualReview != 0 {
+		t.Fatalf("totals = %+v", resolved.Totals)
+	}
+}
+
 func TestV1LibraryImportPartialFailureContinues(t *testing.T) {
 	engine := &sequenceImportEngine{
 		results: []*libraryimport.EngineResult{{InsertedCount: 1}},

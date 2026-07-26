@@ -94,6 +94,9 @@ func TestScannerEmbeddedMetadataAndFilenameFallback(t *testing.T) {
 	if fallback.Title != "To Right a Wrong" || fallback.Author != "Carla Jablonski" || fallback.Metadata.Source != "filename_fallback" {
 		t.Fatalf("fallback = %+v", fallback)
 	}
+	if fallback.DestinationPath != fallback.Path {
+		t.Fatalf("destination path = %q, want %q", fallback.DestinationPath, fallback.Path)
+	}
 }
 
 func TestScannerAlreadyImportedAndDuplicateAreDistinct(t *testing.T) {
@@ -120,6 +123,36 @@ func TestScannerAlreadyImportedAndDuplicateAreDistinct(t *testing.T) {
 	}
 	if byName["Duplicate.epub"].Classification != ClassificationDuplicate || byName["Duplicate.epub"].ExistingPath != "/other/Duplicate.epub" {
 		t.Fatalf("duplicate = %+v", byName["Duplicate.epub"])
+	}
+	if byName["Duplicate.epub"].Duplicate == nil || byName["Duplicate.epub"].Duplicate.Reason != "Identical hash" {
+		t.Fatalf("duplicate details = %+v", byName["Duplicate.epub"].Duplicate)
+	}
+}
+
+func TestScannerManualReviewDetails(t *testing.T) {
+	roots := testRoots(t)
+	writeFile(t, filepath.Join(roots.EbookDir, "New Author - Shared Title.mobi"), "mobi bytes")
+	catalog := newFakeCatalog()
+	catalog.booksByID[1] = library.Book{
+		ID:        1,
+		Title:     "Shared Title",
+		MediaType: library.MediaTypeEbook,
+		Contributors: []library.Contributor{{
+			Name:  "Existing Author",
+			Roles: []library.ContributorRole{library.RoleAuthor},
+		}},
+	}
+
+	job := runScan(t, NewManager(catalog), roots)
+	candidate := candidatesByFilename(job.Result.Candidates)["New Author - Shared Title.mobi"]
+	if candidate.Classification != ClassificationManualReview {
+		t.Fatalf("classification = %s candidate=%+v", candidate.Classification, candidate)
+	}
+	if job.Result.Totals.ManualReview != 1 || job.Result.Totals.ReadyToImport != 0 {
+		t.Fatalf("totals = %+v", job.Result.Totals)
+	}
+	if candidate.ManualReview == nil || candidate.ManualReview.Reason == "" || candidate.ManualReview.MetadataSource != "filename_fallback" {
+		t.Fatalf("manual review = %+v", candidate.ManualReview)
 	}
 }
 

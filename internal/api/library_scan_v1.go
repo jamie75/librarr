@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"html"
 	"net/http"
@@ -71,6 +72,29 @@ func (s *Server) handleV1LibraryScanResults(w http.ResponseWriter, r *http.Reque
 	}
 	if r.URL.Query().Get("pretty") == "1" {
 		writeLibraryScanDebugHTML(w, result)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleV1LibraryScanResolve(w http.ResponseWriter, r *http.Request) {
+	if s.libraryScanner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"success": false, "error": "Library scanner is not configured"})
+		return
+	}
+	jobID := strings.TrimSpace(r.PathValue("job_id"))
+	var req libraryscanner.CandidateResolution
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "Invalid JSON: " + err.Error()})
+		return
+	}
+	result, ok, err := s.libraryScanner.ResolveCandidate(jobID, req)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]interface{}{"success": false, "error": "Scan results not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

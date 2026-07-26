@@ -612,6 +612,7 @@ const state = {
       },
       sections: {
         new: true,
+        manual_review: true,
         already_imported: false,
         duplicate: true,
         unsupported: false,
@@ -3015,10 +3016,33 @@ function renderLibraryImportSummary(result) {
   const summary = result.summary || {};
   const failed = summary.failed || 0;
   const failures = (result.items || []).filter(item => item.status === 'failed');
+  const imported = summary.imported || 0;
+  const skipped = summary.skipped || 0;
+  const duplicates = summary.duplicates || 0;
+  const total = summary.total || (result.items || []).length || 0;
+  const elapsedSeconds = libraryImportElapsedSeconds(result.started_at, result.completed_at);
+  const booksPerSecond = elapsedSeconds > 0 ? (imported / elapsedSeconds).toFixed(1) : '0.0';
   return `
     <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/8 p-4">
-      <p class="text-sm font-semibold text-emerald-100">Import Complete</p>
-      <p class="mt-1 text-xs text-emerald-200">${escapeHtml(summary.imported || 0)} imported · ${escapeHtml(summary.duplicates || 0)} duplicates skipped · ${escapeHtml(failed)} failed</p>
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-emerald-100">Import Complete</p>
+          <p class="mt-1 text-xs text-emerald-200">${escapeHtml(imported)} imported · ${escapeHtml(skipped)} skipped · ${escapeHtml(duplicates)} duplicates · ${escapeHtml(failed)} failed</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button data-action="viewImportedLibraryScan" class="rounded-md bg-emerald-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-emerald-400">View Imported</button>
+          <button data-action="retryFailedLibraryImport" ${failed ? '' : 'disabled'} class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:text-slate-500">Retry Failed</button>
+          <button data-action="closeLibraryImportSummary" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Close</button>
+        </div>
+      </div>
+      <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+        ${renderLibraryScanProgressMetric('Imported', imported)}
+        ${renderLibraryScanProgressMetric('Skipped', skipped)}
+        ${renderLibraryScanProgressMetric('Duplicates', duplicates)}
+        ${renderLibraryScanProgressMetric('Failed', failed)}
+        ${renderLibraryScanProgressMetric('Speed', `${booksPerSecond}/s`)}
+      </div>
+      <p class="mt-2 text-xs text-emerald-200">${escapeHtml(total)} reviewed · ${escapeHtml(formatDurationSeconds(elapsedSeconds))}</p>
       ${failed && failures.length ? `
         <details class="mt-3 rounded-md border border-red-500/20 bg-red-500/10 p-3">
           <summary class="cursor-pointer text-xs font-medium text-red-100">Show Details</summary>
@@ -3029,6 +3053,19 @@ function renderLibraryImportSummary(result) {
       ` : ''}
     </div>
   `;
+}
+
+function libraryImportElapsedSeconds(startedAt, completedAt) {
+  const start = startedAt ? new Date(startedAt).getTime() : NaN;
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  return Math.max(0, Math.round((end - start) / 1000));
+}
+
+function formatDurationSeconds(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  if (safe < 60) return `${safe}s elapsed`;
+  return `${Math.floor(safe / 60)}m ${safe % 60}s elapsed`;
 }
 
 function renderLibraryScanError(message) {
@@ -3069,6 +3106,7 @@ function renderLibraryScanReview(result) {
       ${renderLibraryScanToolbar()}
       <div class="space-y-3">
         ${renderLibraryScanSection('Ready to Import', 'new', grouped.new || [])}
+        ${renderLibraryScanSection('Manual Review', 'manual_review', grouped.manual_review || [])}
         ${renderLibraryScanSection('Duplicates', 'duplicate', grouped.duplicate || [])}
         ${renderLibraryScanSection('Already Imported', 'already_imported', grouped.already_imported || [])}
         ${renderLibraryScanSection('Unsupported', 'unsupported', grouped.unsupported || [])}
@@ -3105,6 +3143,7 @@ function renderLibraryScanTotals(totals) {
   const cards = [
     ['Files Found', totals.found || 0],
     ['Ready to Import', totals.ready_to_import || 0],
+    ['Needs Review', totals.manual_review || 0],
     ['Duplicates', totals.duplicates || 0],
     ['Already Imported', totals.already_imported || 0],
     ['Unsupported', totals.unsupported || 0],
@@ -3123,6 +3162,7 @@ function renderLibraryScanToolbar() {
   const buttons = [
     ['all', 'All'],
     ['new', 'Ready'],
+    ['manual_review', 'Review'],
     ['duplicate', 'Duplicates'],
     ['unsupported', 'Unsupported'],
     ['unreadable', 'Unreadable'],
@@ -3164,25 +3204,103 @@ function renderLibraryScanCandidate(candidate) {
   const existingPath = candidate.existing_path || '';
   const selected = state.libraryImport.scan.selected.has(candidate.id);
   const importing = state.libraryImport.scan.import.running;
+  const metadataSource = formatMetadataSource(candidate.metadata?.source || candidate.manual_review?.metadata_source || '');
+  const confidence = formatMetadataConfidence(candidate.metadata?.confidence || candidate.manual_review?.confidence || '');
   return `
     <div class="grid gap-3 border-b border-slate-800 px-4 py-3 last:border-b-0 md:grid-cols-[auto_3rem_1fr]">
       <div class="flex items-start pt-1">${isReady ? `<input data-action-change="toggleLibraryScanCandidateSelection" data-candidate-id="${escapeHtml(candidate.id)}" type="checkbox" ${selected ? 'checked' : ''} ${importing ? 'disabled' : ''} aria-label="Select ${escapeHtml(title)}" class="rounded border-slate-600 bg-slate-900 text-amber-500">` : ''}</div>
-      <div class="flex h-12 w-9 items-center justify-center rounded-md bg-gradient-to-br from-stone-700 to-slate-900 text-xs font-semibold text-stone-300">${escapeHtml(format || '?')}</div>
+      ${renderLibraryScanCover(candidate, format)}
       <div class="min-w-0">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-white">${escapeHtml(title)}</p>
             <p class="mt-0.5 truncate text-xs text-slate-400">${escapeHtml(author || candidate.media_type || '')}</p>
           </div>
-          <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wider text-slate-300">${escapeHtml(format || candidate.media_type || '')}</span>
+          <div class="flex flex-wrap justify-end gap-1">
+            <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wider text-slate-300">${escapeHtml(format || candidate.media_type || '')}</span>
+            ${metadataSource ? `<span class="rounded-full bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">${escapeHtml(metadataSource)}</span>` : ''}
+            ${confidence ? `<span class="rounded-full bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">${escapeHtml(confidence)}</span>` : ''}
+          </div>
         </div>
         ${candidate.classification_reason ? `<p class="mt-2 text-xs text-amber-200/80">${escapeHtml(candidate.classification_reason)}</p>` : ''}
         ${candidate.error ? `<p class="mt-2 text-xs text-red-300">${escapeHtml(candidate.error)}</p>` : ''}
+        ${candidate.destination_path ? renderLibraryScanDestination(candidate.destination_path) : ''}
+        ${candidate.duplicate ? renderLibraryScanDuplicate(candidate.duplicate) : ''}
+        ${candidate.manual_review ? renderLibraryScanManualReview(candidate, title, author) : ''}
         ${existingPath ? `<p class="mt-2 truncate text-xs text-slate-400" title="${escapeHtml(existingPath)}">Existing: ${escapeHtml(existingPath)}</p>` : ''}
         <p class="mt-2 truncate text-xs text-slate-500" title="${escapeHtml(path)}">${escapeHtml(path)}</p>
       </div>
     </div>
   `;
+}
+
+function renderLibraryScanCover(candidate, format) {
+  const title = candidate.title || candidate.metadata?.title || candidate.filename || '';
+  if (candidate.cover_url) {
+    return `<img src="${escapeHtml(candidate.cover_url)}" alt="" class="h-12 w-9 rounded-md object-cover" loading="lazy" data-ph-title="${escapeHtml(title)}" data-ph-idx="0">`;
+  }
+  return `<div class="flex h-12 w-9 items-center justify-center rounded-md bg-gradient-to-br from-stone-700 to-slate-900 text-xs font-semibold text-stone-300">${escapeHtml(format || '?')}</div>`;
+}
+
+function renderLibraryScanDestination(destination) {
+  const parts = String(destination || '').split('/').filter(Boolean);
+  const pretty = parts.length ? parts.join(' → ') : destination;
+  return `
+    <div class="mt-3 rounded-md border border-slate-800 bg-slate-950/60 p-3">
+      <p class="text-[11px] uppercase tracking-wider text-slate-500">Destination</p>
+      <p class="mt-1 break-all text-xs text-slate-300">${escapeHtml(pretty)}</p>
+    </div>
+  `;
+}
+
+function renderLibraryScanDuplicate(duplicate) {
+  return `
+    <div class="mt-3 rounded-md border border-amber-500/20 bg-amber-500/8 p-3">
+      <p class="text-xs font-semibold text-amber-100">Duplicate</p>
+      <dl class="mt-2 grid gap-1 text-xs text-amber-100/80 md:grid-cols-2">
+        <div><dt class="text-amber-200/70">Reason</dt><dd>${escapeHtml(duplicate.reason || 'Duplicate detected')}</dd></div>
+        ${duplicate.existing_title ? `<div><dt class="text-amber-200/70">Title</dt><dd>${escapeHtml(duplicate.existing_title)}</dd></div>` : ''}
+        ${duplicate.existing_author ? `<div><dt class="text-amber-200/70">Author</dt><dd>${escapeHtml(duplicate.existing_author)}</dd></div>` : ''}
+        ${duplicate.existing_format ? `<div><dt class="text-amber-200/70">Format</dt><dd>${escapeHtml(String(duplicate.existing_format).toUpperCase())}</dd></div>` : ''}
+        ${duplicate.existing_path ? `<div class="md:col-span-2"><dt class="text-amber-200/70">Location</dt><dd class="break-all">${escapeHtml(duplicate.existing_path)}</dd></div>` : ''}
+      </dl>
+    </div>
+  `;
+}
+
+function renderLibraryScanManualReview(candidate, title, author) {
+  const review = candidate.manual_review || {};
+  return `
+    <div class="mt-3 rounded-md border border-orange-500/25 bg-orange-500/8 p-3">
+      <p class="text-xs font-semibold text-orange-100">Manual Review Required</p>
+      <dl class="mt-2 grid gap-1 text-xs text-orange-100/80 md:grid-cols-2">
+        <div><dt class="text-orange-200/70">Reason</dt><dd>${escapeHtml(review.reason || candidate.classification_reason || 'Planner stopped for manual review')}</dd></div>
+        <div><dt class="text-orange-200/70">Confidence</dt><dd>${escapeHtml(formatMetadataConfidence(review.confidence || candidate.metadata?.confidence || 'unknown'))}</dd></div>
+        <div><dt class="text-orange-200/70">Metadata Source</dt><dd>${escapeHtml(formatMetadataSource(review.metadata_source || candidate.metadata?.source || 'unknown'))}</dd></div>
+        ${review.suggested_destination ? `<div class="md:col-span-2"><dt class="text-orange-200/70">Suggested Destination</dt><dd class="break-all">${escapeHtml(review.suggested_destination)}</dd></div>` : ''}
+      </dl>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button data-action="useSuggestedLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-orange-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-orange-400">Use Suggested</button>
+        <button data-action="editLibraryScanCandidateMetadata" data-candidate-id="${escapeHtml(candidate.id)}" data-title="${escapeHtml(title)}" data-author="${escapeHtml(author)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Edit Metadata</button>
+        <button data-action="skipLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Skip</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatMetadataSource(source) {
+  const labels = {
+    embedded_metadata: 'Embedded metadata',
+    filename_fallback: 'Filename parsing',
+    manual_edit: 'Manual edit',
+    pdf_metadata: 'PDF metadata',
+  };
+  return labels[source] || String(source || '').replace(/_/g, ' ');
+}
+
+function formatMetadataConfidence(confidence) {
+  if (!confidence) return '';
+  return String(confidence).replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
 function filterLibraryScanCandidates(candidates, filter = 'all', search = '') {
@@ -3314,11 +3432,11 @@ async function loadLibraryScanResults(jobId) {
   showToast('Library scan complete', 'success');
 }
 
-async function startLibraryImport(allReady = false) {
+async function startLibraryImport(allReady = false, overrideCandidates = null) {
   const scan = state.libraryImport.scan;
   const importState = scan.import;
   if (!scan.result || importState.running) return;
-  const candidates = allReady ? readyLibraryScanCandidates(scan.result) : selectedReadyLibraryScanCandidates(scan.result);
+  const candidates = Array.isArray(overrideCandidates) ? overrideCandidates : (allReady ? readyLibraryScanCandidates(scan.result) : selectedReadyLibraryScanCandidates(scan.result));
   if (candidates.length === 0) {
     showToast('Select at least one ready book to import', 'error');
     return;
@@ -3338,8 +3456,8 @@ async function startLibraryImport(allReady = false) {
       method: 'POST',
       body: JSON.stringify({
         scan_job_id: scan.result.job_id || scan.jobId,
-        all_ready: !!allReady,
-        candidate_ids: allReady ? [] : candidates.map(candidate => candidate.id),
+        all_ready: !!allReady && !Array.isArray(overrideCandidates),
+        candidate_ids: allReady && !Array.isArray(overrideCandidates) ? [] : candidates.map(candidate => candidate.id),
       }),
     });
     importState.jobId = data.job_id || data.job?.id || '';
@@ -3405,6 +3523,52 @@ async function loadLibraryImportResults(jobId) {
   renderLibraryScanWorkspace();
   await refreshLibraryAfterScanImport();
   showToast('Library import complete', (result.summary?.failed || 0) > 0 ? 'error' : 'success');
+}
+
+async function resolveLibraryScanCandidate(candidateID, action, values = {}) {
+  const scan = state.libraryImport.scan;
+  if (!scan.result || !candidateID) return;
+  try {
+    const result = await apiJson(`/api/v1/library/scan/${encodeURIComponent(scan.result.job_id || scan.jobId)}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: candidateID,
+        action,
+        title: values.title || '',
+        author: values.author || '',
+      }),
+    });
+    scan.result = result;
+    scan.selected.add(candidateID);
+    renderLibraryScanWorkspace();
+    showToast(action === 'edit_metadata' ? 'Metadata updated for import' : 'Candidate ready to import', 'success');
+  } catch (err) {
+    showToast(err.message || 'Could not resolve review item', 'error');
+  }
+}
+
+function editLibraryScanCandidateMetadata(candidateID, currentTitle, currentAuthor) {
+  const promptFn = window.prompt;
+  if (typeof promptFn !== 'function') {
+    showToast('Metadata editing is unavailable in this browser', 'error');
+    return;
+  }
+  const title = promptFn.call(window, 'Book title', currentTitle || '');
+  if (title === null) return;
+  const author = promptFn.call(window, 'Author', currentAuthor || '');
+  if (author === null) return;
+  resolveLibraryScanCandidate(candidateID, 'edit_metadata', { title, author });
+}
+
+function retryFailedLibraryImport() {
+  const scan = state.libraryImport.scan;
+  const failedIDs = new Set((scan.import.result?.items || []).filter(item => item.status === 'failed').map(item => item.candidate_id));
+  const candidates = readyLibraryScanCandidates(scan.result).filter(candidate => failedIDs.has(candidate.id));
+  if (candidates.length === 0) {
+    showToast('No failed ready books to retry', 'error');
+    return;
+  }
+  startLibraryImport(false, candidates);
 }
 
 async function refreshLibraryAfterScanImport() {
@@ -4100,6 +4264,26 @@ const CLICK_ACTIONS = {
   startLibraryScan: () => startLibraryScan(),
   startLibraryImportSelected: () => startLibraryImport(false),
   startLibraryImportAllReady: () => startLibraryImport(true),
+  viewImportedLibraryScan: () => {
+    state.libraryImport.scan.filter = 'already_imported';
+    state.libraryImport.scan.sections.already_imported = true;
+    renderLibraryScanWorkspace();
+  },
+  retryFailedLibraryImport: () => retryFailedLibraryImport(),
+  closeLibraryImportSummary: () => {
+    state.libraryImport.scan.import.result = null;
+    state.libraryImport.scan.import.error = '';
+    renderLibraryScanWorkspace();
+  },
+  useSuggestedLibraryScanCandidate: el => resolveLibraryScanCandidate(el.dataset.candidateId, 'use_suggested'),
+  editLibraryScanCandidateMetadata: el => editLibraryScanCandidateMetadata(el.dataset.candidateId, el.dataset.title, el.dataset.author),
+  skipLibraryScanCandidate: el => {
+    const id = el.dataset.candidateId;
+    if (!id) return;
+    state.libraryImport.scan.skipped.add(id);
+    state.libraryImport.scan.selected.delete(id);
+    renderLibraryScanWorkspace();
+  },
   clearLibraryScanSelection: () => {
     state.libraryImport.scan.selected.clear();
     renderLibraryScanWorkspace();

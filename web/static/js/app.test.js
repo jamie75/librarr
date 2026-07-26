@@ -72,6 +72,8 @@ const functionBundle = [
   extractFunctionSource('renderLibraryScanProgressMetric'),
   extractFunctionSource('renderLibraryImportProgress'),
   extractFunctionSource('renderLibraryImportSummary'),
+  extractFunctionSource('libraryImportElapsedSeconds'),
+  extractFunctionSource('formatDurationSeconds'),
   extractFunctionSource('renderLibraryScanError'),
   extractFunctionSource('renderLibraryScanReview'),
   extractFunctionSource('renderLibraryScanImportActions'),
@@ -79,6 +81,12 @@ const functionBundle = [
   extractFunctionSource('renderLibraryScanToolbar'),
   extractFunctionSource('renderLibraryScanSection'),
   extractFunctionSource('renderLibraryScanCandidate'),
+  extractFunctionSource('renderLibraryScanCover'),
+  extractFunctionSource('renderLibraryScanDestination'),
+  extractFunctionSource('renderLibraryScanDuplicate'),
+  extractFunctionSource('renderLibraryScanManualReview'),
+  extractFunctionSource('formatMetadataSource'),
+  extractFunctionSource('formatMetadataConfidence'),
   extractFunctionSource('filterLibraryScanCandidates'),
   extractFunctionSource('groupLibraryScanCandidates'),
   extractFunctionSource('readyLibraryScanCandidates'),
@@ -91,6 +99,9 @@ const functionBundle = [
   extractFunctionSource('startLibraryImport'),
   extractFunctionSource('pollLibraryImportJob'),
   extractFunctionSource('loadLibraryImportResults'),
+  extractFunctionSource('resolveLibraryScanCandidate'),
+  extractFunctionSource('editLibraryScanCandidateMetadata'),
+  extractFunctionSource('retryFailedLibraryImport'),
   extractFunctionSource('refreshLibraryAfterScanImport'),
   extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
@@ -125,6 +136,7 @@ function libraryImportState(overrides = {}) {
       },
       sections: {
         new: true,
+        manual_review: true,
         already_imported: false,
         duplicate: true,
         unsupported: false,
@@ -153,7 +165,7 @@ function createContext(overrides = {}) {
     apiJson: async () => ({ success: true }),
     showToast: () => {},
     scrollToSettingsSection: () => {},
-    window: { setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {} },
+    window: { setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {}, prompt: () => null },
     normalizedLibraryMode: () => false,
   };
   const context = vm.createContext({ ...base, ...overrides });
@@ -767,6 +779,41 @@ test('renderLibraryScanReview shows import actions and selectable ready rows', (
   assert.match(html, /Import All Ready/);
   assert.match(html, /Skip Selected/);
   assert.match(html, /data-candidate-id="ready-1"/);
+  assert.match(html, /Embedded metadata/);
+  assert.match(html, /High/);
+  assert.match(html, /Destination/);
+  assert.match(html, /Carla Jablonski → The Guardian\.epub/);
+});
+
+test('renderLibraryScanReview shows manual review details and resolution controls', () => {
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: { ...libraryImportState().scan, result: manualReviewScanResult() } }) },
+  });
+
+  const html = context.renderLibraryScanReview(manualReviewScanResult());
+
+  assert.match(html, /Manual Review Required/);
+  assert.match(html, /Existing title match did not cleanly agree on author/);
+  assert.match(html, /Filename parsing/);
+  assert.match(html, /Medium/);
+  assert.match(html, /Suggested Destination/);
+  assert.match(html, /Use Suggested/);
+  assert.match(html, /Edit Metadata/);
+  assert.match(html, /Skip/);
+});
+
+test('renderLibraryScanReview shows duplicate details', () => {
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: { ...libraryImportState().scan, result: sampleScanResult() } }) },
+  });
+
+  const html = context.renderLibraryScanReview(sampleScanResult());
+
+  assert.match(html, /Duplicate/);
+  assert.match(html, /Identical hash/);
+  assert.match(html, /Already There/);
+  assert.match(html, /Jane Doe/);
+  assert.match(html, /\/library\/dup\.mobi/);
 });
 
 test('selection helpers exclude skipped and non-ready candidates', () => {
@@ -815,6 +862,9 @@ test('successful import selected posts, polls, refreshes review, and clears impo
   assert.match(calls[0].body, /"candidate_ids":\["ready-1"\]/);
   assert.equal(context.state.libraryImport.scan.selected.has('ready-1'), false);
   assert.match(workspace.innerHTML, /Import Complete/);
+  assert.match(workspace.innerHTML, /View Imported/);
+  assert.match(workspace.innerHTML, /Retry Failed/);
+  assert.match(workspace.innerHTML, /Close/);
   assert.match(workspace.innerHTML, /Already Imported/);
 });
 
@@ -866,7 +916,9 @@ test('import failure keeps review visible and reports error', async () => {
 test('import completion summary renders partial failures', () => {
   const context = createContext();
   const html = context.renderLibraryImportSummary({
-    summary: { imported: 15, duplicates: 0, failed: 2 },
+    summary: { imported: 15, skipped: 0, duplicates: 0, failed: 2, total: 17 },
+    started_at: '2026-01-01T00:00:00Z',
+    completed_at: '2026-01-01T00:00:05Z',
     items: [
       { status: 'failed', title: 'Missing Book', error: 'file disappeared' },
       { status: 'failed', path: '/books/locked.epub', error: 'permission denied' },
@@ -875,8 +927,73 @@ test('import completion summary renders partial failures', () => {
 
   assert.match(html, /15 imported/);
   assert.match(html, /2 failed/);
+  assert.match(html, /3\.0\/s/);
   assert.match(html, /Show Details/);
+  assert.match(html, /Retry Failed/);
   assert.match(html, /file disappeared/);
+});
+
+test('manual review use suggested resolves candidate through scan endpoint', async () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = manualReviewScanResult();
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body || '' });
+      return {
+        ...manualReviewScanResult(),
+        totals: { found: 1, ready_to_import: 1, manual_review: 0 },
+        candidates: [{ ...manualReviewScanResult().candidates[0], classification: 'new', classification_reason: 'Ready to import after manual review', manual_review: null }],
+      };
+    },
+  });
+
+  await context.resolveLibraryScanCandidate('review-1', 'use_suggested');
+
+  assert.equal(calls[0].url, '/api/v1/library/scan/job-1/resolve');
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[0].body, /"action":"use_suggested"/);
+  assert.equal(context.state.libraryImport.scan.result.totals.ready_to_import, 1);
+  assert.equal(context.state.libraryImport.scan.selected.has('review-1'), true);
+});
+
+test('retry failed import posts only failed ready candidates', async () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = {
+    ...sampleScanResult(),
+    candidates: [
+      sampleScanResult().candidates[0],
+      { ...sampleScanResult().candidates[0], id: 'ready-2', title: 'Other Book', path: '/books/other.epub' },
+    ],
+  };
+  scanState.import.result = {
+    job_id: 'imp-1',
+    scan_job_id: 'job-1',
+    summary: { imported: 1, failed: 1 },
+    items: [
+      { candidate_id: 'ready-1', status: 'failed', title: 'The Guardian', error: 'permission denied' },
+      { candidate_id: 'ready-2', status: 'imported', title: 'Other Book' },
+    ],
+  };
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body || '' });
+      if (url === '/api/v1/library/import') return { job_id: 'imp-retry' };
+      if (url === '/api/v1/library/import/imp-retry') return { id: 'imp-retry', status: 'completed', progress: { total: 1, imported: 1 } };
+      if (url === '/api/v1/library/import/imp-retry/results') return { job_id: 'imp-retry', scan_job_id: 'job-1', summary: { imported: 1, failed: 0 }, items: [] };
+      if (url === '/api/v1/library/scan/job-1/results') return importedScanResult();
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.retryFailedLibraryImport();
+
+  assert.equal(calls[0].url, '/api/v1/library/import');
+  assert.match(calls[0].body, /"candidate_ids":\["ready-1"\]/);
+  assert.doesNotMatch(calls[0].body, /ready-2/);
 });
 
 function sampleScanResult() {
@@ -886,6 +1003,7 @@ function sampleScanResult() {
     totals: {
       found: 2,
       ready_to_import: 1,
+      manual_review: 0,
       duplicates: 1,
       already_imported: 0,
       unsupported: 0,
@@ -901,7 +1019,8 @@ function sampleScanResult() {
         format: 'epub',
         media_type: 'ebook',
         path: '/books/guardian.epub',
-        metadata: { source: 'embedded_metadata', title: 'The Guardian', author: 'Carla Jablonski' },
+        destination_path: '/books/Carla Jablonski/The Guardian.epub',
+        metadata: { source: 'embedded_metadata', confidence: 'high', title: 'The Guardian', author: 'Carla Jablonski' },
         classification_reason: 'Ready to import',
       },
       {
@@ -914,8 +1033,9 @@ function sampleScanResult() {
         media_type: 'ebook',
         path: '/books/dup.mobi',
         existing_path: '/library/dup.mobi',
-        metadata: { source: 'filename_fallback' },
-        classification_reason: 'Existing library file already has matching content',
+        metadata: { source: 'filename_fallback', confidence: 'medium' },
+        duplicate: { reason: 'Identical hash', existing_title: 'Already There', existing_author: 'Jane Doe', existing_format: 'mobi', existing_path: '/library/dup.mobi' },
+        classification_reason: 'Identical hash',
       },
     ],
   };
@@ -928,6 +1048,7 @@ function importedScanResult() {
     totals: {
       found: 2,
       ready_to_import: 0,
+      manual_review: 0,
       duplicates: 1,
       already_imported: 1,
       unsupported: 0,
@@ -948,6 +1069,43 @@ function importedScanResult() {
         classification_reason: 'Imported into library',
       },
       sampleScanResult().candidates[1],
+    ],
+  };
+}
+
+function manualReviewScanResult() {
+  return {
+    job_id: 'job-1',
+    status: 'completed',
+    totals: {
+      found: 1,
+      ready_to_import: 0,
+      manual_review: 1,
+      duplicates: 0,
+      already_imported: 0,
+      unsupported: 0,
+      unreadable: 0,
+    },
+    candidates: [
+      {
+        id: 'review-1',
+        classification: 'manual_review',
+        title: 'Prince Of Persia',
+        author: 'Disney Book Group',
+        filename: 'guardian.mobi',
+        format: 'mobi',
+        media_type: 'ebook',
+        path: '/books/guardian.mobi',
+        destination_path: '/books/ebooks/Disney Book Group/Prince Of Persia.mobi',
+        metadata: { source: 'filename_fallback', confidence: 'medium', title: 'Prince Of Persia', author: 'Disney Book Group' },
+        classification_reason: 'Existing title match did not cleanly agree on author',
+        manual_review: {
+          reason: 'Existing title match did not cleanly agree on author',
+          suggested_destination: '/books/ebooks/Disney Book Group/Prince Of Persia.mobi',
+          metadata_source: 'filename_fallback',
+          confidence: 'medium',
+        },
+      },
     ],
   };
 }
