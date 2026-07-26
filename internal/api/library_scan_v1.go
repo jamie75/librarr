@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"html"
 	"net/http"
 	"strings"
 
@@ -68,7 +69,34 @@ func (s *Server) handleV1LibraryScanResults(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]interface{}{"success": false, "error": "Scan results not found"})
 		return
 	}
+	if r.URL.Query().Get("pretty") == "1" {
+		writeLibraryScanDebugHTML(w, result)
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func writeLibraryScanDebugHTML(w http.ResponseWriter, result *libraryscanner.Result) {
+	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>Librarr Library Scan</title><style>
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111827;color:#e5e7eb;margin:24px}
+table{width:100%;border-collapse:collapse;background:#0f172a}
+th,td{border:1px solid #334155;padding:8px;text-align:left;vertical-align:top;font-size:13px}
+th{background:#1e293b;color:#f8fafc}
+code{color:#fbbf24;word-break:break-all}
+</style></head><body>`))
+	_, _ = w.Write([]byte(`<h1>Librarr Library Scan Results</h1><table><thead><tr><th>Classification</th><th>Title</th><th>Author</th><th>Media Type</th><th>Metadata Source</th><th>Reason</th><th>Path</th></tr></thead><tbody>`))
+	for _, candidate := range result.Candidates {
+		_, _ = w.Write([]byte(`<tr><td>` + html.EscapeString(string(candidate.Classification)) + `</td><td>` +
+			html.EscapeString(candidate.Title) + `</td><td>` +
+			html.EscapeString(candidate.Author) + `</td><td>` +
+			html.EscapeString(string(candidate.MediaType)) + `</td><td>` +
+			html.EscapeString(candidate.Metadata.Source) + `</td><td>` +
+			html.EscapeString(candidate.ClassificationReason) + `</td><td><code>` +
+			html.EscapeString(candidate.Path) + `</code></td></tr>`))
+	}
+	_, _ = w.Write([]byte(`</tbody></table></body></html>`))
 }
 
 func (s *Server) currentLibraryScanRoots() libraryscanner.Roots {

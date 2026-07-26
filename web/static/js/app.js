@@ -610,6 +610,24 @@ const state = {
     dirty: false,
     lastSaved: null,
     flashTimer: null,
+    scan: {
+      running: false,
+      jobId: '',
+      pollTimer: null,
+      startedAt: null,
+      progress: null,
+      result: null,
+      filter: 'all',
+      search: '',
+      sections: {
+        new: true,
+        already_imported: false,
+        duplicate: true,
+        unsupported: false,
+        unreadable: false,
+      },
+      error: '',
+    },
   },
 };
 
@@ -2976,6 +2994,7 @@ function setLibraryImportStep2State(unlocked, values = null) {
   copy.textContent = unlocked
     ? 'Your folders are saved. Librarr is ready to scan your existing collection.'
     : 'Available after saving your library folders.';
+  renderLibraryScanWorkspace();
 
   if (!unlocked || !values) {
     summary.innerHTML = '';
@@ -2990,6 +3009,304 @@ function setLibraryImportStep2State(unlocked, values = null) {
     </div>
   `).join('');
   summary.classList.remove('hidden');
+}
+
+function renderLibraryScanWorkspace() {
+  const workspace = document.getElementById('settings-library-scan-workspace');
+  if (!workspace) return;
+  if (!state.libraryImport.completed) {
+    workspace.innerHTML = `
+      <button disabled aria-disabled="true" class="cursor-not-allowed rounded-lg bg-slate-700/70 px-4 py-2 text-sm font-medium text-slate-400 opacity-70">Scan Library</button>
+      <p class="mt-2 text-xs text-slate-500">Library scanning becomes available after folder configuration.</p>
+    `;
+    return;
+  }
+  const scan = state.libraryImport.scan;
+  if (scan.running || scan.progress) {
+    workspace.innerHTML = renderLibraryScanProgress(scan);
+    return;
+  }
+  if (scan.result) {
+    workspace.innerHTML = renderLibraryScanReview(scan.result);
+    return;
+  }
+  if (scan.error) {
+    workspace.innerHTML = renderLibraryScanError(scan.error);
+    return;
+  }
+  workspace.innerHTML = renderLibraryScanReady();
+}
+
+function renderLibraryScanReady() {
+  return `
+    <div class="flex flex-wrap items-center gap-3">
+      <button data-action="startLibraryScan" class="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-stone-950 transition-colors hover:bg-amber-400">Scan Library</button>
+      <p class="text-xs text-slate-500">Review results here before importing. No files will be changed during scanning.</p>
+    </div>
+  `;
+}
+
+function renderLibraryScanProgress(scan) {
+  const progress = scan.progress || {};
+  const elapsed = formatLibraryScanElapsed(scan.startedAt || progress.started_at);
+  const phase = progress.current_phase || progress.status || 'starting';
+  return `
+    <div class="rounded-lg border border-amber-500/20 bg-amber-500/8 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-sm font-medium text-amber-100">Scanning library...</p>
+          <p class="mt-1 text-xs text-stone-400">${escapeHtml(formatLibraryScanPhase(phase))} · ${escapeHtml(elapsed)}</p>
+        </div>
+        <div class="h-5 w-5 animate-spin rounded-full border-2 border-amber-300 border-t-transparent" aria-label="Scanning"></div>
+      </div>
+      <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        ${renderLibraryScanProgressMetric('Directories', progress.directories_scanned || 0)}
+        ${renderLibraryScanProgressMetric('Discovered', progress.files_discovered || 0)}
+        ${renderLibraryScanProgressMetric('Processed', progress.files_processed || 0)}
+        ${renderLibraryScanProgressMetric('Candidates', progress.candidates_ready || 0)}
+      </div>
+      ${progress.current_path ? `<p class="mt-3 truncate text-xs text-slate-500" title="${escapeHtml(progress.current_path)}">${escapeHtml(progress.current_path)}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderLibraryScanProgressMetric(label, value) {
+  return `
+    <div class="rounded-md bg-slate-900/50 px-3 py-2">
+      <p class="text-[11px] uppercase tracking-wider text-slate-500">${escapeHtml(label)}</p>
+      <p class="mt-1 text-lg font-semibold text-white">${escapeHtml(String(value))}</p>
+    </div>
+  `;
+}
+
+function renderLibraryScanError(message) {
+  return `
+    <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+      <p class="text-sm font-medium text-red-100">Library scan failed</p>
+      <p class="mt-1 text-xs text-red-200">${escapeHtml(message || 'Unknown scan error')}</p>
+      <button data-action="startLibraryScan" class="mt-3 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-400">Retry</button>
+    </div>
+  `;
+}
+
+function renderLibraryScanReview(result) {
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  const totals = result.totals || {};
+  const filtered = filterLibraryScanCandidates(candidates, state.libraryImport.scan.filter, state.libraryImport.scan.search);
+  const grouped = groupLibraryScanCandidates(filtered);
+  if ((totals.found || 0) === 0) {
+    return `
+      ${renderLibraryScanToolbar()}
+      <div class="rounded-lg border border-slate-700 bg-slate-900/60 p-5 text-center">
+        <p class="text-sm font-medium text-white">No books found</p>
+        <p class="mt-1 text-xs text-slate-500">Librarr scanned the configured folders but did not find supported files.</p>
+        <button data-action="startLibraryScan" class="mt-4 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700">Scan Again</button>
+      </div>
+    `;
+  }
+  const allDuplicates = (totals.ready_to_import || 0) === 0 && ((totals.duplicates || 0) + (totals.already_imported || 0)) === (totals.found || 0);
+  return `
+    <div class="space-y-4">
+      ${allDuplicates ? `<div class="rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">Everything found in this scan already appears to be in the library.</div>` : ''}
+      ${renderLibraryScanTotals(totals)}
+      ${renderLibraryScanToolbar()}
+      <div class="space-y-3">
+        ${renderLibraryScanSection('Ready to Import', 'new', grouped.new || [])}
+        ${renderLibraryScanSection('Duplicates', 'duplicate', grouped.duplicate || [])}
+        ${renderLibraryScanSection('Already Imported', 'already_imported', grouped.already_imported || [])}
+        ${renderLibraryScanSection('Unsupported', 'unsupported', grouped.unsupported || [])}
+        ${renderLibraryScanSection('Unreadable', 'unreadable', grouped.unreadable || [])}
+      </div>
+    </div>
+  `;
+}
+
+function renderLibraryScanTotals(totals) {
+  const cards = [
+    ['Files Found', totals.found || 0],
+    ['Ready to Import', totals.ready_to_import || 0],
+    ['Duplicates', totals.duplicates || 0],
+    ['Already Imported', totals.already_imported || 0],
+    ['Unsupported', totals.unsupported || 0],
+    ['Unreadable', totals.unreadable || 0],
+  ];
+  return `<div class="grid grid-cols-2 gap-2 md:grid-cols-3">${cards.map(([label, value]) => `
+    <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-3">
+      <p class="text-[11px] uppercase tracking-wider text-slate-500">${escapeHtml(label)}</p>
+      <p class="mt-1 text-2xl font-semibold text-white">${escapeHtml(String(value))}</p>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderLibraryScanToolbar() {
+  const filter = state.libraryImport.scan.filter;
+  const buttons = [
+    ['all', 'All'],
+    ['new', 'Ready'],
+    ['duplicate', 'Duplicates'],
+    ['unsupported', 'Unsupported'],
+    ['unreadable', 'Unreadable'],
+  ];
+  return `
+    <div class="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3 md:flex-row md:items-center md:justify-between">
+      <div class="flex flex-wrap gap-2">
+        ${buttons.map(([value, label]) => `<button data-action="setLibraryScanFilter" data-filter="${escapeHtml(value)}" class="rounded-md px-3 py-1.5 text-xs font-medium ${filter === value ? 'bg-amber-500 text-stone-950' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${escapeHtml(label)}</button>`).join('')}
+      </div>
+      <div class="flex gap-2">
+        <input id="settings-library-scan-search" data-action-input="libraryScanSearch" type="search" value="${escapeHtml(state.libraryImport.scan.search || '')}" placeholder="Search title, author, filename" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 md:w-72">
+        <button data-action="startLibraryScan" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Scan Again</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLibraryScanSection(title, classification, candidates) {
+  const open = state.libraryImport.scan.sections[classification] !== false;
+  return `
+    <section class="rounded-lg border border-slate-800 bg-slate-900/45">
+      <button data-action="toggleLibraryScanSection" data-section="${escapeHtml(classification)}" class="flex w-full items-center justify-between px-4 py-3 text-left">
+        <span class="text-sm font-medium text-white">${escapeHtml(title)}</span>
+        <span class="text-xs text-slate-500">${candidates.length} ${open ? 'Hide' : 'Show'}</span>
+      </button>
+      <div class="${open ? '' : 'hidden'} border-t border-slate-800">
+        ${candidates.length ? candidates.map(renderLibraryScanCandidate).join('') : `<p class="px-4 py-4 text-sm text-slate-500">No items in this section.</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderLibraryScanCandidate(candidate) {
+  const title = candidate.title || candidate.metadata?.title || candidate.filename || 'Unknown title';
+  const author = candidate.author || candidate.metadata?.author || '';
+  const format = (candidate.format || '').toUpperCase();
+  const path = candidate.path || candidate.relative_path || '';
+  const isReady = candidate.classification === 'new';
+  const existingPath = candidate.existing_path || '';
+  return `
+    <div class="grid gap-3 border-b border-slate-800 px-4 py-3 last:border-b-0 md:grid-cols-[auto_3rem_1fr]">
+      <div class="flex items-start pt-1">${isReady ? `<input type="checkbox" checked disabled aria-label="Ready to import candidate" class="rounded border-slate-600 bg-slate-900 text-amber-500">` : ''}</div>
+      <div class="flex h-12 w-9 items-center justify-center rounded-md bg-gradient-to-br from-stone-700 to-slate-900 text-xs font-semibold text-stone-300">${escapeHtml(format || '?')}</div>
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium text-white">${escapeHtml(title)}</p>
+            <p class="mt-0.5 truncate text-xs text-slate-400">${escapeHtml(author || candidate.media_type || '')}</p>
+          </div>
+          <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wider text-slate-300">${escapeHtml(format || candidate.media_type || '')}</span>
+        </div>
+        ${candidate.classification_reason ? `<p class="mt-2 text-xs text-amber-200/80">${escapeHtml(candidate.classification_reason)}</p>` : ''}
+        ${candidate.error ? `<p class="mt-2 text-xs text-red-300">${escapeHtml(candidate.error)}</p>` : ''}
+        ${existingPath ? `<p class="mt-2 truncate text-xs text-slate-400" title="${escapeHtml(existingPath)}">Existing: ${escapeHtml(existingPath)}</p>` : ''}
+        <p class="mt-2 truncate text-xs text-slate-500" title="${escapeHtml(path)}">${escapeHtml(path)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function filterLibraryScanCandidates(candidates, filter = 'all', search = '') {
+  const query = String(search || '').trim().toLowerCase();
+  return candidates.filter(candidate => {
+    if (filter !== 'all' && candidate.classification !== filter) return false;
+    if (!query) return true;
+    const haystack = [
+      candidate.title,
+      candidate.author,
+      candidate.filename,
+      candidate.metadata?.title,
+      candidate.metadata?.author,
+    ].join(' ').toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function groupLibraryScanCandidates(candidates) {
+  return candidates.reduce((groups, candidate) => {
+    const key = candidate.classification || 'new';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(candidate);
+    return groups;
+  }, {});
+}
+
+function formatLibraryScanPhase(phase) {
+  return String(phase || 'starting').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function formatLibraryScanElapsed(startedAt) {
+  const start = startedAt ? new Date(startedAt).getTime() : Date.now();
+  const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
+  if (elapsed < 60) return `${elapsed}s elapsed`;
+  return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed`;
+}
+
+async function startLibraryScan() {
+  const scan = state.libraryImport.scan;
+  if (!state.libraryImport.completed || scan.running) return;
+  if (scan.pollTimer) {
+    window.clearTimeout(scan.pollTimer);
+  }
+  scan.running = true;
+  scan.jobId = '';
+  scan.startedAt = new Date().toISOString();
+  scan.progress = { status: 'pending', current_phase: 'starting', started_at: scan.startedAt };
+  scan.result = null;
+  scan.error = '';
+  renderLibraryScanWorkspace();
+  try {
+    const data = await apiJson('/api/v1/library/scan', { method: 'POST' });
+    scan.jobId = data.job_id || data.job?.id || '';
+    if (data.job?.progress) {
+      scan.progress = data.job.progress;
+      scan.startedAt = data.job.started_at || scan.startedAt;
+    }
+    await pollLibraryScanJob();
+  } catch (err) {
+    scan.running = false;
+    scan.progress = null;
+    scan.error = err.message || 'Failed to start library scan';
+    renderLibraryScanWorkspace();
+    showToast(scan.error, 'error');
+  }
+}
+
+async function pollLibraryScanJob() {
+  const scan = state.libraryImport.scan;
+  if (!scan.running || !scan.jobId) return;
+  try {
+    const job = await apiJson(`/api/v1/library/scan/${encodeURIComponent(scan.jobId)}`);
+    scan.progress = job.progress || scan.progress;
+    scan.startedAt = job.started_at || scan.startedAt;
+    if (job.status === 'completed') {
+      await loadLibraryScanResults(scan.jobId);
+      return;
+    }
+    if (job.status === 'failed' || job.status === 'cancelled') {
+      scan.running = false;
+      scan.progress = null;
+      scan.error = job.error || `Library scan ${job.status}`;
+      renderLibraryScanWorkspace();
+      showToast(scan.error, 'error');
+      return;
+    }
+    renderLibraryScanWorkspace();
+    scan.pollTimer = window.setTimeout(pollLibraryScanJob, 1200);
+  } catch (err) {
+    scan.running = false;
+    scan.error = err.message || 'Failed to poll library scan';
+    renderLibraryScanWorkspace();
+    showToast(scan.error, 'error');
+  }
+}
+
+async function loadLibraryScanResults(jobId) {
+  const scan = state.libraryImport.scan;
+  const result = await apiJson(`/api/v1/library/scan/${encodeURIComponent(jobId)}/results`);
+  scan.running = false;
+  scan.progress = null;
+  scan.result = result;
+  scan.error = '';
+  renderLibraryScanWorkspace();
+  showToast('Library scan complete', 'success');
 }
 
 function updateLibraryImportSaveState(flashMode = '') {
@@ -3667,6 +3984,17 @@ const CLICK_ACTIONS = {
   openImportSettings: () => openImportSettings(),
   saveLibraryImportStandard: () => saveLibraryImportSettings(false),
   saveLibraryImportContinue: () => saveLibraryImportSettings(true),
+  startLibraryScan: () => startLibraryScan(),
+  setLibraryScanFilter: el => {
+    state.libraryImport.scan.filter = el.dataset.filter || 'all';
+    renderLibraryScanWorkspace();
+  },
+  toggleLibraryScanSection: el => {
+    const section = el.dataset.section;
+    if (!section) return;
+    state.libraryImport.scan.sections[section] = state.libraryImport.scan.sections[section] === false;
+    renderLibraryScanWorkspace();
+  },
   switchSearchTab: el => switchSearchTab(el.dataset.arg),
   switchLibraryTab: el => switchLibraryTab(el.dataset.arg),
   setSortMode: el => setSortMode(el.dataset.arg),
@@ -3725,6 +4053,16 @@ document.addEventListener('change', e => {
   if (!el) return;
   const fn = CHANGE_ACTIONS[el.dataset.actionChange];
   if (fn) fn(el, e);
+});
+
+document.addEventListener('input', e => {
+  const el = e.target.closest('[data-action-input]');
+  if (!el) return;
+  if (el.dataset.actionInput === 'libraryScanSearch') {
+    state.libraryImport.scan.search = el.value || '';
+    renderLibraryScanWorkspace();
+    document.getElementById('settings-library-scan-search')?.focus();
+  }
 });
 
 // Cover-image fallback (replaces inline onerror=). 'error' events don't

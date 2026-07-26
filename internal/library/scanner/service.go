@@ -377,6 +377,9 @@ func applyPlan(candidate *Candidate, plan libraryimport.ImportPlan) {
 
 	switch plan.Disposition {
 	case libraryimport.DispositionIgnoreDuplicate:
+		if plan.File.Existing != nil {
+			candidate.ExistingPath = plan.File.Existing.Path
+		}
 		reason := duplicateReason(plan)
 		if reason == "path" {
 			candidate.Classification = ClassificationAlreadyImported
@@ -386,6 +389,9 @@ func applyPlan(candidate *Candidate, plan libraryimport.ImportPlan) {
 			candidate.ClassificationReason = "Existing library file already has matching content"
 		}
 	case libraryimport.DispositionConflict:
+		if plan.File.Existing != nil {
+			candidate.ExistingPath = plan.File.Existing.Path
+		}
 		candidate.Classification = ClassificationDuplicate
 		candidate.ClassificationReason = firstEvidenceExplanation(plan, "Import planner found a duplicate or conflicting file")
 	case libraryimport.DispositionNeedsManualReview:

@@ -104,6 +104,7 @@
           "metadata": {"type": "object"},
           "classification": {"type": "string", "enum": ["new", "already_imported", "duplicate", "unsupported", "unreadable"]},
           "classification_reason": {"type": "string"},
+          "existing_path": {"type": "string"},
           "error": {"type": "string"}
         }
       },

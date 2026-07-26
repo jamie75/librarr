@@ -62,9 +62,54 @@ const functionBundle = [
   extractFunctionSource('libraryImportSummaryLines'),
   extractFunctionSource('applyLibraryImportLoadedState'),
   extractFunctionSource('setLibraryImportStep2State'),
+  extractFunctionSource('renderLibraryScanWorkspace'),
+  extractFunctionSource('renderLibraryScanReady'),
+  extractFunctionSource('renderLibraryScanProgress'),
+  extractFunctionSource('renderLibraryScanProgressMetric'),
+  extractFunctionSource('renderLibraryScanError'),
+  extractFunctionSource('renderLibraryScanReview'),
+  extractFunctionSource('renderLibraryScanTotals'),
+  extractFunctionSource('renderLibraryScanToolbar'),
+  extractFunctionSource('renderLibraryScanSection'),
+  extractFunctionSource('renderLibraryScanCandidate'),
+  extractFunctionSource('filterLibraryScanCandidates'),
+  extractFunctionSource('groupLibraryScanCandidates'),
+  extractFunctionSource('formatLibraryScanPhase'),
+  extractFunctionSource('formatLibraryScanElapsed'),
+  extractFunctionSource('startLibraryScan'),
+  extractFunctionSource('pollLibraryScanJob'),
+  extractFunctionSource('loadLibraryScanResults'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
 ].join('\n\n');
+
+function libraryImportState(overrides = {}) {
+  return {
+    completed: false,
+    dirty: false,
+    lastSaved: null,
+    flashTimer: null,
+    scan: {
+      running: false,
+      jobId: '',
+      pollTimer: null,
+      startedAt: null,
+      progress: null,
+      result: null,
+      filter: 'all',
+      search: '',
+      sections: {
+        new: true,
+        already_imported: false,
+        duplicate: true,
+        unsupported: false,
+        unreadable: false,
+      },
+      error: '',
+    },
+    ...overrides,
+  };
+}
 
 function createContext(overrides = {}) {
   const base = {
@@ -78,7 +123,7 @@ function createContext(overrides = {}) {
     renderDashboardEmpty: () => '<empty />',
     escapeHtml: value => String(value),
     LIBRARY_IMPORT_FIELDS: ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'],
-    state: { libraryImport: { completed: false, dirty: false, lastSaved: null, flashTimer: null } },
+    state: { libraryImport: libraryImportState() },
     document: { getElementById: () => null },
     apiJson: async () => ({ success: true }),
     showToast: () => {},
@@ -163,8 +208,8 @@ test('index.html uses improved Step 2 copy and Save & Continue action', () => {
   assert.match(indexHTML, /Available after saving your library folders\./);
   assert.match(indexHTML, /Save & Continue/);
   assert.match(indexHTML, /Step 1 Complete/);
-  assert.match(indexHTML, /Scan Library/);
-  assert.match(indexHTML, /Library scanning will be available in the next release\./);
+  assert.match(indexHTML, /settings-library-scan-workspace/);
+  assert.match(appSource, /Scan Library/);
   assert.doesNotMatch(indexHTML, /Next: Scan Existing Collection/);
 });
 
@@ -413,13 +458,13 @@ test('Save & Continue does not return after later edits', () => {
     'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
   };
   const context = createContext({
-    state: { libraryImport: { completed: true, dirty: false, lastSaved: {
+    state: { libraryImport: libraryImportState({ completed: true, dirty: false, lastSaved: {
       incoming_dir: '/downloads',
       ebook_dir: '/books',
       audiobook_dir: '/audiobooks',
       manga_dir: '/manga',
       file_org_enabled: true,
-    }, flashTimer: null } },
+    } }) },
     document: { getElementById: id => elements[id] || null },
   });
 
@@ -453,13 +498,13 @@ test('standard purple Save persists Library & Import changes after onboarding an
     'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
   };
   const context = createContext({
-    state: { libraryImport: { completed: true, dirty: true, lastSaved: {
+    state: { libraryImport: libraryImportState({ completed: true, dirty: true, lastSaved: {
       incoming_dir: '/downloads',
       ebook_dir: '/books',
       audiobook_dir: '/audiobooks',
       manga_dir: '/manga',
       file_org_enabled: true,
-    }, flashTimer: null } },
+    } }) },
     document: { getElementById: id => elements[id] || null },
     apiJson: async () => ({ success: true }),
     showToast: (msg, kind) => events.push(`toast:${kind}:${msg}`),
@@ -500,13 +545,13 @@ test('failed standard save leaves Step 2 active and does not update summary', as
     'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
   };
   const context = createContext({
-    state: { libraryImport: { completed: true, dirty: true, lastSaved: {
+    state: { libraryImport: libraryImportState({ completed: true, dirty: true, lastSaved: {
       incoming_dir: '/downloads',
       ebook_dir: '/books',
       audiobook_dir: '/audiobooks',
       manga_dir: '/manga',
       file_org_enabled: true,
-    }, flashTimer: null } },
+    } }) },
     document: { getElementById: id => elements[id] || null },
     apiJson: async () => ({ success: false, error: 'Nope' }),
     showToast: (msg, kind) => events.push(`toast:${kind}:${msg}`),
@@ -525,6 +570,154 @@ test('index.html keeps the standard Settings save control', () => {
   assert.match(indexHTML, /data-action="saveLibraryImportStandard"/);
   assert.match(indexHTML, />Save<\/button>/);
 });
+
+test('renderLibraryScanWorkspace shows active scan button after onboarding', () => {
+  const workspace = { innerHTML: '' };
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+  });
+
+  context.renderLibraryScanWorkspace();
+
+  assert.match(workspace.innerHTML, /data-action="startLibraryScan"/);
+  assert.match(workspace.innerHTML, /Review results here before importing/);
+});
+
+test('successful scan flow posts, polls, loads results, and renders review', async () => {
+  const workspace = { innerHTML: '' };
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET' });
+      if (url === '/api/v1/library/scan') return { job_id: 'job-1', job: { started_at: '2026-01-01T00:00:00Z', progress: { status: 'scanning', current_phase: 'scanning', started_at: '2026-01-01T00:00:00Z' } } };
+      if (url === '/api/v1/library/scan/job-1') return { id: 'job-1', status: 'completed', progress: { status: 'completed', files_processed: 2 } };
+      if (url === '/api/v1/library/scan/job-1/results') return sampleScanResult();
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.startLibraryScan();
+
+  assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), [
+    'POST /api/v1/library/scan',
+    'GET /api/v1/library/scan/job-1',
+    'GET /api/v1/library/scan/job-1/results',
+  ]);
+  assert.match(workspace.innerHTML, /Files Found/);
+  assert.match(workspace.innerHTML, /Ready to Import/);
+  assert.match(workspace.innerHTML, /The Guardian/);
+});
+
+test('renderLibraryScanProgress shows progress fields', () => {
+  const context = createContext();
+  const html = context.renderLibraryScanProgress({
+    running: true,
+    startedAt: new Date().toISOString(),
+    progress: {
+      current_phase: 'processing_metadata',
+      directories_scanned: 3,
+      files_discovered: 29,
+      files_processed: 17,
+      candidates_ready: 12,
+      current_path: '/books/example.epub',
+    },
+  });
+
+  assert.match(html, /Processing Metadata/);
+  assert.match(html, /Directories/);
+  assert.match(html, /\/books\/example.epub/);
+});
+
+test('renderLibraryScanReview handles empty and duplicate-only scans', () => {
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true }) },
+  });
+
+  assert.match(context.renderLibraryScanReview({ totals: { found: 0 }, candidates: [] }), /No books found/);
+  assert.match(context.renderLibraryScanReview({
+    totals: { found: 2, ready_to_import: 0, duplicates: 2 },
+    candidates: [
+      { classification: 'duplicate', title: 'A', filename: 'a.epub', format: 'epub', metadata: {}, existing_path: '/library/a.epub' },
+      { classification: 'duplicate', title: 'B', filename: 'b.epub', format: 'epub', metadata: {} },
+    ],
+  }), /Everything found in this scan already appears to be in the library/);
+  assert.match(context.renderLibraryScanReview({
+    totals: { found: 1, ready_to_import: 0, duplicates: 1 },
+    candidates: [{ classification: 'duplicate', title: 'A', filename: 'a.epub', format: 'epub', metadata: {}, existing_path: '/library/a.epub' }],
+  }), /Existing: \/library\/a\.epub/);
+});
+
+test('filterLibraryScanCandidates filters by bucket and search', () => {
+  const context = createContext();
+  const candidates = sampleScanResult().candidates;
+
+  assert.equal(context.filterLibraryScanCandidates(candidates, 'duplicate', '').length, 1);
+  assert.equal(context.filterLibraryScanCandidates(candidates, 'all', 'guardian').length, 1);
+  assert.equal(context.filterLibraryScanCandidates(candidates, 'all', 'missing').length, 0);
+});
+
+test('scan failure renders retry state', async () => {
+  const workspace = { innerHTML: '' };
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true }) },
+    document: { getElementById: id => id === 'settings-library-scan-workspace' ? workspace : null },
+    apiJson: async url => {
+      if (url === '/api/v1/library/scan') return { job_id: 'job-1' };
+      if (url === '/api/v1/library/scan/job-1') return { id: 'job-1', status: 'failed', error: 'scan failed' };
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.startLibraryScan();
+
+  assert.match(workspace.innerHTML, /Library scan failed/);
+  assert.match(workspace.innerHTML, /Retry/);
+});
+
+function sampleScanResult() {
+  return {
+    job_id: 'job-1',
+    status: 'completed',
+    totals: {
+      found: 2,
+      ready_to_import: 1,
+      duplicates: 1,
+      already_imported: 0,
+      unsupported: 0,
+      unreadable: 0,
+    },
+    candidates: [
+      {
+        id: 'ready-1',
+        classification: 'new',
+        title: 'The Guardian',
+        author: 'Carla Jablonski',
+        filename: 'guardian.epub',
+        format: 'epub',
+        media_type: 'ebook',
+        path: '/books/guardian.epub',
+        metadata: { source: 'embedded_metadata', title: 'The Guardian', author: 'Carla Jablonski' },
+        classification_reason: 'Ready to import',
+      },
+      {
+        id: 'dup-1',
+        classification: 'duplicate',
+        title: 'Already There',
+        author: 'Jane Doe',
+        filename: 'dup.mobi',
+        format: 'mobi',
+        media_type: 'ebook',
+        path: '/books/dup.mobi',
+        existing_path: '/library/dup.mobi',
+        metadata: { source: 'filename_fallback' },
+        classification_reason: 'Existing library file already has matching content',
+      },
+    ],
+  };
+}
 
 function fakeClassList(initial = []) {
   const set = new Set(initial);

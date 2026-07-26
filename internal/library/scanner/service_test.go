@@ -115,7 +115,10 @@ func TestScannerAlreadyImportedAndDuplicateAreDistinct(t *testing.T) {
 	if byName["Existing.epub"].Classification != ClassificationAlreadyImported {
 		t.Fatalf("existing = %+v", byName["Existing.epub"])
 	}
-	if byName["Duplicate.epub"].Classification != ClassificationDuplicate {
+	if byName["Existing.epub"].ExistingPath != existingPath {
+		t.Fatalf("existing path = %+v", byName["Existing.epub"])
+	}
+	if byName["Duplicate.epub"].Classification != ClassificationDuplicate || byName["Duplicate.epub"].ExistingPath != "/other/Duplicate.epub" {
 		t.Fatalf("duplicate = %+v", byName["Duplicate.epub"])
 	}
 }

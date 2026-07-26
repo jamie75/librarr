@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,57 @@ func TestV1LibraryScanUnknownJob(t *testing.T) {
 	s.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestV1LibraryScanPrettyResults(t *testing.T) {
+	s, cleanup := newLibraryScanAPIServer(t)
+	defer cleanup()
+	root := filepath.Join(t.TempDir(), "ebooks")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Debug Book.epub"), []byte("bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]interface{}{
+		"ebook_dir":     root,
+		"audiobook_dir": filepath.Join(t.TempDir(), "missing-audio"),
+		"manga_dir":     filepath.Join(t.TempDir(), "missing-manga"),
+	}
+	data, _ := json.Marshal(settings)
+	if err := os.WriteFile(s.cfg.SettingsFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan", nil)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var started struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	waitAPIScanJob(t, s, started.JobID)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/library/scan/"+started.JobID+"/results?pretty=1", nil)
+	req.SetPathValue("job_id", started.JobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/html; charset=UTF-8" {
+		t.Fatalf("content type = %q", ct)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "Classification") || !strings.Contains(body, "Debug Book") {
+		t.Fatalf("body = %s", body)
 	}
 }
 

@@ -79,6 +79,7 @@ type Candidate struct {
 	Metadata             Metadata          `json:"metadata"`
 	Classification       Classification    `json:"classification"`
 	ClassificationReason string            `json:"classification_reason,omitempty"`
+	ExistingPath         string            `json:"existing_path,omitempty"`
 	Error                string            `json:"error,omitempty"`
 }
 
