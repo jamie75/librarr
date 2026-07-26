@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/JeremiahM37/librarr/internal/organize"
+	"github.com/jamie75/librarr/internal/organize"
 )
 
 // CoverCache stores user-owned extracted artwork as files under /data (or the

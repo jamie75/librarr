@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/config"
-	"github.com/JeremiahM37/librarr/internal/db"
-	"github.com/JeremiahM37/librarr/internal/library"
-	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
-	"github.com/JeremiahM37/librarr/internal/organize"
-	"github.com/JeremiahM37/librarr/internal/search"
+	"github.com/jamie75/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/organize"
+	"github.com/jamie75/librarr/internal/search"
 )
 
 // TestPipelineDirectDownloadOrganizeImport exercises search → download → organize → DB import

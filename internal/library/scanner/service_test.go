@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/library"
 )
 
 func TestScannerRecursiveScanningAndReviewPayload(t *testing.T) {

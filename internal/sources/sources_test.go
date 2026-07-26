@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JeremiahM37/librarr/internal/sources"
-	"github.com/JeremiahM37/librarr/internal/sources/sourcestest"
+	"github.com/jamie75/librarr/internal/sources"
+	"github.com/jamie75/librarr/internal/sources/sourcestest"
 )
 
 // TestCanonicalRegistryIsComplete validates that the librarr-sources companion

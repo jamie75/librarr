@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/JeremiahM37/librarr/internal/config"
-	librarrdb "github.com/JeremiahM37/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/config"
+	librarrdb "github.com/jamie75/librarr/internal/db"
 )
 
 const (

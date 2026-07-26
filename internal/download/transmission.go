@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/config"
 )
 
 // TransmissionClient wraps the Transmission RPC API and satisfies TorrentClient.

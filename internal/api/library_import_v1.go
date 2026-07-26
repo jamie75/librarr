@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/library"
-	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
-	libraryscanner "github.com/JeremiahM37/librarr/internal/library/scanner"
+	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	libraryscanner "github.com/jamie75/librarr/internal/library/scanner"
 )
 
 type libraryImportStatus string

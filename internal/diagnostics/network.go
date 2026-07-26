@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/netutil"
+	"github.com/jamie75/librarr/internal/netutil"
 )
 
 const defaultTimeout = 5 * time.Second

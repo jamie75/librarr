@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/models"
 )
 
 func TestLegacyItemToDomainAndBack(t *testing.T) {

@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/config"
-	"github.com/JeremiahM37/librarr/internal/netutil"
+	"github.com/jamie75/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/netutil"
 )
 
 // QBittorrentClient wraps the qBittorrent Web API.

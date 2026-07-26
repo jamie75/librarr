@@ -4,11 +4,17 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/jamie75/librarr)](https://goreportcard.com/report/github.com/jamie75/librarr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Next-generation open-source personal library manager.**
+**Self-hosted book acquisition, organization, cataloging, and OPDS delivery for homelabs.**
 
 Librarr 2.0 is under active development. It is evolving from its Readarr roots
 into a book-centric, Docker-first personal library application for ebooks,
 audiobooks, comics, and manga.
+
+Librarr began as a fork of the original Librarr project. Librarr 2.0 is now
+independently maintained and has substantially diverged in architecture, user
+experience, and roadmap. Original licensing and attribution are preserved; the
+repository may remain in GitHub's fork network until the 2.0 detachment decision
+is made.
 
 The project is designed for hobby self-hosters in the same spirit as Jellyfin,
 Audiobookshelf, Kavita, and Calibre-Web:
@@ -651,6 +657,10 @@ Avoid generic "Something went wrong" messages.
 - [VISION.md](VISION.md) — product direction
 - [ARCHITECTURE.md](ARCHITECTURE.md) — target architecture and boundaries
 - [ROADMAP.md](ROADMAP.md) — milestone tracking and next work
+- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) — origin and attribution
+- [CHANGELOG.md](CHANGELOG.md) — release history
+- [docs/releasing.md](docs/releasing.md) — release and Docker image process
+- [docs/INDEPENDENCE_READINESS.md](docs/INDEPENDENCE_READINESS.md) — fork-detachment readiness
 - [docs/library-scanner-phase1.md](docs/library-scanner-phase1.md) — scanner, review, and import workflow
 - [docs/read-api.md](docs/read-api.md) — normalized read API
 - [docs/v2-dogfood.md](docs/v2-dogfood.md) — local Librarr 2.0 dogfood deployment

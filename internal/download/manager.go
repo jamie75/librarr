@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/config"
-	"github.com/JeremiahM37/librarr/internal/db"
-	"github.com/JeremiahM37/librarr/internal/library"
-	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
-	"github.com/JeremiahM37/librarr/internal/models"
-	"github.com/JeremiahM37/librarr/internal/organize"
-	"github.com/JeremiahM37/librarr/internal/search"
-	"github.com/JeremiahM37/librarr/internal/webhook"
+	"github.com/jamie75/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/organize"
+	"github.com/jamie75/librarr/internal/search"
+	"github.com/jamie75/librarr/internal/webhook"
 )
 
 // Manager coordinates downloads, background jobs, and the post-download pipeline.

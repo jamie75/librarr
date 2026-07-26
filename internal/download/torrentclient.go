@@ -1,6 +1,6 @@
 package download
 
-import "github.com/JeremiahM37/librarr/internal/config"
+import "github.com/jamie75/librarr/internal/config"
 
 // TorrentClient is the common interface implemented by every torrent download
 // backend (qBittorrent, Transmission). The rest of Librarr — the download

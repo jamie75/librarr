@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/models"
-	"github.com/JeremiahM37/librarr/internal/webhook"
+	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/webhook"
 )
 
 func newTestDB(t *testing.T) *DB {

@@ -12,16 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/api"
-	"github.com/JeremiahM37/librarr/internal/config"
-	"github.com/JeremiahM37/librarr/internal/db"
-	"github.com/JeremiahM37/librarr/internal/download"
-	"github.com/JeremiahM37/librarr/internal/library"
-	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
-	"github.com/JeremiahM37/librarr/internal/netutil"
-	"github.com/JeremiahM37/librarr/internal/organize"
-	"github.com/JeremiahM37/librarr/internal/search"
-	"github.com/JeremiahM37/librarr/internal/version"
+	"github.com/jamie75/librarr/internal/api"
+	"github.com/jamie75/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/download"
+	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/netutil"
+	"github.com/jamie75/librarr/internal/organize"
+	"github.com/jamie75/librarr/internal/search"
+	"github.com/jamie75/librarr/internal/version"
 )
 
 func main() {

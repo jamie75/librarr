@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/diagnostics"
-	"github.com/JeremiahM37/librarr/internal/netutil"
-	"github.com/JeremiahM37/librarr/internal/sources"
+	"github.com/jamie75/librarr/internal/diagnostics"
+	"github.com/jamie75/librarr/internal/netutil"
+	"github.com/jamie75/librarr/internal/sources"
 )
 
 const maskedValue = "--------"

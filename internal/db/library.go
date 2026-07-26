@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/models"
-	"github.com/JeremiahM37/librarr/internal/netutil"
+	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/netutil"
 )
 
 // --- Library Items ---

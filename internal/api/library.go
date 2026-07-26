@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/db"
 )
 
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {

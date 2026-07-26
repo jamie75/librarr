@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/download"
-	"github.com/JeremiahM37/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/download"
+	"github.com/jamie75/librarr/internal/models"
 )
 
 // generateRequestID returns a random hex ID for a request. It fails closed if

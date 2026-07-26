@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/library"
 )
 
 const normalizedReadAPIError = "Librarr v1 book API requires LIBRARR_LIBRARY_REPOSITORY_MODE=normalized"

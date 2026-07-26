@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/JeremiahM37/librarr/internal/library"
-	"github.com/JeremiahM37/librarr/internal/organize"
+	"github.com/jamie75/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/organize"
 )
 
 type MetadataResolver struct{}

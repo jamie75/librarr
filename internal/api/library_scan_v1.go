@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	libraryscanner "github.com/JeremiahM37/librarr/internal/library/scanner"
+	libraryscanner "github.com/jamie75/librarr/internal/library/scanner"
 )
 
 func (s *Server) handleV1LibraryScanStart(w http.ResponseWriter, r *http.Request) {

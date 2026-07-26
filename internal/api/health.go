@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/version"
+	"github.com/jamie75/librarr/internal/version"
 )
 
 // Version comes from the embedded VERSION file (see internal/version).

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/JeremiahM37/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/library"
 )
 
 type ImportPlanner struct {

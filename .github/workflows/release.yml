@@ -30,11 +30,16 @@ jobs:
       - uses: docker/login-action@v3
         with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
       - id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "tag=${tag}" >> $GITHUB_OUTPUT
+          image="ghcr.io/${{ steps.owner.outputs.name }}/librarr:${tag}"
+          if echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            image="${image},ghcr.io/${{ steps.owner.outputs.name }}/librarr:latest"
+          fi
+          echo "images=${image}" >> $GITHUB_OUTPUT
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ steps.owner.outputs.name }}/librarr:${{ steps.version.outputs.tag }}
-            ghcr.io/${{ steps.owner.outputs.name }}/librarr:latest
+          tags: ${{ steps.version.outputs.images }}

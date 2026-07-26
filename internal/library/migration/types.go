@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/library"
-	"github.com/JeremiahM37/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/models"
 )
 
 const Version = "librarr-2-backfill-v1"

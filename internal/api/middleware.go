@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/JeremiahM37/librarr/internal/config"
-	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/config"
+	"github.com/jamie75/librarr/internal/db"
 )
 
 // exemptPaths are paths that do not require authentication.

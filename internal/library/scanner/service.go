@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JeremiahM37/librarr/internal/library"
-	libraryimport "github.com/JeremiahM37/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
 )
 
 const maxCompletedJobs = 8

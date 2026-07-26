@@ -12,7 +12,9 @@ That principle guides the database model, API, user interface, import pipeline, 
 
 ## Product Direction
 
-Librarr began as a fork, but its long-term direction is a distinct application with its own architecture and product goals.
+Librarr began as a fork of the original Librarr project. Librarr 2.0 is
+independently maintained, with its own architecture, product goals, release
+process, and roadmap while preserving original licensing and attribution.
 
 The project should feel familiar to Sonarr, Radarr, and other *arr users:
 
