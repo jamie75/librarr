@@ -20,11 +20,12 @@ const (
 )
 
 type ImportRequest struct {
-	Source       library.ImportSource
-	RootPath     string
-	OriginalPath string
-	TitleHint    string
-	AuthorHint   string
+	Source           library.ImportSource
+	RootPath         string
+	OriginalPath     string
+	TitleHint        string
+	AuthorHint       string
+	MetadataOverride CandidateMetadata
 }
 
 type EngineResult struct {
@@ -141,11 +142,12 @@ func (e *NormalizedImportEngine) Import(ctx context.Context, request ImportReque
 		return nil, fmt.Errorf("planner and executor are required")
 	}
 	planned, err := e.planner.Plan(ctx, PlanningContext{
-		Source:       request.Source,
-		RootPath:     request.RootPath,
-		OriginalPath: request.OriginalPath,
-		TitleHint:    request.TitleHint,
-		AuthorHint:   request.AuthorHint,
+		Source:           request.Source,
+		RootPath:         request.RootPath,
+		OriginalPath:     request.OriginalPath,
+		TitleHint:        request.TitleHint,
+		AuthorHint:       request.AuthorHint,
+		MetadataOverride: request.MetadataOverride,
 	})
 	if err != nil {
 		return nil, err

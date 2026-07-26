@@ -41,6 +41,7 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 		}
 		candidate.TitleHint = pc.TitleHint
 		candidate.AuthorHint = pc.AuthorHint
+		candidate.MetadataOverride = pc.MetadataOverride
 		return []ImportCandidate{candidate}, nil
 	}
 
@@ -54,6 +55,7 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 		}
 		candidate.TitleHint = pc.TitleHint
 		candidate.AuthorHint = pc.AuthorHint
+		candidate.MetadataOverride = pc.MetadataOverride
 		return []ImportCandidate{candidate}, nil
 	}
 
@@ -78,6 +80,7 @@ func discoverCandidates(ctx context.Context, pc PlanningContext) ([]ImportCandid
 		}
 		candidate.TitleHint = pc.TitleHint
 		candidate.AuthorHint = pc.AuthorHint
+		candidate.MetadataOverride = pc.MetadataOverride
 		candidates = append(candidates, candidate)
 		return nil
 	})

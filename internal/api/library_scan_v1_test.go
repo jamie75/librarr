@@ -250,6 +250,112 @@ func TestV1LibraryScanResolveManualReviewCandidate(t *testing.T) {
 	}
 }
 
+func TestV1LibraryScanResolveMetadataEditorFields(t *testing.T) {
+	s, cleanup := newLibraryScanAPIServer(t)
+	defer cleanup()
+	scanJobID := startCompletedAPIScan(t, s, []string{"Review.epub"})
+	result := getAPIScanResult(t, s, scanJobID)
+	candidateID := result.Candidates[0].ID
+	s.libraryScanner.UpdateCandidates(scanJobID, []libraryscanner.CandidateUpdate{{
+		ID:                   candidateID,
+		Classification:       libraryscanner.ClassificationManualReview,
+		ClassificationReason: "Needs metadata review",
+	}})
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":               candidateID,
+		"action":           "edit_metadata",
+		"title":            "The Guardian's Path",
+		"subtitle":         "A Prince of Persia Novel",
+		"author":           "Carla Jablonski",
+		"series":           "Prince of Persia",
+		"series_number":    "1",
+		"publisher":        "Disney",
+		"publication_year": "2004",
+		"isbn":             "978-1234567890",
+		"language":         "en",
+		"description":      "Adventure novel",
+		"tags":             []string{"fantasy", "tie-in"},
+		"library":          "ebook",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan/"+scanJobID+"/resolve", bytes.NewReader(body))
+	req.SetPathValue("job_id", scanJobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resolved libraryscanner.Result
+	if err := json.Unmarshal(rr.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	got := resolved.Candidates[0]
+	if got.Classification != libraryscanner.ClassificationNew || got.Metadata.Source != "manual_edit" || got.Metadata.Confidence != library.ConfidenceHigh {
+		t.Fatalf("resolved candidate = %+v", got)
+	}
+	if got.Title != "The Guardian's Path" || got.Author != "Carla Jablonski" || got.Metadata.Subtitle != "A Prince of Persia Novel" ||
+		got.Metadata.Series != "Prince of Persia" || got.Metadata.SeriesNumber != "1" || got.Metadata.Publisher != "Disney" ||
+		got.Metadata.PublicationYear != "2004" || got.Metadata.ISBN != "9781234567890" || got.Metadata.Language != "en" ||
+		got.Metadata.Description != "Adventure novel" || got.Metadata.Library != "ebook" || len(got.Metadata.Tags) != 2 {
+		t.Fatalf("metadata = %+v", got.Metadata)
+	}
+	if !strings.Contains(got.DestinationPath, "Carla Jablonski - The Guardian's Path.epub") {
+		t.Fatalf("destination = %q", got.DestinationPath)
+	}
+}
+
+func TestV1LibraryImportUsesEditedMetadataOverride(t *testing.T) {
+	engine := &sequenceImportEngine{results: []*libraryimport.EngineResult{{InsertedCount: 1}}}
+	s, cleanup := newLibraryScanAPIServerWithEngine(t, engine)
+	defer cleanup()
+	scanJobID := startCompletedAPIScan(t, s, []string{"Review.epub"})
+	result := getAPIScanResult(t, s, scanJobID)
+	candidateID := result.Candidates[0].ID
+	s.libraryScanner.UpdateCandidates(scanJobID, []libraryscanner.CandidateUpdate{{
+		ID:             candidateID,
+		Classification: libraryscanner.ClassificationManualReview,
+	}})
+	resolvePayload, _ := json.Marshal(map[string]interface{}{
+		"id":               candidateID,
+		"action":           "edit_metadata",
+		"title":            "The Guardian's Path",
+		"author":           "Carla Jablonski",
+		"publisher":        "Disney",
+		"publication_year": "2004",
+		"isbn":             "9781234567890",
+		"language":         "en",
+		"tags":             []string{"fantasy"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan/"+scanJobID+"/resolve", bytes.NewReader(resolvePayload))
+	req.SetPathValue("job_id", scanJobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	importJobID := startAPILibraryImport(t, s, map[string]interface{}{
+		"scan_job_id":   scanJobID,
+		"candidate_ids": []string{candidateID},
+	})
+	waitAPIImportJob(t, s, importJobID)
+	if len(engine.requests) != 1 {
+		t.Fatalf("requests = %d", len(engine.requests))
+	}
+	request := engine.requests[0]
+	if request.TitleHint != "The Guardian's Path" || request.AuthorHint != "Carla Jablonski" {
+		t.Fatalf("hints = %q / %q", request.TitleHint, request.AuthorHint)
+	}
+	if request.MetadataOverride.SelectedTitle != "The Guardian's Path" || request.MetadataOverride.SelectedAuthor != "Carla Jablonski" ||
+		request.MetadataOverride.Publisher != "Disney" || request.MetadataOverride.PublicationYear != "2004" ||
+		request.MetadataOverride.ISBN != "9781234567890" || request.MetadataOverride.Language != "en" ||
+		len(request.MetadataOverride.Tags) != 1 {
+		t.Fatalf("override = %+v", request.MetadataOverride)
+	}
+}
+
 func TestV1LibraryImportPartialFailureContinues(t *testing.T) {
 	engine := &sequenceImportEngine{
 		results: []*libraryimport.EngineResult{{InsertedCount: 1}},

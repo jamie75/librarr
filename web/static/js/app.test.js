@@ -85,6 +85,21 @@ const functionBundle = [
   extractFunctionSource('renderLibraryScanDestination'),
   extractFunctionSource('renderLibraryScanDuplicate'),
   extractFunctionSource('renderLibraryScanManualReview'),
+  extractFunctionSource('renderLibraryScanMetadataEditor'),
+  extractFunctionSource('findLibraryScanCandidate'),
+  extractFunctionSource('metadataEditorDraftFromCandidate'),
+  extractFunctionSource('openMetadataEditor'),
+  extractFunctionSource('closeMetadataEditor'),
+  extractFunctionSource('resetMetadataEditor'),
+  extractFunctionSource('updateMetadataEditorDraft'),
+  extractFunctionSource('updateMetadataEditorPreview'),
+  extractFunctionSource('metadataEditorPreview'),
+  extractFunctionSource('validateMetadataEditorDraft'),
+  extractFunctionSource('metadataEditorPayload'),
+  extractFunctionSource('saveMetadataEditor'),
+  extractFunctionSource('pathExtension'),
+  extractFunctionSource('pathDirname'),
+  extractFunctionSource('safeFilenamePart'),
   extractFunctionSource('formatMetadataSource'),
   extractFunctionSource('formatMetadataConfidence'),
   extractFunctionSource('filterLibraryScanCandidates'),
@@ -100,7 +115,6 @@ const functionBundle = [
   extractFunctionSource('pollLibraryImportJob'),
   extractFunctionSource('loadLibraryImportResults'),
   extractFunctionSource('resolveLibraryScanCandidate'),
-  extractFunctionSource('editLibraryScanCandidateMetadata'),
   extractFunctionSource('retryFailedLibraryImport'),
   extractFunctionSource('refreshLibraryAfterScanImport'),
   extractFunctionSource('diagnosticPayload'),
@@ -132,6 +146,11 @@ function libraryImportState(overrides = {}) {
       search: '',
       selected: new Set(),
       skipped: new Set(),
+      editor: {
+        candidateId: '',
+        draft: null,
+        errors: [],
+      },
       import: {
         running: false,
         jobId: '',
@@ -963,6 +982,131 @@ test('manual review use suggested resolves candidate through scan endpoint', asy
   assert.match(calls[0].body, /"action":"use_suggested"/);
   assert.equal(context.state.libraryImport.scan.result.totals.ready_to_import, 1);
   assert.equal(context.state.libraryImport.scan.selected.has('review-1'), true);
+});
+
+test('metadata editor renders live preview and validation for manual review items', () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = manualReviewScanResult();
+  scanState.editor = {
+    candidateId: 'review-1',
+    draft: {
+      title: 'The Guardian’s Path',
+      subtitle: '',
+      author: 'Carla Jablonski',
+      series: 'Prince of Persia',
+      series_number: '1',
+      publisher: 'Disney',
+      publication_year: '2004',
+      isbn: '978-1234567890',
+      language: 'en',
+      description: 'Adventure novel',
+      tags: 'fantasy, tie-in',
+      library: 'ebook',
+    },
+    errors: [],
+  };
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+  });
+
+  const html = context.renderLibraryScanReview(manualReviewScanResult());
+
+  assert.match(html, /Metadata Editor/);
+  assert.match(html, /Destination Folder/);
+  assert.match(html, /Filename/);
+  assert.match(html, /Import Location/);
+  assert.match(html, /Carla Jablonski - The Guardian’s Path\.mobi/);
+  assert.match(html, /Save & Import/);
+});
+
+test('metadata editor validation blocks missing title, bad year, bad ISBN, and duplicate filename', () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = {
+    ...manualReviewScanResult(),
+    candidates: [
+      manualReviewScanResult().candidates[0],
+      {
+        ...sampleScanResult().candidates[0],
+        id: 'ready-2',
+        classification: 'new',
+        destination_path: '/books/ebooks/Disney Book Group/Carla Jablonski - Existing.mobi',
+      },
+    ],
+  };
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+  });
+  const candidate = scanState.result.candidates[0];
+
+  const errors = context.validateMetadataEditorDraft(candidate, {
+    title: '',
+    author: '',
+    publication_year: '20x4',
+    isbn: 'abc',
+  });
+
+  assert(errors.some(error => /Title is required/.test(error)));
+  assert(errors.some(error => /Author is required/.test(error)));
+  assert(errors.some(error => /four-digit year/.test(error)));
+  assert(errors.some(error => /ISBN/.test(error)));
+
+  const duplicateErrors = context.validateMetadataEditorDraft(candidate, {
+    title: 'Existing',
+    author: 'Carla Jablonski',
+  });
+  assert(duplicateErrors.some(error => /destination filename/.test(error)));
+});
+
+test('metadata editor save posts edited fields and save import starts a single import', async () => {
+  const scanState = libraryImportState().scan;
+  scanState.result = manualReviewScanResult();
+  scanState.editor = {
+    candidateId: 'review-1',
+    draft: {
+      title: 'The Guardian’s Path',
+      author: 'Carla Jablonski',
+      publication_year: '2004',
+      isbn: '9781234567890',
+      tags: 'fantasy, tie-in',
+      library: 'ebook',
+    },
+    errors: [],
+  };
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
+    document: { getElementById: () => ({ innerHTML: '', scrollIntoView: () => {} }), querySelector: () => null },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body || '' });
+      if (url === '/api/v1/library/scan/job-1/resolve') {
+        return {
+          ...manualReviewScanResult(),
+          totals: { found: 1, ready_to_import: 1, manual_review: 0 },
+          candidates: [{
+            ...manualReviewScanResult().candidates[0],
+            classification: 'new',
+            title: 'The Guardian’s Path',
+            author: 'Carla Jablonski',
+            metadata: { title: 'The Guardian’s Path', author: 'Carla Jablonski', source: 'manual_edit', confidence: 'high' },
+            manual_review: null,
+          }],
+        };
+      }
+      if (url === '/api/v1/library/import') return { job_id: 'imp-1', job: { progress: { status: 'importing', total: 1, started_at: '2026-01-01T00:00:00Z' } } };
+      if (url === '/api/v1/library/import/imp-1') return { id: 'imp-1', status: 'completed', progress: { status: 'completed', total: 1, imported: 1 } };
+      if (url === '/api/v1/library/import/imp-1/results') return { job_id: 'imp-1', scan_job_id: 'job-1', summary: { imported: 1, duplicates: 0, failed: 0 }, items: [] };
+      if (url === '/api/v1/library/scan/job-1/results') return importedScanResult();
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+
+  await context.saveMetadataEditor(true);
+
+  assert.match(calls[0].body, /"title":"The Guardian’s Path"/);
+  assert.match(calls[0].body, /"publication_year":"2004"/);
+  assert.match(calls[0].body, /"tags":\["fantasy","tie-in"\]/);
+  assert.equal(calls[1].url, '/api/v1/library/import');
+  assert.match(calls[1].body, /"candidate_ids":\["review-1"\]/);
 });
 
 test('retry failed import posts only failed ready candidates', async () => {

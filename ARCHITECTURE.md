@@ -340,6 +340,9 @@ Completed download, manual import, or library scan review
       ▼                ▼
  ready to import   manual review/conflict
       │                │
+      │          metadata editor
+      │      (manual fields + live preview)
+      │                │
       └───────┬────────┘
               ▼
       explicit user import
@@ -354,8 +357,14 @@ Completed download, manual import, or library scan review
  metadata/cover enrichment
               │
               ▼
- history, notifications, integrations
+history, notifications, integrations
 ```
+
+The metadata editor is part of the scan review flow rather than a separate
+pipeline. It stores user edits on the scan candidate, sends them as explicit
+manual metadata overrides when import starts, and never modifies the source
+file. The first implementation is offline-only: no internet metadata provider
+or cover lookup is called from the editor.
 
 ### Import guarantees
 

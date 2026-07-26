@@ -601,6 +601,11 @@ const state = {
       search: '',
       selected: new Set(),
       skipped: new Set(),
+      editor: {
+        candidateId: '',
+        draft: null,
+        errors: [],
+      },
       import: {
         running: false,
         jobId: '',
@@ -3227,6 +3232,8 @@ function renderLibraryScanCandidate(candidate) {
         ${candidate.destination_path ? renderLibraryScanDestination(candidate.destination_path) : ''}
         ${candidate.duplicate ? renderLibraryScanDuplicate(candidate.duplicate) : ''}
         ${candidate.manual_review ? renderLibraryScanManualReview(candidate, title, author) : ''}
+        ${isReady ? `<div class="mt-3"><button data-action="editLibraryScanCandidateMetadata" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Edit Metadata</button></div>` : ''}
+        ${state.libraryImport.scan.editor.candidateId === candidate.id ? renderLibraryScanMetadataEditor(candidate) : ''}
         ${existingPath ? `<p class="mt-2 truncate text-xs text-slate-400" title="${escapeHtml(existingPath)}">Existing: ${escapeHtml(existingPath)}</p>` : ''}
         <p class="mt-2 truncate text-xs text-slate-500" title="${escapeHtml(path)}">${escapeHtml(path)}</p>
       </div>
@@ -3281,11 +3288,252 @@ function renderLibraryScanManualReview(candidate, title, author) {
       </dl>
       <div class="mt-3 flex flex-wrap gap-2">
         <button data-action="useSuggestedLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-orange-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-orange-400">Use Suggested</button>
-        <button data-action="editLibraryScanCandidateMetadata" data-candidate-id="${escapeHtml(candidate.id)}" data-title="${escapeHtml(title)}" data-author="${escapeHtml(author)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Edit Metadata</button>
+        <button data-action="editLibraryScanCandidateMetadata" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Edit Metadata</button>
         <button data-action="skipLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Skip</button>
       </div>
     </div>
   `;
+}
+
+function renderLibraryScanMetadataEditor(candidate) {
+  const draft = state.libraryImport.scan.editor.draft || metadataEditorDraftFromCandidate(candidate);
+  const preview = metadataEditorPreview(candidate, draft);
+  const errors = validateMetadataEditorDraft(candidate, draft);
+  state.libraryImport.scan.editor.errors = errors;
+  const field = (name, label, value, attrs = '') => `
+    <label class="block">
+      <span class="text-[11px] uppercase tracking-wider text-slate-500">${escapeHtml(label)}</span>
+      <input data-action-input="metadataEditorField" data-field="${escapeHtml(name)}" value="${escapeHtml(value || '')}" ${attrs} class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:border-amber-400 focus:outline-none">
+    </label>
+  `;
+  return `
+    <div id="metadata-editor-${escapeHtml(candidate.id)}" class="mt-3 rounded-xl border border-amber-500/25 bg-slate-950/80 p-4 shadow-xl shadow-black/20">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-white">Metadata Editor</p>
+          <p class="mt-1 text-xs text-slate-400">Adjust the metadata Librarr will use for this import. The source file is not modified.</p>
+        </div>
+        <button data-action="cancelMetadataEditor" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700">Cancel</button>
+      </div>
+      <div class="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div class="space-y-4">
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="md:col-span-2">${field('title', 'Title', draft.title, 'required')}</div>
+            ${field('subtitle', 'Subtitle', draft.subtitle)}
+            ${field('author', 'Author', draft.author, 'required')}
+            ${field('series', 'Series', draft.series)}
+            ${field('series_number', 'Series Number', draft.series_number)}
+            ${field('publisher', 'Publisher', draft.publisher)}
+            ${field('publication_year', 'Publication Year', draft.publication_year, 'inputmode="numeric" maxlength="4"')}
+            ${field('isbn', 'ISBN', draft.isbn)}
+            ${field('language', 'Language', draft.language)}
+            ${field('library', 'Library', draft.library)}
+          </div>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-slate-500">Description</span>
+            <textarea data-action-input="metadataEditorField" data-field="description" rows="4" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:border-amber-400 focus:outline-none">${escapeHtml(draft.description || '')}</textarea>
+          </label>
+          ${field('tags', 'Tags', draft.tags, 'placeholder="fantasy, fiction, owned"')}
+        </div>
+        <div class="space-y-3">
+          <div class="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+            <p class="text-xs font-semibold text-slate-100">Live Import Preview</p>
+            <dl class="mt-3 space-y-2 text-xs">
+              <div><dt class="text-slate-500">Destination Folder</dt><dd id="metadata-editor-destination-folder" class="break-all text-slate-200">${escapeHtml(preview.folder)}</dd></div>
+              <div><dt class="text-slate-500">Filename</dt><dd id="metadata-editor-filename" class="break-all text-slate-200">${escapeHtml(preview.filename)}</dd></div>
+              <div><dt class="text-slate-500">Import Location</dt><dd id="metadata-editor-import-location" class="break-all text-amber-100">${escapeHtml(preview.path)}</dd></div>
+            </dl>
+          </div>
+          <div id="metadata-editor-validation" class="${errors.length ? '' : 'hidden'} rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-100">
+            ${errors.map(error => `<p>${escapeHtml(error)}</p>`).join('')}
+          </div>
+          <div class="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-400">
+            <p>Metadata Source: ${escapeHtml(formatMetadataSource(candidate.metadata?.source || candidate.manual_review?.metadata_source || 'filename_fallback'))}</p>
+            <p class="mt-1">Confidence: ${escapeHtml(formatMetadataConfidence(candidate.metadata?.confidence || candidate.manual_review?.confidence || 'unknown'))}</p>
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button data-action="saveMetadataEditor" ${errors.length ? 'disabled' : ''} class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">Save</button>
+        <button data-action="saveAndImportMetadataEditor" ${errors.length ? 'disabled' : ''} class="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-stone-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">Save & Import</button>
+        <button data-action="resetMetadataEditor" class="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700">Reset</button>
+      </div>
+    </div>
+  `;
+}
+
+function findLibraryScanCandidate(candidateID) {
+  return (state.libraryImport.scan.result?.candidates || []).find(candidate => candidate.id === candidateID) || null;
+}
+
+function metadataEditorDraftFromCandidate(candidate) {
+  const metadata = candidate?.metadata || {};
+  return {
+    title: candidate?.title || metadata.title || candidate?.filename || '',
+    subtitle: metadata.subtitle || '',
+    author: candidate?.author || metadata.author || '',
+    series: candidate?.series || metadata.series || '',
+    series_number: metadata.series_number || candidate?.volume || metadata.volume || '',
+    publisher: metadata.publisher || '',
+    publication_year: metadata.publication_year || '',
+    isbn: metadata.isbn || '',
+    language: metadata.language || '',
+    description: metadata.description || '',
+    tags: Array.isArray(metadata.tags) ? metadata.tags.join(', ') : (metadata.tags || ''),
+    library: metadata.library || candidate?.media_type || '',
+  };
+}
+
+function openMetadataEditor(candidateID) {
+  const candidate = findLibraryScanCandidate(candidateID);
+  if (!candidate) return;
+  state.libraryImport.scan.editor = {
+    candidateId: candidateID,
+    draft: metadataEditorDraftFromCandidate(candidate),
+    errors: [],
+  };
+  renderLibraryScanWorkspace();
+  document.getElementById(`metadata-editor-${candidateID}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function closeMetadataEditor() {
+  state.libraryImport.scan.editor = { candidateId: '', draft: null, errors: [] };
+  renderLibraryScanWorkspace();
+}
+
+function resetMetadataEditor() {
+  const candidate = findLibraryScanCandidate(state.libraryImport.scan.editor.candidateId);
+  if (!candidate) return;
+  state.libraryImport.scan.editor.draft = metadataEditorDraftFromCandidate(candidate);
+  renderLibraryScanWorkspace();
+}
+
+function updateMetadataEditorDraft(field, value) {
+  const editor = state.libraryImport.scan.editor;
+  if (!editor.candidateId) return;
+  editor.draft = editor.draft || {};
+  editor.draft[field] = value;
+  updateMetadataEditorPreview();
+}
+
+function updateMetadataEditorPreview() {
+  const editor = state.libraryImport.scan.editor;
+  const candidate = findLibraryScanCandidate(editor.candidateId);
+  if (!candidate || !editor.draft) return;
+  const preview = metadataEditorPreview(candidate, editor.draft);
+  const errors = validateMetadataEditorDraft(candidate, editor.draft);
+  editor.errors = errors;
+  const folderEl = document.getElementById('metadata-editor-destination-folder');
+  const fileEl = document.getElementById('metadata-editor-filename');
+  const pathEl = document.getElementById('metadata-editor-import-location');
+  const validationEl = document.getElementById('metadata-editor-validation');
+  if (folderEl) folderEl.textContent = preview.folder;
+  if (fileEl) fileEl.textContent = preview.filename;
+  if (pathEl) pathEl.textContent = preview.path;
+  if (validationEl) {
+    validationEl.classList.toggle('hidden', errors.length === 0);
+    validationEl.innerHTML = errors.map(error => `<p>${escapeHtml(error)}</p>`).join('');
+  }
+  for (const action of ['saveMetadataEditor', 'saveAndImportMetadataEditor']) {
+    const button = document.querySelector(`[data-action="${action}"]`);
+    if (button) button.disabled = errors.length > 0;
+  }
+}
+
+function metadataEditorPreview(candidate, draft) {
+  const base = candidate.destination_path || candidate.path || candidate.filename || '';
+  const folder = pathDirname(base) || pathDirname(candidate.path || '') || '';
+  const extension = (candidate.format || pathExtension(candidate.path || candidate.filename || '') || 'book').replace(/^\./, '').toLowerCase();
+  const title = safeFilenamePart(draft.title || candidate.title || candidate.filename || 'Untitled');
+  const author = safeFilenamePart(draft.author || candidate.author || '');
+  const filename = `${author ? `${author} - ` : ''}${title}.${extension}`;
+  return {
+    folder,
+    filename,
+    path: folder ? `${folder.replace(/\/+$/, '')}/${filename}` : filename,
+  };
+}
+
+function validateMetadataEditorDraft(candidate, draft) {
+  const errors = [];
+  if (!String(draft.title || '').trim()) errors.push('Title is required.');
+  if (!String(draft.author || '').trim()) errors.push('Author is required.');
+  const year = String(draft.publication_year || '').trim();
+  if (year && !/^\d{4}$/.test(year)) errors.push('Publication year must be a four-digit year.');
+  const isbn = String(draft.isbn || '').trim();
+  if (isbn) {
+    const normalized = isbn.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[0-9X]+$/.test(normalized) || ![10, 13].includes(normalized.length)) {
+      errors.push('ISBN must look like ISBN-10 or ISBN-13.');
+    }
+  }
+  const preview = metadataEditorPreview(candidate, draft);
+  if (!preview.folder || !preview.filename || !preview.path) errors.push('Destination preview is empty.');
+  const duplicate = (state.libraryImport.scan.result?.candidates || []).some(other => (
+    other.id !== candidate.id &&
+    other.classification === 'new' &&
+    String(other.destination_path || '').toLowerCase() === preview.path.toLowerCase()
+  ));
+  if (duplicate) errors.push('Another ready item already uses this destination filename.');
+  return errors;
+}
+
+function metadataEditorPayload() {
+  const editor = state.libraryImport.scan.editor;
+  const draft = editor.draft || {};
+  return {
+    title: String(draft.title || '').trim(),
+    subtitle: String(draft.subtitle || '').trim(),
+    author: String(draft.author || '').trim(),
+    series: String(draft.series || '').trim(),
+    series_number: String(draft.series_number || '').trim(),
+    publisher: String(draft.publisher || '').trim(),
+    publication_year: String(draft.publication_year || '').trim(),
+    isbn: String(draft.isbn || '').trim(),
+    language: String(draft.language || '').trim(),
+    description: String(draft.description || '').trim(),
+    tags: String(draft.tags || '').split(',').map(tag => tag.trim()).filter(Boolean),
+    library: String(draft.library || '').trim(),
+  };
+}
+
+async function saveMetadataEditor(importAfterSave = false) {
+  const editor = state.libraryImport.scan.editor;
+  const candidate = findLibraryScanCandidate(editor.candidateId);
+  if (!candidate) return;
+  const errors = validateMetadataEditorDraft(candidate, editor.draft || {});
+  if (errors.length) {
+    editor.errors = errors;
+    updateMetadataEditorPreview();
+    showToast(errors[0], 'error');
+    return;
+  }
+  const result = await resolveLibraryScanCandidate(editor.candidateId, 'edit_metadata', metadataEditorPayload(), { keepEditorOpen: false });
+  const updated = result?.candidates?.find(item => item.id === editor.candidateId);
+  if (importAfterSave && updated) {
+    await startLibraryImport(false, [updated]);
+  }
+}
+
+function pathExtension(path) {
+  const name = String(path || '').split('/').pop() || '';
+  const idx = name.lastIndexOf('.');
+  return idx >= 0 ? name.slice(idx + 1) : '';
+}
+
+function pathDirname(path) {
+  const clean = String(path || '').replace(/\/+$/, '');
+  const idx = clean.lastIndexOf('/');
+  if (idx <= 0) return idx === 0 ? '/' : '';
+  return clean.slice(0, idx);
+}
+
+function safeFilenamePart(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[\\/:]/g, ' -')
+    .replace(/\s+/g, ' ')
+    .replace(/^[. ]+|[. ]+$/g, '') || 'Untitled';
 }
 
 function formatMetadataSource(source) {
@@ -3365,6 +3613,7 @@ async function startLibraryScan() {
   scan.error = '';
   scan.selected.clear();
   scan.skipped.clear();
+  scan.editor = { candidateId: '', draft: null, errors: [] };
   scan.import = {
     running: false,
     jobId: '',
@@ -3525,7 +3774,7 @@ async function loadLibraryImportResults(jobId) {
   showToast('Library import complete', (result.summary?.failed || 0) > 0 ? 'error' : 'success');
 }
 
-async function resolveLibraryScanCandidate(candidateID, action, values = {}) {
+async function resolveLibraryScanCandidate(candidateID, action, values = {}, options = {}) {
   const scan = state.libraryImport.scan;
   if (!scan.result || !candidateID) return;
   try {
@@ -3535,29 +3784,31 @@ async function resolveLibraryScanCandidate(candidateID, action, values = {}) {
         id: candidateID,
         action,
         title: values.title || '',
+        subtitle: values.subtitle || '',
         author: values.author || '',
+        series: values.series || '',
+        series_number: values.series_number || '',
+        publisher: values.publisher || '',
+        publication_year: values.publication_year || '',
+        isbn: values.isbn || '',
+        language: values.language || '',
+        description: values.description || '',
+        tags: values.tags || [],
+        library: values.library || '',
       }),
     });
     scan.result = result;
     scan.selected.add(candidateID);
+    if (!options.keepEditorOpen) {
+      scan.editor = { candidateId: '', draft: null, errors: [] };
+    }
     renderLibraryScanWorkspace();
     showToast(action === 'edit_metadata' ? 'Metadata updated for import' : 'Candidate ready to import', 'success');
+    return result;
   } catch (err) {
     showToast(err.message || 'Could not resolve review item', 'error');
+    return null;
   }
-}
-
-function editLibraryScanCandidateMetadata(candidateID, currentTitle, currentAuthor) {
-  const promptFn = window.prompt;
-  if (typeof promptFn !== 'function') {
-    showToast('Metadata editing is unavailable in this browser', 'error');
-    return;
-  }
-  const title = promptFn.call(window, 'Book title', currentTitle || '');
-  if (title === null) return;
-  const author = promptFn.call(window, 'Author', currentAuthor || '');
-  if (author === null) return;
-  resolveLibraryScanCandidate(candidateID, 'edit_metadata', { title, author });
 }
 
 function retryFailedLibraryImport() {
@@ -4406,7 +4657,11 @@ const CLICK_ACTIONS = {
     renderLibraryScanWorkspace();
   },
   useSuggestedLibraryScanCandidate: el => resolveLibraryScanCandidate(el.dataset.candidateId, 'use_suggested'),
-  editLibraryScanCandidateMetadata: el => editLibraryScanCandidateMetadata(el.dataset.candidateId, el.dataset.title, el.dataset.author),
+  editLibraryScanCandidateMetadata: el => openMetadataEditor(el.dataset.candidateId),
+  saveMetadataEditor: () => saveMetadataEditor(false),
+  saveAndImportMetadataEditor: () => saveMetadataEditor(true),
+  cancelMetadataEditor: () => closeMetadataEditor(),
+  resetMetadataEditor: () => resetMetadataEditor(),
   skipLibraryScanCandidate: el => {
     const id = el.dataset.candidateId;
     if (!id) return;
@@ -4523,6 +4778,8 @@ document.addEventListener('input', e => {
     state.libraryImport.scan.search = el.value || '';
     renderLibraryScanWorkspace();
     document.getElementById('settings-library-scan-search')?.focus();
+  } else if (el.dataset.actionInput === 'metadataEditorField') {
+    updateMetadataEditorDraft(el.dataset.field, el.value || '');
   }
 });
 

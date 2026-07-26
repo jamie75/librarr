@@ -388,8 +388,8 @@
     },
     "/api/v1/library/scan/{job_id}/resolve": {
       "post": {
-        "summary": "Resolve a manual-review scan candidate in memory",
-        "description": "Marks a manual_review candidate in a completed scan result as ready_to_import using suggested or manually edited metadata. This does not write library data.",
+        "summary": "Resolve or edit a scan review candidate in memory",
+        "description": "Marks a manual_review candidate as ready_to_import using suggested metadata, or applies manually edited metadata to a manual_review or ready candidate before import. This does not write library data.",
         "parameters": [{"name": "job_id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "requestBody": {
           "required": true,
@@ -397,7 +397,17 @@
             "id": {"type": "string"},
             "action": {"type": "string", "enum": ["use_suggested", "edit_metadata"]},
             "title": {"type": "string"},
-            "author": {"type": "string"}
+            "subtitle": {"type": "string"},
+            "author": {"type": "string"},
+            "series": {"type": "string"},
+            "series_number": {"type": "string"},
+            "publisher": {"type": "string"},
+            "publication_year": {"type": "string"},
+            "isbn": {"type": "string"},
+            "language": {"type": "string"},
+            "description": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "library": {"type": "string"}
           }, "required": ["id", "action"]}}}
         },
         "responses": {

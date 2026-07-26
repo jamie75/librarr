@@ -82,6 +82,7 @@ The scanner currently supports:
 - progress tracking
 - background scan jobs
 - review payload generation
+- inline metadata editing before import
 
 Supported formats:
 
@@ -112,6 +113,14 @@ Treat those numbers as an example, not a benchmark or guarantee.
 Import is always explicit. Librarr does not automatically import after a scan.
 
 The review UI supports:
+
+- metadata editor for manual-review and ready candidates
+- live destination folder, filename, and import-location preview
+- validation for missing title/author, invalid year/ISBN, empty destinations, and duplicate filenames
+- Save, Save & Import, Reset, and Cancel actions
+
+The editor uses metadata already discovered during the scan. It does not perform
+internet metadata lookup or cover lookup yet.
 
 - progress
 - summary cards
@@ -145,7 +154,7 @@ Current manual-review limitations:
 
 - no internet metadata lookup
 - no cover downloading
-- no full metadata editor
+- no provider-backed match search
 
 ### Search and downloads
 
@@ -232,6 +241,7 @@ focused on a practical personal-library experience:
 - ✅ Review UI
 - ✅ Explicit Import from Review
 - ✅ Manual Review Improvements
+- ✅ Metadata Editor
 - ✅ Connection Diagnostics for Prowlarr and qBittorrent
 - ⬜ Metadata Provider Integration
 - ⬜ Cover Improvements
@@ -514,7 +524,7 @@ Prefer Librarr 2.0 endpoints for new integrations.
 | POST | `/api/v1/library/scan` | Start a scan job |
 | GET | `/api/v1/library/scan/{id}` | Scan job progress |
 | GET | `/api/v1/library/scan/{id}/results` | Completed review payload |
-| POST | `/api/v1/library/scan/{id}/resolve` | Resolve a manual-review candidate |
+| POST | `/api/v1/library/scan/{id}/resolve` | Resolve or edit a review candidate before import |
 | POST | `/api/v1/library/import` | Start explicit import from scan results |
 | GET | `/api/v1/library/import/{id}` | Import job progress |
 | GET | `/api/v1/library/import/{id}/results` | Import completion results |

@@ -8,12 +8,13 @@ import (
 )
 
 type PlanningContext struct {
-	Source   library.ImportSource `json:"source"`
-	RootPath string               `json:"root_path"`
-	OriginalPath string           `json:"original_path,omitempty"`
-	TitleHint string              `json:"title_hint,omitempty"`
-	AuthorHint string             `json:"author_hint,omitempty"`
-	Now      time.Time            `json:"now,omitempty"`
+	Source           library.ImportSource `json:"source"`
+	RootPath         string               `json:"root_path"`
+	OriginalPath     string               `json:"original_path,omitempty"`
+	TitleHint        string               `json:"title_hint,omitempty"`
+	AuthorHint       string               `json:"author_hint,omitempty"`
+	MetadataOverride CandidateMetadata    `json:"metadata_override,omitempty"`
+	Now              time.Time            `json:"now,omitempty"`
 }
 
 type PlanningEvidence struct {
@@ -25,29 +26,39 @@ type PlanningEvidence struct {
 }
 
 type CandidateMetadata struct {
-	EmbeddedTitle  string               `json:"embedded_title,omitempty"`
-	EmbeddedAuthor string               `json:"embedded_author,omitempty"`
-	FilenameTitle  string               `json:"filename_title,omitempty"`
-	FilenameAuthor string               `json:"filename_author,omitempty"`
-	SelectedTitle  string               `json:"selected_title,omitempty"`
-	SelectedAuthor string               `json:"selected_author,omitempty"`
-	Language       string               `json:"language,omitempty"`
-	Identifiers    []library.Identifier `json:"identifiers,omitempty"`
+	EmbeddedTitle   string               `json:"embedded_title,omitempty"`
+	EmbeddedAuthor  string               `json:"embedded_author,omitempty"`
+	FilenameTitle   string               `json:"filename_title,omitempty"`
+	FilenameAuthor  string               `json:"filename_author,omitempty"`
+	SelectedTitle   string               `json:"selected_title,omitempty"`
+	SelectedAuthor  string               `json:"selected_author,omitempty"`
+	Subtitle        string               `json:"subtitle,omitempty"`
+	Series          string               `json:"series,omitempty"`
+	SeriesNumber    string               `json:"series_number,omitempty"`
+	Publisher       string               `json:"publisher,omitempty"`
+	PublicationYear string               `json:"publication_year,omitempty"`
+	ISBN            string               `json:"isbn,omitempty"`
+	Language        string               `json:"language,omitempty"`
+	Description     string               `json:"description,omitempty"`
+	Tags            []string             `json:"tags,omitempty"`
+	Library         string               `json:"library,omitempty"`
+	Identifiers     []library.Identifier `json:"identifiers,omitempty"`
 }
 
 type ImportCandidate struct {
-	Path         string             `json:"path"`
-	RelativePath string             `json:"relative_path"`
-	OriginalPath string             `json:"original_path,omitempty"`
-	TitleHint    string             `json:"title_hint,omitempty"`
-	AuthorHint   string             `json:"author_hint,omitempty"`
-	MediaType    library.MediaType  `json:"media_type"`
-	Format       string             `json:"format"`
-	Size         int64              `json:"size"`
-	ContentHash  string             `json:"content_hash,omitempty"`
-	IsDirectory  bool               `json:"is_directory,omitempty"`
-	Metadata     CandidateMetadata  `json:"metadata"`
-	Evidence     []PlanningEvidence `json:"evidence,omitempty"`
+	Path             string             `json:"path"`
+	RelativePath     string             `json:"relative_path"`
+	OriginalPath     string             `json:"original_path,omitempty"`
+	TitleHint        string             `json:"title_hint,omitempty"`
+	AuthorHint       string             `json:"author_hint,omitempty"`
+	MetadataOverride CandidateMetadata  `json:"metadata_override,omitempty"`
+	MediaType        library.MediaType  `json:"media_type"`
+	Format           string             `json:"format"`
+	Size             int64              `json:"size"`
+	ContentHash      string             `json:"content_hash,omitempty"`
+	IsDirectory      bool               `json:"is_directory,omitempty"`
+	Metadata         CandidateMetadata  `json:"metadata"`
+	Evidence         []PlanningEvidence `json:"evidence,omitempty"`
 }
 
 type BookAction string

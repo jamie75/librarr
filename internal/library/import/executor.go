@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -192,6 +193,7 @@ func (e *ImportExecutor) resolveBook(ctx context.Context, plan ImportPlan) (*lib
 			MediaType: plan.Candidate.MediaType,
 		}
 	}
+	applyCandidateBookMetadata(proposed, plan.Candidate)
 	if proposed.MediaType == "" {
 		proposed.MediaType = plan.Candidate.MediaType
 	}
@@ -226,6 +228,7 @@ func (e *ImportExecutor) resolveEdition(ctx context.Context, plan ImportPlan, bo
 	if proposed == nil {
 		proposed = &library.Edition{Title: title}
 	}
+	applyCandidateEditionMetadata(proposed, plan.Candidate)
 	proposed.BookID = book.ID
 	edition, err = e.writer.CreateEdition(ctx, *proposed)
 	if err != nil {
@@ -388,6 +391,17 @@ func (e *ImportExecutor) attachFile(ctx context.Context, plan ImportPlan, editio
 	if author := strings.TrimSpace(plan.Candidate.Metadata.SelectedAuthor); author != "" {
 		copy.EmbeddedMetadata["author"] = author
 	}
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "subtitle", plan.Candidate.Metadata.Subtitle)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "series", plan.Candidate.Metadata.Series)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "series_number", plan.Candidate.Metadata.SeriesNumber)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "publisher", plan.Candidate.Metadata.Publisher)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "publication_year", plan.Candidate.Metadata.PublicationYear)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "isbn", plan.Candidate.Metadata.ISBN)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "language", plan.Candidate.Metadata.Language)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "description", plan.Candidate.Metadata.Description)
+	if len(plan.Candidate.Metadata.Tags) > 0 {
+		addEmbeddedMetadata(copy.EmbeddedMetadata, "tags", strings.Join(plan.Candidate.Metadata.Tags, ", "))
+	}
 
 	attached, err := e.writer.AttachFile(ctx, copy)
 	if err != nil {
@@ -399,6 +413,69 @@ func (e *ImportExecutor) attachFile(ctx context.Context, plan ImportPlan, editio
 		}
 	}
 	return attached, nil
+}
+
+func applyCandidateBookMetadata(book *library.Book, candidate ImportCandidate) {
+	if book == nil {
+		return
+	}
+	if value := strings.TrimSpace(candidate.Metadata.SelectedTitle); value != "" {
+		book.Title = value
+		book.SortTitle = library.NormalizeKey(value)
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Description); value != "" {
+		book.Description = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Language); value != "" {
+		book.Language = value
+	}
+	if year := parsePublicationYear(candidate.Metadata.PublicationYear); year > 0 {
+		book.PublicationYear = year
+	}
+	if book.MediaType == "" {
+		book.MediaType = candidate.MediaType
+	}
+}
+
+func applyCandidateEditionMetadata(edition *library.Edition, candidate ImportCandidate) {
+	if edition == nil {
+		return
+	}
+	if value := strings.TrimSpace(candidate.Metadata.SelectedTitle); value != "" {
+		edition.Title = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Subtitle); value != "" {
+		edition.Subtitle = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Description); value != "" {
+		edition.Description = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Publisher); value != "" {
+		edition.Publisher = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.PublicationYear); value != "" {
+		edition.PublicationDate = value
+	}
+	if value := strings.TrimSpace(candidate.Metadata.Language); value != "" {
+		edition.Language = value
+	}
+}
+
+func parsePublicationYear(value string) int {
+	year, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || year < 1 {
+		return 0
+	}
+	return year
+}
+
+func addEmbeddedMetadata(metadata map[string]string, key, value string) {
+	if metadata == nil {
+		return
+	}
+	if value = strings.TrimSpace(value); value != "" {
+		metadata[key] = value
+	}
 }
 
 func exactBookMatch(ctx context.Context, writer RepositoryWriter, books []library.Book, title, author string, mediaType library.MediaType) *library.Book {

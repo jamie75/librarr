@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -159,8 +160,16 @@ func (m *Manager) ResolveCandidate(jobID string, resolution CandidateResolution)
 			continue
 		}
 		candidate := &job.Result.Candidates[i]
-		if candidate.Classification != ClassificationManualReview {
+		if action == "use_suggested" && candidate.Classification != ClassificationManualReview {
 			return nil, true, fmt.Errorf("candidate does not require manual review")
+		}
+		if action == "edit_metadata" && candidate.Classification != ClassificationManualReview && candidate.Classification != ClassificationNew {
+			return nil, true, fmt.Errorf("candidate cannot be edited")
+		}
+		if action == "edit_metadata" {
+			if err := validateResolution(resolution, job.Result.Candidates, id); err != nil {
+				return nil, true, err
+			}
 		}
 		title := firstNonBlank(resolution.Title, candidate.Title, candidate.Metadata.Title, candidate.Filename)
 		author := firstNonBlank(resolution.Author, candidate.Author, candidate.Metadata.Author)
@@ -169,9 +178,21 @@ func (m *Manager) ResolveCandidate(jobID string, resolution CandidateResolution)
 		candidate.Metadata.Title = title
 		candidate.Metadata.Author = author
 		if action == "edit_metadata" {
+			candidate.Metadata.Subtitle = strings.TrimSpace(resolution.Subtitle)
+			candidate.Metadata.Series = strings.TrimSpace(resolution.Series)
+			candidate.Metadata.Volume = strings.TrimSpace(resolution.SeriesNumber)
+			candidate.Metadata.SeriesNumber = strings.TrimSpace(resolution.SeriesNumber)
+			candidate.Metadata.Publisher = strings.TrimSpace(resolution.Publisher)
+			candidate.Metadata.PublicationYear = strings.TrimSpace(resolution.PublicationYear)
+			candidate.Metadata.ISBN = normalizeISBN(resolution.ISBN)
+			candidate.Metadata.Language = strings.TrimSpace(resolution.Language)
+			candidate.Metadata.Description = strings.TrimSpace(resolution.Description)
+			candidate.Metadata.Tags = cleanResolutionTags(resolution.Tags)
+			candidate.Metadata.Library = firstNonBlank(resolution.Library, string(candidate.MediaType))
 			candidate.Metadata.Source = "manual_edit"
 			candidate.Metadata.Confidence = library.ConfidenceHigh
 		}
+		candidate.DestinationPath = previewDestination(*candidate)
 		candidate.Classification = ClassificationNew
 		candidate.ClassificationReason = "Ready to import after manual review"
 		candidate.ManualReview = nil
@@ -183,6 +204,132 @@ func (m *Manager) ResolveCandidate(jobID string, resolution CandidateResolution)
 		return &result, true, nil
 	}
 	return nil, true, fmt.Errorf("candidate not found")
+}
+
+var isbnCharsRe = regexp.MustCompile(`^[0-9Xx -]+$`)
+
+func validateResolution(resolution CandidateResolution, candidates []Candidate, candidateID string) error {
+	title := strings.TrimSpace(resolution.Title)
+	author := strings.TrimSpace(resolution.Author)
+	if title == "" {
+		return fmt.Errorf("title is required")
+	}
+	if author == "" {
+		return fmt.Errorf("author is required")
+	}
+	if year := strings.TrimSpace(resolution.PublicationYear); year != "" {
+		if len(year) != 4 || year < "1000" || year > "2999" {
+			return fmt.Errorf("publication year must be a four-digit year")
+		}
+	}
+	if isbn := strings.TrimSpace(resolution.ISBN); isbn != "" {
+		normalized := normalizeISBN(isbn)
+		if !isbnCharsRe.MatchString(isbn) || (len(normalized) != 10 && len(normalized) != 13) {
+			return fmt.Errorf("ISBN must be ISBN-10 or ISBN-13")
+		}
+	}
+	preview := previewDestination(Candidate{
+		ID:              candidateID,
+		Title:           title,
+		Author:          author,
+		Format:          firstNonBlank(candidateFormat(candidates, candidateID), "epub"),
+		Path:            candidatePath(candidates, candidateID),
+		DestinationPath: candidateDestination(candidates, candidateID),
+	})
+	if strings.TrimSpace(preview) == "" {
+		return fmt.Errorf("destination preview is empty")
+	}
+	for _, candidate := range candidates {
+		if candidate.ID == candidateID || candidate.Classification != ClassificationNew {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(candidate.DestinationPath), preview) {
+			return fmt.Errorf("another ready candidate already uses this destination filename")
+		}
+	}
+	return nil
+}
+
+func candidateFormat(candidates []Candidate, id string) string {
+	for _, candidate := range candidates {
+		if candidate.ID == id {
+			return candidate.Format
+		}
+	}
+	return ""
+}
+
+func candidatePath(candidates []Candidate, id string) string {
+	for _, candidate := range candidates {
+		if candidate.ID == id {
+			return candidate.Path
+		}
+	}
+	return ""
+}
+
+func candidateDestination(candidates []Candidate, id string) string {
+	for _, candidate := range candidates {
+		if candidate.ID == id {
+			return candidate.DestinationPath
+		}
+	}
+	return ""
+}
+
+func previewDestination(candidate Candidate) string {
+	base := firstNonBlank(candidate.DestinationPath, candidate.Path)
+	dir := filepath.Dir(base)
+	if strings.TrimSpace(dir) == "." || strings.TrimSpace(dir) == "" {
+		dir = filepath.Dir(candidate.Path)
+	}
+	title := safePathSegment(firstNonBlank(candidate.Title, candidate.Metadata.Title, candidate.Filename, "Untitled"))
+	author := safePathSegment(firstNonBlank(candidate.Author, candidate.Metadata.Author))
+	format := strings.Trim(strings.ToLower(firstNonBlank(candidate.Format, strings.TrimPrefix(filepath.Ext(candidate.Path), "."))), ".")
+	if format == "" {
+		format = "book"
+	}
+	name := title + "." + format
+	if author != "" {
+		name = author + " - " + name
+	}
+	if dir == "." || dir == "" {
+		return name
+	}
+	return filepath.Join(dir, name)
+}
+
+func safePathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", " -", "\x00", "")
+	value = replacer.Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.Trim(value, ". ")
+}
+
+func normalizeISBN(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "-", "")
+	value = strings.ReplaceAll(value, " ", "")
+	return strings.ToUpper(value)
+}
+
+func cleanResolutionTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
 }
 
 func (m *Manager) run(ctx context.Context, jobID string, roots Roots) {
@@ -507,13 +654,33 @@ func proposedDestination(plan libraryimport.ImportPlan) string {
 
 func metadataFromPlan(candidate libraryimport.ImportCandidate) Metadata {
 	meta := Metadata{
-		Title:      strings.TrimSpace(candidate.Metadata.SelectedTitle),
-		Author:     strings.TrimSpace(candidate.Metadata.SelectedAuthor),
-		Source:     "filename_fallback",
-		Confidence: library.ConfidenceMedium,
+		Title:           strings.TrimSpace(candidate.Metadata.SelectedTitle),
+		Author:          strings.TrimSpace(candidate.Metadata.SelectedAuthor),
+		Subtitle:        strings.TrimSpace(candidate.Metadata.Subtitle),
+		Series:          strings.TrimSpace(candidate.Metadata.Series),
+		Volume:          strings.TrimSpace(candidate.Metadata.SeriesNumber),
+		SeriesNumber:    strings.TrimSpace(candidate.Metadata.SeriesNumber),
+		Publisher:       strings.TrimSpace(candidate.Metadata.Publisher),
+		PublicationYear: strings.TrimSpace(candidate.Metadata.PublicationYear),
+		ISBN:            strings.TrimSpace(candidate.Metadata.ISBN),
+		Language:        strings.TrimSpace(candidate.Metadata.Language),
+		Description:     strings.TrimSpace(candidate.Metadata.Description),
+		Tags:            append([]string(nil), candidate.Metadata.Tags...),
+		Library:         strings.TrimSpace(candidate.Metadata.Library),
+		Source:          "filename_fallback",
+		Confidence:      library.ConfidenceMedium,
+	}
+	for _, identifier := range candidate.Metadata.Identifiers {
+		if strings.EqualFold(identifier.Provider, "isbn") && meta.ISBN == "" {
+			meta.ISBN = identifier.Value
+		}
 	}
 	if candidate.Metadata.EmbeddedTitle != "" || candidate.Metadata.EmbeddedAuthor != "" {
 		meta.Source = "embedded_metadata"
+		meta.Confidence = library.ConfidenceHigh
+	}
+	if candidate.MetadataOverride.SelectedTitle != "" || candidate.MetadataOverride.SelectedAuthor != "" {
+		meta.Source = "manual_edit"
 		meta.Confidence = library.ConfidenceHigh
 	}
 	if meta.Title == "" && candidate.Metadata.FilenameTitle != "" {

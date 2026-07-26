@@ -29,6 +29,7 @@ The current codebase already provides a useful foundation, including:
 - recursive library scanner
 - scan review with filters, search, duplicate details, and manual review
 - explicit import from scan review results
+- metadata editor with live import-location preview
 - staged connection diagnostics for Prowlarr and qBittorrent
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
@@ -78,6 +79,7 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Use normalized title, primary author, media type, and file evidence as fallback evidence.
 - [x] Return match confidence and evidence.
 - [x] Keep ambiguous candidates separate through `manual_review`.
+- [x] Resolve manual-review candidates with an inline metadata editor.
 - [ ] Add user-confirmed merge and split design.
 
 ### 2.0.4 Backfill existing library
@@ -237,6 +239,7 @@ Make Librarr operationally familiar to Sonarr and Radarr users.
 - [ ] Copy, move, and hardlink policies.
 - [ ] Rescan and missing-file detection.
 - [ ] Manual import workflow.
+- [x] Scan-review metadata editor for title, author, edition fields, identifiers, and preview.
 
 ### Profiles
 

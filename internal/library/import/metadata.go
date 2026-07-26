@@ -51,6 +51,7 @@ func (r *MetadataResolver) resolveEbook(candidate *ImportCandidate) {
 		SelectedAuthor: strings.TrimSpace(selected.Author),
 	}
 	r.applyHints(candidate)
+	r.applyOverrides(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("embedded_title", candidate.Metadata.EmbeddedTitle, "embedded_metadata"),
 		metadataEvidence("embedded_author", candidate.Metadata.EmbeddedAuthor, "embedded_metadata"),
@@ -69,6 +70,7 @@ func (r *MetadataResolver) resolveFilenameOnly(candidate *ImportCandidate) {
 		SelectedTitle: title,
 	}
 	r.applyHints(candidate)
+	r.applyOverrides(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("filename_title", candidate.Metadata.FilenameTitle, "filename_fallback"),
 		metadataEvidence("selected_title", candidate.Metadata.SelectedTitle, "filename_fallback", "selected filename-derived title for planning"),
@@ -95,6 +97,7 @@ func (r *MetadataResolver) resolveAudiobookDirectory(candidate *ImportCandidate)
 		SelectedAuthor: selectedAuthor,
 	}
 	r.applyHints(candidate)
+	r.applyOverrides(candidate)
 	candidate.Evidence = append(candidate.Evidence,
 		metadataEvidence("filename_title", candidate.Metadata.FilenameTitle, "directory_name"),
 		metadataEvidence("selected_title", candidate.Metadata.SelectedTitle, "audio_metadata", "selected audiobook title for planning"),
@@ -120,6 +123,92 @@ func (r *MetadataResolver) applyHints(candidate *ImportCandidate) {
 		candidate.Metadata.SelectedAuthor = strings.TrimSpace(candidate.AuthorHint)
 		candidate.Evidence = append(candidate.Evidence, metadataEvidence("selected_author_hint", candidate.Metadata.SelectedAuthor, "import_request_hint", "selected request author hint for planning"))
 	}
+}
+
+func (r *MetadataResolver) applyOverrides(candidate *ImportCandidate) {
+	override := candidate.MetadataOverride
+	applied := false
+	if value := strings.TrimSpace(override.SelectedTitle); value != "" {
+		candidate.Metadata.SelectedTitle = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.SelectedAuthor); value != "" {
+		candidate.Metadata.SelectedAuthor = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Subtitle); value != "" {
+		candidate.Metadata.Subtitle = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Series); value != "" {
+		candidate.Metadata.Series = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.SeriesNumber); value != "" {
+		candidate.Metadata.SeriesNumber = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Publisher); value != "" {
+		candidate.Metadata.Publisher = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.PublicationYear); value != "" {
+		candidate.Metadata.PublicationYear = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.ISBN); value != "" {
+		candidate.Metadata.ISBN = value
+		candidate.Metadata.Identifiers = append(candidate.Metadata.Identifiers, library.Identifier{
+			Provider:   "isbn",
+			Value:      value,
+			Scope:      library.IdentifierScopeEdition,
+			Confidence: library.ConfidenceHigh,
+		})
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Language); value != "" {
+		candidate.Metadata.Language = value
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Description); value != "" {
+		candidate.Metadata.Description = value
+		applied = true
+	}
+	if len(override.Tags) > 0 {
+		candidate.Metadata.Tags = cleanTags(override.Tags)
+		applied = true
+	}
+	if value := strings.TrimSpace(override.Library); value != "" {
+		candidate.Metadata.Library = value
+		applied = true
+	}
+	if applied {
+		candidate.Evidence = append(candidate.Evidence, PlanningEvidence{
+			Signal:      "manual_metadata_override",
+			Value:       candidate.Metadata.SelectedTitle,
+			Source:      "manual_edit",
+			Confidence:  library.ConfidenceHigh,
+			Explanation: "User-edited metadata selected during import review",
+		})
+	}
+}
+
+func cleanTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
 }
 
 func parsePlannerMOBIFilename(path string) organize.EbookMetadata {

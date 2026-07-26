@@ -187,10 +187,11 @@ func (m *libraryImportJobManager) run(ctx context.Context, jobID, scanJobID stri
 				SourceID:  candidate.ID,
 				MediaType: candidate.MediaType,
 			},
-			RootPath:     candidate.Path,
-			OriginalPath: candidate.Path,
-			TitleHint:    title,
-			AuthorHint:   item.Author,
+			RootPath:         candidate.Path,
+			OriginalPath:     candidate.Path,
+			TitleHint:        title,
+			AuthorHint:       item.Author,
+			MetadataOverride: importMetadataOverride(candidate),
 		})
 		switch {
 		case err != nil:
@@ -359,6 +360,23 @@ func candidateDisplayTitle(candidate libraryscanner.Candidate) string {
 
 func candidateDisplayAuthor(candidate libraryscanner.Candidate) string {
 	return firstNonBlank(candidate.Author, candidate.Metadata.Author)
+}
+
+func importMetadataOverride(candidate libraryscanner.Candidate) libraryimport.CandidateMetadata {
+	return libraryimport.CandidateMetadata{
+		SelectedTitle:   candidateDisplayTitle(candidate),
+		SelectedAuthor:  candidateDisplayAuthor(candidate),
+		Subtitle:        candidate.Metadata.Subtitle,
+		Series:          candidate.Metadata.Series,
+		SeriesNumber:    firstNonBlank(candidate.Metadata.SeriesNumber, candidate.Metadata.Volume),
+		Publisher:       candidate.Metadata.Publisher,
+		PublicationYear: candidate.Metadata.PublicationYear,
+		ISBN:            candidate.Metadata.ISBN,
+		Language:        candidate.Metadata.Language,
+		Description:     candidate.Metadata.Description,
+		Tags:            append([]string(nil), candidate.Metadata.Tags...),
+		Library:         firstNonBlank(candidate.Metadata.Library, string(candidate.MediaType)),
+	}
 }
 
 func firstNonBlank(values ...string) string {

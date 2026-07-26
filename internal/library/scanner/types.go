@@ -56,12 +56,21 @@ type Progress struct {
 }
 
 type Metadata struct {
-	Title      string             `json:"title,omitempty"`
-	Author     string             `json:"author,omitempty"`
-	Series     string             `json:"series,omitempty"`
-	Volume     string             `json:"volume,omitempty"`
-	Source     string             `json:"source,omitempty"`
-	Confidence library.Confidence `json:"confidence,omitempty"`
+	Title           string             `json:"title,omitempty"`
+	Subtitle        string             `json:"subtitle,omitempty"`
+	Author          string             `json:"author,omitempty"`
+	Series          string             `json:"series,omitempty"`
+	Volume          string             `json:"volume,omitempty"`
+	SeriesNumber    string             `json:"series_number,omitempty"`
+	Publisher       string             `json:"publisher,omitempty"`
+	PublicationYear string             `json:"publication_year,omitempty"`
+	ISBN            string             `json:"isbn,omitempty"`
+	Language        string             `json:"language,omitempty"`
+	Description     string             `json:"description,omitempty"`
+	Tags            []string           `json:"tags,omitempty"`
+	Library         string             `json:"library,omitempty"`
+	Source          string             `json:"source,omitempty"`
+	Confidence      library.Confidence `json:"confidence,omitempty"`
 }
 
 type ManualReviewDetails struct {
@@ -114,10 +123,20 @@ type CandidateUpdate struct {
 }
 
 type CandidateResolution struct {
-	ID     string `json:"id"`
-	Action string `json:"action"`
-	Title  string `json:"title,omitempty"`
-	Author string `json:"author,omitempty"`
+	ID              string   `json:"id"`
+	Action          string   `json:"action"`
+	Title           string   `json:"title,omitempty"`
+	Subtitle        string   `json:"subtitle,omitempty"`
+	Author          string   `json:"author,omitempty"`
+	Series          string   `json:"series,omitempty"`
+	SeriesNumber    string   `json:"series_number,omitempty"`
+	Publisher       string   `json:"publisher,omitempty"`
+	PublicationYear string   `json:"publication_year,omitempty"`
+	ISBN            string   `json:"isbn,omitempty"`
+	Language        string   `json:"language,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	Library         string   `json:"library,omitempty"`
 }
 
 type Totals struct {

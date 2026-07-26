@@ -44,9 +44,11 @@ returns `409 Conflict`.
 
 `POST /api/v1/library/scan/{job_id}/resolve`
 
-Resolves a `manual_review` candidate in the completed scan payload. Supported
-actions are `use_suggested` and `edit_metadata`. This updates the in-memory
-review result so the candidate can be imported; it does not write library data.
+Resolves a review candidate in the completed scan payload. Supported actions
+are `use_suggested` and `edit_metadata`. `use_suggested` applies only to
+manual-review candidates; `edit_metadata` may update manual-review or ready
+candidates before import. This updates the in-memory review result so the
+candidate can be imported; it does not write library data.
 
 `POST /api/v1/library/import`
 
@@ -201,8 +203,16 @@ Manual-review items currently support:
 - destination preview
 - metadata source and confidence
 
-The lightweight edit flow is intended to resolve scan/import ambiguity, not to
-replace the future full metadata editor.
+The metadata editor is the primary manual-resolution interface for scan review.
+It edits only the in-memory scan candidate and supports title, subtitle, author,
+series, series number, publisher, publication year, ISBN, language, description,
+tags, library selection, destination folder preview, and filename preview.
+
+Saving an edit marks the candidate ready to import and sends those values as
+explicit manual metadata overrides when the import job starts. Save & Import
+resolves the candidate first, then imports that one candidate through the
+existing import engine. The editor does not modify source files, download cover
+art, or call internet metadata providers.
 
 ## Job Lifecycle
 
