@@ -25,6 +25,10 @@ The current codebase already provides a useful foundation, including:
 - content-hash duplicate prevention
 - OPDS support
 - REST endpoints
+- first-run setup and empty-library onboarding
+- recursive library scanner
+- scan review with filters, search, duplicate details, and manual review
+- explicit import from scan review results
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
 
@@ -39,7 +43,7 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Define product vision.
 - [x] Define target architecture.
 - [x] Define staged roadmap.
-- [ ] Document the current `library_items` schema and every read/write path.
+- [x] Document the current `library_items` schema and every read/write path.
 - [ ] Add fixtures for:
   - same book in EPUB and MOBI
   - same title by different authors
@@ -48,8 +52,8 @@ Replace the file-centric library core with a normalized domain model while prese
   - manga CBZ and CBR
   - duplicate content under different paths
   - conflicting embedded metadata
-- [ ] Add migration test harness using a copied test database.
-- [ ] Define rollback and validation procedure.
+- [x] Add migration test harness using copied/test databases.
+- [x] Define rollback and validation procedure.
 
 ### 2.0.2 Normalized schema
 
@@ -66,22 +70,22 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Preserve `library_items` during the transition.
 - [x] Add explicit schema versioning and migration status logging.
 
-### 2.0.3 Conservative matching service
+### 2.0.3 Conservative matching and planning
 
-- [ ] Introduce a dedicated book/edition matching service.
-- [ ] Match trusted identifiers before text heuristics.
-- [ ] Use normalized title, primary author, media type, series, and publication data as fallback evidence.
-- [ ] Return match confidence and evidence.
-- [ ] Keep ambiguous candidates separate.
-- [ ] Add user-confirmed merge and split design, even if the UI arrives later.
+- [x] Introduce planner/resolver components for books, editions, contributors, duplicates, and files.
+- [x] Match trusted identifiers before text heuristics where available.
+- [x] Use normalized title, primary author, media type, and file evidence as fallback evidence.
+- [x] Return match confidence and evidence.
+- [x] Keep ambiguous candidates separate through `manual_review`.
+- [ ] Add user-confirmed merge and split design.
 
 ### 2.0.4 Backfill existing library
 
-- [ ] Backfill normalized records from `library_items`.
-- [ ] Preserve legacy rows and migration linkage.
-- [ ] Produce validation totals for books, editions, and files.
-- [ ] Report ambiguous records instead of silently merging them.
-- [ ] Verify that every old managed path maps to exactly one new file row.
+- [x] Backfill normalized records from `library_items`.
+- [x] Preserve legacy rows and migration linkage.
+- [x] Produce validation totals for books, editions, and files.
+- [x] Report ambiguous records instead of silently merging them.
+- [x] Verify that every old managed path maps to exactly one new file row.
 
 ### 2.0.5 Repository and import cutover
 
@@ -92,7 +96,8 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Make repeated completed-download events idempotent.
 - [x] Coordinate filesystem and database failure recovery.
 - [x] Add rollback-by-configuration through `LIBRARR_IMPORT_ENGINE=legacy`.
-- [ ] Switch new writes to the normalized model.
+- [x] Add explicit scan-review import using the configured import engine.
+- [ ] Make normalized import the default after more dogfooding.
 
 ### 2.0.6 Compatibility API
 
@@ -104,13 +109,25 @@ Replace the file-centric library core with a normalized domain model while prese
 - [ ] Add `total_books`, `total_files`, and format counts to stats.
 - [ ] Document transitional fields.
 
-### 2.0.7 Library UI grouping
+### 2.0.7 Library UI and onboarding
 
-- [ ] Display one card or row per logical book.
-- [ ] Show available formats without duplicate-looking entries.
-- [ ] Preserve ebook, audiobook, manga, and comic filtering.
-- [ ] Add clear empty, ambiguous, and import-error states.
+- [x] Add a distinct Librarr 2.0 shell and visual direction.
+- [x] Simplify navigation to Home, Library, Discover, and Settings.
+- [x] Hide unfinished Devices, Activity, and send-to-device UI.
+- [x] Add first-run administrator setup.
+- [x] Add empty-library onboarding.
+- [x] Add Library & Import folder configuration.
+- [x] Add clear scan, review, duplicate, manual-review, and import-error states.
+- [ ] Continue refining logical book cards as normalized data becomes the default.
 - [ ] Defer complex editing until the normalized model is stable.
+
+### 2.0.8 Connection diagnostics
+
+- [ ] Replace simple connection tests with step-by-step diagnostics.
+- [ ] Report DNS, TCP, TLS/HTTPS, authentication, API version, and latency.
+- [ ] Return actionable next steps for timeouts, 401/403 errors, bad URLs, and unreachable hosts.
+- [ ] Keep secrets, headers, cookies, and sensitive URLs out of logs and responses.
+- [ ] Present diagnostics in Settings with clear success/failure rows.
 
 ### 2.0 exit criteria
 
@@ -387,16 +404,12 @@ The following apply across all milestones.
 
 The next implementation sequence should be:
 
-1. Inventory every current `library_items` read and write path.
-2. Add representative multi-format and ambiguity fixtures.
-3. Decide whether `editions` ships in the first migration or is staged behind one edition per book.
-4. Write the additive schema migration.
-5. Build backfill and validation tooling.
-6. Add normalized repositories.
-7. Update the import pipeline.
-8. Add compatibility reads and `/api/v1/books`.
-9. Update the library UI to show one book with many formats.
-10. Begin the download-client adapter framework and add rTorrent.
+1. Improve connection diagnostics for Prowlarr, qBittorrent, and optional integrations.
+2. Continue dogfooding the scanner/review/import path with real libraries.
+3. Add focused fixes for manual-review edge cases found during dogfooding.
+4. Refine logical book cards and details using the normalized read API.
+5. Begin metadata provider and cover improvements.
+6. Begin the download-client adapter framework after diagnostics are reliable.
 
 ## Definition of Done for Major Changes
 

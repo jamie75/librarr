@@ -2,10 +2,13 @@
 
 Librarr now exposes a native normalized read API under `/api/v1`.
 
-This milestone is intentionally read-only. It does not change import, delete,
-send-to-device, metadata refresh, or compatibility write behavior.
+The book endpoints are read-oriented, while the broader `/api/v1/library/*`
+surface now also includes scanner, review, manual-resolution, and explicit
+import job endpoints.
 
 ## Endpoints
+
+Read endpoints:
 
 - `GET /api/v1/books`
 - `GET /api/v1/books/{id}`
@@ -13,6 +16,22 @@ send-to-device, metadata refresh, or compatibility write behavior.
 - `GET /api/v1/books/{id}/editions`
 - `GET /api/v1/books/{id}/cover`
 - `GET /api/v1/library/summary`
+
+Metadata endpoints:
+
+- `GET /api/v1/books/{id}/metadata`
+- `PATCH /api/v1/books/{id}/metadata`
+- `GET /api/v1/books/{id}/provenance`
+
+Scanner and import endpoints:
+
+- `POST /api/v1/library/scan`
+- `GET /api/v1/library/scan/{id}`
+- `GET /api/v1/library/scan/{id}/results`
+- `POST /api/v1/library/scan/{id}/resolve`
+- `POST /api/v1/library/import`
+- `GET /api/v1/library/import/{id}`
+- `GET /api/v1/library/import/{id}/results`
 
 ## Repository mode behavior
 
@@ -140,3 +159,13 @@ The Home dashboard uses `/api/v1/library/summary` for totals and format
 distribution in normalized mode.
 
 Legacy mode continues using `/api/library` compatibility responses.
+
+## Scanner/import behavior
+
+Scanning is read-only discovery. It recursively walks configured library
+folders, extracts metadata where possible, applies filename fallback, classifies
+duplicates and manual-review items, and returns a review payload.
+
+Import is always explicit. The import endpoint only imports candidates that are
+ready in the completed scan result. Duplicate, already-imported, unsupported,
+unreadable, and unresolved manual-review candidates are excluded.

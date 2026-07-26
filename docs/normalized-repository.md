@@ -3,9 +3,9 @@
 `internal/library.NormalizedRepository` is the future Librarr 2.0 storage
 engine for the normalized book-centric schema.
 
-It is implemented but intentionally not wired into production. The running
-application still uses `LegacyLibraryRepository` and still reads active library
-data from `library_items`.
+It is implemented and selectable at startup through repository mode. Legacy mode
+remains the default rollback-safe path, while normalized mode is used for
+Librarr 2.0 dogfooding and validated deployments.
 
 ## Responsibilities
 
@@ -96,17 +96,15 @@ production.
 `NormalizedRepository`.
 
 `NewRepository(LegacyRepositoryMode, *sql.DB)` returns a
-`LegacyLibraryRepository` backed by a small SQL legacy store. Production
-currently continues to use the established `NewLegacyLibraryRepository` wiring
-with `internal/db.DB`; the factory exists so future service wiring can choose a
-mode explicitly.
+`LegacyLibraryRepository` backed by a small SQL legacy store. Startup wires
+`LibraryService` to the selected repository implementation through
+`LIBRARR_LIBRARY_REPOSITORY_MODE`.
 
 ## Future Migration Strategy
 
-1. Keep production reads and writes on `library_items`.
-2. Use `NormalizedRepository` in isolated migration and backfill tests.
-3. Backfill normalized rows with conservative matching.
-4. Validate counts and relationship integrity against legacy data.
-5. Switch `LibraryService` wiring behind compatibility DTOs.
-6. Cut over imports only after repeated-download idempotency, rollback, and
-   filesystem recovery tests pass.
+1. Keep legacy mode available for rollback.
+2. Backfill normalized rows with conservative matching.
+3. Validate counts and relationship integrity against legacy data.
+4. Select `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized` after validation.
+5. Use `LIBRARR_IMPORT_ENGINE=v2` for normalized import dogfooding.
+6. Make normalized mode the default only after repeated real-world validation.

@@ -3,9 +3,10 @@
 `internal/library/import.ImportExecutor` is the write-side companion to the
 Import Pipeline v2 planner.
 
-Production Librarr still uses the legacy importer. The executor exists so the
-normalized import path can be validated behind `LibraryService` before any
-download, watcher, manual-import, scanner, or API cutover happens.
+Production Librarr still defaults to the legacy importer, but the normalized
+executor is now reachable behind `LIBRARR_IMPORT_ENGINE=v2`. The executor exists
+so completed downloads, manual import, and library-scan imports can use the same
+planner/executor path without bypassing `LibraryService`.
 
 ## Execution Flow
 
@@ -70,15 +71,24 @@ If any write fails:
 Typical rollback causes include invalid file payloads, conflicting identifiers,
 or repository validation failures.
 
-## Future Production Cutover
+## Production Wiring
 
-The intended cutover path is:
+Current production wiring is feature-flagged:
 
-1. Keep production imports on the legacy pipeline.
-2. Validate planner + executor behavior with focused tests.
-3. Add a compatibility execution path behind `LibraryService.ImportCandidate`.
-4. Cut over watcher/manual/scanner entry points only after idempotency and
-   operational validation are complete.
+```text
+LIBRARR_IMPORT_ENGINE=legacy  # default rollback-safe path
+LIBRARR_IMPORT_ENGINE=v2      # planner + executor + normalized repository
+```
+
+The v2 engine is used by completed torrent imports, completed direct downloads,
+manual import, and explicit imports from library scan review results when the
+flag is enabled.
 
 The executor deliberately has no direct dependency on `sql.DB` or repository
 implementations. It writes only through `LibraryService`.
+
+## Remaining Cutover Work
+
+- Continue dogfooding real-world scan/review/import flows.
+- Keep improving manual-review edge cases.
+- Make the v2 engine the default only after operational validation.

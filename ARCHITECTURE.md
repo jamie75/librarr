@@ -17,6 +17,18 @@ The design is intentionally book-centric, API-first, Docker-friendly, and compat
 7. **Migrations are additive first.** Existing data remains readable until the replacement path has been validated.
 8. **Librarr remains independently useful.** Media Assistant integration is important but not required for operation.
 
+## Current Implementation Status
+
+Librarr 2.0 now has the normalized schema, repository switch,
+`LibraryService`, backfill engine, import planner/executor, feature-flagged v2
+import engine, first-run setup, empty-library onboarding, library scanner,
+review UI, explicit scan-result import, and manual-review resolution.
+
+Legacy compatibility remains intentionally available. Unfinished features such
+as Devices, Activity, send-to-device, richer metadata providers, OPDS v2, and
+external-library synchronization are hidden or documented as planned rather than
+advertised as current behavior.
+
 ## High-Level System
 
 ```text
@@ -307,7 +319,7 @@ Each important field should retain provenance when practical.
 ## Import Pipeline
 
 ```text
-Completed download or manual import
+Completed download, manual import, or library scan review
              │
              ▼
       Discover candidate files
@@ -321,13 +333,19 @@ Completed download or manual import
              ▼
        Identify edition/book
              │
-      ┌───────┴────────┐
+             ▼
+        Build ImportPlan
+             │
+      ┌──────┴─────────┐
       ▼                ▼
- existing match     create new domain records
+ ready to import   manual review/conflict
       │                │
       └───────┬────────┘
               ▼
-        Organize file
+      explicit user import
+              │
+              ▼
+        organize/attach file
               │
               ▼
         Create file row
@@ -346,6 +364,8 @@ Completed download or manual import
 - Failed organization leaves enough state for retry and diagnosis.
 - Database writes and filesystem moves are coordinated to avoid orphaning either side.
 - The source download is not removed until import success is durable.
+- Library scanning is discovery-only; it never imports until the user explicitly
+  chooses Import Selected or Import All Ready.
 
 ## Download Client Architecture
 
@@ -562,7 +582,10 @@ Librarr should provide:
 - migration status
 - Prometheus metrics where useful
 
-Diagnostics should be useful without requiring permanent verbose instrumentation in normal operation.
+Diagnostics should be useful without requiring permanent verbose instrumentation
+in normal operation. The next diagnostics milestone should report steps such as
+DNS, TCP, TLS/HTTPS, authentication, API version, and latency, with actionable
+next steps and without exposing secrets.
 
 ## Migration from library_items
 

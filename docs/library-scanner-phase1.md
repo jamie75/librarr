@@ -1,9 +1,10 @@
-# Library Scanner Phase 1
+# Library Scanner, Review, and Explicit Import
 
-Phase 1 adds the backend scanner and review payload for importing an existing
-library into Librarr 2.0. It does not import files, move files, create books, or
-write to `library_items`, `books`, `editions`, `files`, or related normalized
-tables.
+This document describes the current Librarr 2.0 existing-library workflow.
+
+The scanner is deliberately read-only. It discovers and classifies files, then
+builds a review payload. Import happens only when the user explicitly chooses
+`Import Selected` or `Import All Ready`.
 
 ## Architecture
 
@@ -15,6 +16,10 @@ API
   -> filesystem walk of configured library roots
   -> ImportPlanner metadata and duplicate decisions
   -> in-memory review payload
+  -> explicit import job
+  -> ImportEngine
+  -> LibraryService
+  -> selected repository
 ```
 
 The scanner reads the current Library & Import folder configuration when a scan
@@ -36,6 +41,26 @@ Returns job status and progress.
 
 Returns the completed review payload. If the job is not complete, the endpoint
 returns `409 Conflict`.
+
+`POST /api/v1/library/scan/{job_id}/resolve`
+
+Resolves a `manual_review` candidate in the completed scan payload. Supported
+actions are `use_suggested` and `edit_metadata`. This updates the in-memory
+review result so the candidate can be imported; it does not write library data.
+
+`POST /api/v1/library/import`
+
+Starts an explicit import job from scan results. Only `new` / ready candidates
+are eligible. Duplicates, already-imported files, unsupported files, unreadable
+files, and unresolved manual-review items are never imported.
+
+`GET /api/v1/library/import/{job_id}`
+
+Returns import job status and progress.
+
+`GET /api/v1/library/import/{job_id}/results`
+
+Returns the completion summary and per-candidate results.
 
 The endpoints require an authenticated administrator session or API key because
 they expose configured application file paths.
@@ -79,6 +104,9 @@ Each result candidate includes:
 - series and volume placeholders
 - metadata source and confidence
 - classification and reason
+- destination preview path when the planner can determine one
+- duplicate details for duplicate candidates
+- manual-review details for ambiguous candidates
 - error details for unreadable files
 
 Metadata uses existing embedded extraction where available and falls back to the
@@ -88,8 +116,13 @@ existing filename parser when embedded metadata is missing or unsupported.
 
 `new`
 
-The planner found no existing file conflict. The file is ready for a future
-review/import step.
+The planner found no existing file conflict. The file is ready to import.
+
+`manual_review`
+
+The planner found ambiguity or a conflict that needs a user decision. The review
+payload includes a human-readable reason, metadata source, confidence, and
+suggested destination when available.
 
 `already_imported`
 
@@ -99,8 +132,8 @@ the scanner found the same application path that Librarr already tracks.
 `duplicate`
 
 The file appears to duplicate an existing library file without being the exact
-same tracked path. Phase 1 detects duplicate content hashes and planner conflicts
-such as an existing format for the resolved book.
+same tracked path. Duplicate reasons include identical content hash, same
+destination, and same format already planned or imported.
 
 `unsupported`
 
@@ -109,6 +142,67 @@ The file extension is not supported for the configured media root.
 `unreadable`
 
 The scanner could not stat or read the file. The scan continues.
+
+## Review UI
+
+The review screen supports:
+
+- progress display
+- summary cards
+- client-side filters
+- search by title, author, or filename
+- collapsible result sections
+- destination preview
+- metadata source and confidence display
+- duplicate details
+- manual-review controls
+
+Current sections:
+
+- Ready to Import
+- Manual Review
+- Duplicates
+- Already Imported
+- Unsupported
+- Unreadable
+
+Representative development results were roughly 29 files discovered, 14
+imported, 13 duplicates, and 2 manual-review items. These numbers are examples
+only.
+
+## Explicit Import
+
+Import is always user-triggered.
+
+Supported review actions:
+
+- Select All
+- Import Selected
+- Import All Ready
+- Skip Selected
+- Clear Selection
+- Retry Failed
+
+Import jobs provide progress, current title, elapsed time, completion summary,
+partial-failure reporting, duplicate exclusion, and concurrent-import
+protection. When an import finishes, Librarr refreshes the review payload and
+library summary so imported rows move into Already Imported without another
+scan.
+
+Skipping is session-only and does not persist to the database.
+
+## Manual Review
+
+Manual-review items currently support:
+
+- Use Suggested
+- Edit Metadata
+- Skip
+- destination preview
+- metadata source and confidence
+
+The lightweight edit flow is intended to resolve scan/import ambiguity, not to
+replace the future full metadata editor.
 
 ## Job Lifecycle
 
@@ -137,10 +231,11 @@ scanner continues with the remaining configured roots.
 
 ## Current Limitations
 
-- No Import Selected, Import All, or Skip Selected persistence.
-- No frontend review UI in Phase 1.
 - No file organization or moves.
 - No external metadata providers.
+- No internet metadata lookup.
+- No cover downloading.
+- No full metadata editor.
 - Duplicate detection intentionally reuses the current planner/service path; a
   later performance pass can add repository-level batch lookups if large real
   libraries need more optimization.

@@ -180,6 +180,13 @@ The project should remain approachable for a homelab operator:
 - clear logs and health checks
 - migrations that preserve user data
 - no required hosted service
+- sensible defaults
+- polished onboarding
+- reviewable incremental improvements
+
+Librarr should be treated like a hobby self-hosted application in the spirit of
+Jellyfin, Audiobookshelf, Kavita, and Calibre-Web. Prefer working software,
+clear workflows, and responsive UI over enterprise-style abstraction.
 
 ### Incremental and testable
 

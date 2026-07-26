@@ -4,8 +4,9 @@ The Librarr 2.0 backfill engine migrates legacy `library_items` rows into the
 normalized book-centric schema.
 
 It is implemented as reusable library code, not as a CLI command or API
-handler. Production still reads from `library_items`; no service, repository,
-API, UI, OPDS, or import behavior is switched by this engine.
+handler. The backfill engine itself does not switch service, repository, API,
+UI, OPDS, or import behavior; Repository Switch and Import Engine selection are
+separate startup/runtime decisions.
 
 ## Architecture
 
@@ -164,6 +165,6 @@ Recommended order:
 2. Review reports for missing files, invalid metadata, and ambiguous matches.
 3. Run the real engine behind a CLI/admin action.
 4. Validate normalized totals and relationships.
-5. Add compatibility reads from normalized tables behind a feature flag.
-6. Cut over production reads only after repeated backfill runs are stable.
-7. Cut over imports after normalized write idempotency has live validation.
+5. Select normalized repository mode only after validation passes.
+6. Use the v2 import engine only after normalized write idempotency has live
+   validation.

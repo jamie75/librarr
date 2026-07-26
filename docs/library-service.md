@@ -3,10 +3,10 @@
 `internal/library.LibraryService` is the application-facing boundary for
 library operations during the Librarr 2.0 transition.
 
-The service exists so HTTP handlers, OPDS, background work, and future API
+The service exists so HTTP handlers, OPDS, background work, and API
 resources can depend on book/file domain operations instead of reaching
-directly into the legacy `internal/db` package. This is an architectural seam,
-not a production data cutover.
+directly into the legacy `internal/db` package. It is now the production seam
+for repository selection.
 
 ## Responsibilities
 
@@ -23,33 +23,33 @@ library operations:
 - matching
 - managed file operations
 
-The first implementation delegates to repositories and preserves existing
-behavior. It does not backfill normalized tables, perform new matching, or
-change import semantics.
+The service delegates to the selected repository and preserves compatibility
+behavior where needed. Normalized mode and the v2 import engine use this service
+boundary for book, edition, contributor, metadata, and file writes.
 
 ## Current Dependency Flow
 
 ```text
-HTTP / OPDS / background callers
+HTTP / scanner / import engine / OPDS / background callers
   ↓
 LibraryService
   ↓
-LegacyLibraryRepository
-  ↓
-internal/db
-  ↓
-library_items
+selected repository
+  ├─ LegacyLibraryRepository → library_items
+  └─ NormalizedRepository    → books / editions / files / contributors / ...
 ```
 
-`library_items` remains the active production source of truth. Existing
-compatibility endpoints still serialize legacy library item DTOs, but selected
-callers now obtain those rows through `LibraryService`.
+Legacy mode remains the default rollback-safe source. Normalized mode is
+selected explicitly with `LIBRARR_LIBRARY_REPOSITORY_MODE=normalized`.
+Compatibility endpoints may still serialize legacy-shaped DTOs, but production
+library APIs should obtain data through `LibraryService` or repository
+interfaces.
 
 ## Repository Interaction
 
 The service is constructed with explicit dependencies. It does not use globals.
-Callers can inject test doubles, the legacy repository, or future normalized
-repositories.
+Callers can inject test doubles, the legacy repository, or the normalized
+repository.
 
 The legacy repository implements the domain repository interfaces by mapping
 each legacy row to one logical book and one file. Domain write operations that
@@ -70,15 +70,14 @@ Legacy compatibility routes still preserve their existing response shapes.
 
 ## Future NormalizedRepository Swap
 
-The intended migration path is:
+Repository Switch has been implemented. Remaining work is operational cutover
+and cleanup:
 
-1. Continue reading and writing `library_items`.
-2. Move callers behind `LibraryService` where the operation maps cleanly.
-3. Add normalized repositories that implement the same interfaces.
-4. Backfill normalized rows from legacy data.
-5. Switch service wiring from `LegacyLibraryRepository` to normalized
-   repositories behind compatibility DTOs.
-6. Cut over imports and new `/api/v1` book/file endpoints after validation.
+1. Keep legacy mode available for rollback.
+2. Continue dogfooding normalized mode.
+3. Keep imports behind `LIBRARR_IMPORT_ENGINE`.
+4. Convert remaining compatibility-only paths in focused milestones.
+5. Make normalized mode the default only after validation.
 
 Because callers depend on `LibraryService`, the repository swap should be a
 wiring change plus compatibility validation rather than a broad endpoint

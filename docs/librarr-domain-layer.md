@@ -5,9 +5,11 @@ of the application should think about books, editions, contributors, series,
 files, identifiers, covers, matching, import stages, and delivery without
 requiring callers to know how those concepts are stored.
 
-This package is intentionally not a production cutover. Existing imports, REST
-handlers, OPDS, UI, tags, stats, and download behavior still use
-`library_items`.
+This package is now the service boundary for Repository Switch and the
+feature-flagged import engine. Some compatibility paths still use
+`library_items`, but new Librarr 2.0 work should flow through
+`LibraryService`, repositories, and import planner/executor contracts rather
+than directly through legacy storage.
 
 ## Responsibilities
 
@@ -31,8 +33,8 @@ For example, future code should ask for `FindBookByIdentifier`,
 `GetBookFiles`, or `AttachFile`, not for a specific SQL query against `books`
 or `files`.
 
-The first implementation is contract-first. Normalized-schema repositories will
-arrive in a later phase after matching and backfill plans are ready.
+The normalized repository now implements these contracts and can be selected at
+startup. Legacy repository adapters remain for compatibility and rollback.
 
 ## Legacy Compatibility
 
@@ -40,9 +42,9 @@ arrive in a later phase after matching and backfill plans are ready.
 the new interfaces. It represents each legacy row as one logical book with one
 file, matching today's production behavior.
 
-The adapter is read-only for new domain writes. This prevents accidental
-cutover while still allowing future API and service code to start depending on
-the domain boundary.
+The adapter preserves legacy behavior where an operation maps cleanly to
+`library_items`. Domain writes that imply normalized-only behavior should return
+clear unsupported-operation errors instead of silently dropping data.
 
 Compatibility translators convert:
 
@@ -54,24 +56,23 @@ Book + BookFile    -> legacy LibraryItem DTO
 This gives future REST handlers a bridge while preserving current response
 compatibility.
 
-## Future Migration Path
+## Current Migration Path
 
 The intended sequence is:
 
-1. Keep `library_items` active.
-2. Introduce application code against `internal/library` interfaces.
-3. Implement normalized repositories behind those interfaces.
+1. Keep legacy mode available for rollback.
+2. Route production library APIs through `LibraryService`.
+3. Use normalized repositories behind `LIBRARR_LIBRARY_REPOSITORY_MODE`.
 4. Backfill normalized tables with conservative matching.
-5. Cut over selected reads behind compatibility DTOs.
-6. Cut over imports after idempotency and rollback tests pass.
-7. Retire legacy storage only after production validation.
+5. Use the v2 import engine behind `LIBRARR_IMPORT_ENGINE=v2`.
+6. Retire legacy storage only after production validation.
 
 ## API Cutover
 
-Future API handlers should depend on `internal/library` interfaces rather than
+API handlers should depend on `internal/library` interfaces rather than
 `internal/db` legacy methods. Compatibility DTOs allow existing endpoints to
 keep their response shape while the backing repository changes from
 `library_items` to normalized `books`, `editions`, and `files`.
 
-New `/api/v1` endpoints can then expose logical books and explicit file
-resources directly.
+New `/api/v1` endpoints expose logical books, explicit file resources,
+metadata, scanner jobs, review results, and explicit import jobs directly.

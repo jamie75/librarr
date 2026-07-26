@@ -59,9 +59,10 @@ continues to read from and write to `library_items`.
 - `identifiers` require exactly one owner: either `book_id` or `edition_id`.
 - `covers` require exactly one owner: either `book_id` or `edition_id`.
 
-## Legacy Path Still Active
+## Legacy Path At This Step
 
-The following remain intentionally unchanged:
+At the schema-foundation milestone, the following intentionally remained
+unchanged:
 
 - `library_items` is still the active production data source.
 - Imports still write `library_items`.
@@ -69,6 +70,11 @@ The following remain intentionally unchanged:
 - REST API responses still use current compatibility models.
 - OPDS, UI, tags, stats, downloads, and delete behavior are unchanged.
 - `library_item_migration_map` is created but not populated.
+
+Later milestones added the repository switch, backfill engine, normalized read
+API, feature-flagged v2 import engine, scanner, review UI, and explicit
+scan-result import. Keep this document as the schema-foundation reference, not
+as the latest end-to-end product status.
 
 ## Not Included In This Step
 

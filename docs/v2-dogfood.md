@@ -15,7 +15,7 @@ The dogfood stack is isolated from production:
 - explicit Librarr 2.0 feature flags
 
 The repository keeps the stable production compose file unchanged. Dogfooding
-uses [docker-compose.v2-dogfood.yml](/Users/jamiestephens/Projects/librarr/docker-compose.v2-dogfood.yml).
+uses [docker-compose.v2-dogfood.yml](../docker-compose.v2-dogfood.yml).
 
 ## Current port layout
 
@@ -36,18 +36,45 @@ The dogfood deployment enables:
 
 ## Host paths
 
-The dogfood compose file uses repo-local bind mounts under `.dogfood/` so
-contributors can inspect and reset state easily:
+The checked-in dogfood compose file uses explicit host paths suitable for a
+Portainer/homelab deployment:
 
-- `./.dogfood/librarr-v2-data` → `/data`
-- `./.dogfood/librarr-v2-library/ebooks` → `/books/ebooks`
-- `./.dogfood/librarr-v2-library/audiobooks` → `/books/audiobooks`
-- `./.dogfood/librarr-v2-library/manga` → `/books/manga`
-- `./.dogfood/librarr-v2-incoming` → `/data/incoming`
-- `./.dogfood/librarr-v2-manga-incoming` → `/data/manga-incoming`
+- `/opt/docker/compose/librarr-v2/data` → `/data`
+- `/opt/docker/compose/librarr-v2/library/ebooks` → `/books/ebooks`
+- `/opt/docker/compose/librarr-v2/library/audiobooks` → `/books/audiobooks`
+- `/opt/docker/compose/librarr-v2/library/manga` → `/books/manga`
+- `/opt/docker/compose/librarr-v2/incoming` → `/data/incoming`
+- `/opt/docker/compose/librarr-v2/manga-incoming` → `/data/manga-incoming`
 
 This avoids sharing the production database, settings file, or organized
 library paths.
+
+For local-only development, use equivalent paths under a disposable local
+directory and update the compose file in your private working copy.
+
+## Docker networking
+
+The homelab deployment uses an external Docker network named `homelab-media` so
+Librarr can reach optional services by container hostname.
+
+Compose deployments should attach Librarr to:
+
+```yaml
+networks:
+  - homelab-media
+
+networks:
+  homelab-media:
+    external: true
+```
+
+Prefer Docker hostnames such as:
+
+```text
+http://prowlarr:9696
+```
+
+over hard-coded IP addresses. qBittorrent may remain remote over HTTPS.
 
 ## Fresh normalized startup behavior
 
@@ -91,12 +118,12 @@ It is local-only unless you explicitly retag and push it.
 ## Start
 
 ```bash
-mkdir -p .dogfood/librarr-v2-data \
-         .dogfood/librarr-v2-library/ebooks \
-         .dogfood/librarr-v2-library/audiobooks \
-         .dogfood/librarr-v2-library/manga \
-         .dogfood/librarr-v2-incoming \
-         .dogfood/librarr-v2-manga-incoming
+mkdir -p /opt/docker/compose/librarr-v2/data \
+         /opt/docker/compose/librarr-v2/library/ebooks \
+         /opt/docker/compose/librarr-v2/library/audiobooks \
+         /opt/docker/compose/librarr-v2/library/manga \
+         /opt/docker/compose/librarr-v2/incoming \
+         /opt/docker/compose/librarr-v2/manga-incoming
 
 docker compose -f docker-compose.v2-dogfood.yml up -d
 ```
@@ -117,17 +144,17 @@ docker compose -f docker-compose.v2-dogfood.yml down --remove-orphans
 
 ```bash
 docker compose -f docker-compose.v2-dogfood.yml down --remove-orphans
-rm -rf .dogfood/librarr-v2-data \
-       .dogfood/librarr-v2-library \
-       .dogfood/librarr-v2-incoming \
-       .dogfood/librarr-v2-manga-incoming
+rm -rf /opt/docker/compose/librarr-v2/data \
+       /opt/docker/compose/librarr-v2/library \
+       /opt/docker/compose/librarr-v2/incoming \
+       /opt/docker/compose/librarr-v2/manga-incoming
 ```
 
 ## Contributor-friendly smoke test
 
 A reproducible smoke script is included:
 
-- [scripts/v2-dogfood-smoke.sh](/Users/jamiestephens/Projects/librarr/scripts/v2-dogfood-smoke.sh)
+- [scripts/v2-dogfood-smoke.sh](../scripts/v2-dogfood-smoke.sh)
 
 It performs:
 
@@ -161,12 +188,14 @@ If you want to walk the flow manually in the UI:
 4. Confirm `/api/config` reports:
    - `library_repository_mode=normalized`
    - `import_engine=v2`
-5. Place one EPUB and one MOBI test file under `.dogfood/librarr-v2-incoming`.
-6. Use manual import to import both with the same logical title/author.
-7. Verify one logical book appears with two formats.
-8. Edit one metadata field in Book Details.
-9. Restart the container.
-10. Verify the metadata override and provenance still exist.
+5. Configure Library & Import folders.
+6. Click Scan Library.
+7. Review Ready, Duplicate, Already Imported, Manual Review, Unsupported, and
+   Unreadable sections.
+8. Use Import Selected or Import All Ready.
+9. Verify the review refreshes and imported books move to Already Imported.
+10. Restart the container.
+11. Verify onboarding remains complete and imported books remain present.
 
 ## Health check
 
@@ -184,7 +213,7 @@ against container port `5050`.
 - The dogfood stack intentionally does not inherit your production `.env`.
 - The smoke script uses placeholder `.epub` and `.mobi` files to exercise the
   import pipeline, not full real-world metadata extraction.
-- qBittorrent, Prowlarr, and other external integrations are not configured by
-  default in the dogfood stack.
+- qBittorrent, Prowlarr, and other external integrations are optional and are
+  not configured by default in the dogfood stack.
 - If a contributor wants to test against a copied real library, they should use
   a copied or read-only source, not the production write destination.
