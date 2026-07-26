@@ -585,6 +585,12 @@ const state = {
   downloadPollTimer: null,
   currentUser: null,
   currentRole: null,
+  activeDetailContext: null,
+  libraryMetadataEditor: {
+    open: false,
+    draft: null,
+    errors: [],
+  },
   libraryImport: {
     completed: false,
     dirty: false,
@@ -2384,6 +2390,7 @@ async function openBookDetails(index, collection = 'libraryBooks') {
   detailBook.metadata = detailMetadata;
   detailBook.provenance = detailProvenance;
   state.activeDetailBook = detailBook;
+  state.activeDetailContext = { index, collection, bookId: detailBook.id || book.id || 0 };
   const preferredTitle = detailMetadata?.fields?.title?.value || detailBook.title || book.title;
   const preferredDescription = detailMetadata?.fields?.description?.value || detailBook.description || '';
   heading.textContent = preferredTitle;
@@ -2402,8 +2409,9 @@ async function openBookDetails(index, collection = 'libraryBooks') {
         <section class="mb-8">
           <div class="flex items-center justify-between gap-3 mb-4">
             <h3 class="text-lg font-semibold text-white">${t('details_metadata')}</h3>
-            ${detailBook.id && normalizedLibraryMode() ? `<button onclick="openMetadataEditor()" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">${t('metadata_edit')}</button>` : ''}
+            ${detailBook.id && normalizedLibraryMode() ? `<button data-action="openLibraryMetadataEditor" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">${t('metadata_edit')}</button>` : ''}
           </div>
+          ${state.libraryMetadataEditor.open ? renderLibraryMetadataEditor(detailBook) : ''}
           <div class="grid gap-4 sm:grid-cols-2">
             ${renderMetadataFieldCards(detailMetadata)}
             ${renderDetailMetaCard(t('metadata_series'), detailBook.series || t('details_placeholder_value'))}
@@ -2501,47 +2509,209 @@ function formatConfidence(field) {
   return field.confidence || t('details_placeholder_value');
 }
 
-async function openMetadataEditor() {
-  const book = state.activeDetailBook;
-  if (!book?.id || !book.metadata?.fields) return;
-  const current = book.metadata.fields;
-  const title = window.prompt(t('metadata_title'), current.title?.value || '');
-  if (title === null) return;
-  const subtitle = window.prompt(t('metadata_subtitle'), current.subtitle?.value || '');
-  if (subtitle === null) return;
-  const publisher = window.prompt(t('metadata_publisher'), current.publisher?.value || '');
-  if (publisher === null) return;
-  const publicationDate = window.prompt(t('metadata_publication_date'), current.publication_date?.value || '');
-  if (publicationDate === null) return;
-  const language = window.prompt(t('metadata_language'), current.language?.value || '');
-  if (language === null) return;
-  const genres = window.prompt(t('metadata_genres'), current.genres?.value || '');
-  if (genres === null) return;
+function libraryMetadataDraftFromBook(book) {
+  const fields = book?.metadata?.fields || {};
+  return {
+    title: fields.title?.value || book?.title || '',
+    edition_title: fields.edition_title?.value || book?.editions?.[0]?.title || '',
+    subtitle: fields.subtitle?.value || book?.editions?.[0]?.subtitle || '',
+    author: book?.author || book?.primary_author?.name || '',
+    series: book?.series || '',
+    publisher: fields.publisher?.value || book?.editions?.[0]?.publisher || '',
+    publication_year: publicationYearFromMetadata(fields.publication_date?.value || book?.editions?.[0]?.publication_date || ''),
+    isbn: (book?.identifiers || []).find(identifier => String(identifier.type || '').toLowerCase() === 'isbn')?.value || '',
+    language: fields.language?.value || book?.language || book?.editions?.[0]?.language || '',
+    description: fields.description?.value || book?.description || '',
+    tags: fields.genres?.value || '',
+    library: book?.mediaType || book?.media_type || '',
+  };
+}
 
+function renderLibraryMetadataEditor(book) {
+  const draft = state.libraryMetadataEditor.draft || libraryMetadataDraftFromBook(book);
+  const candidate = libraryMetadataCandidate(book);
+  const preview = metadataEditorPreview(candidate, draft);
+  const errors = validateLibraryMetadataDraft(book, draft);
+  state.libraryMetadataEditor.errors = errors;
+  const field = (name, label, value, attrs = '') => `
+    <label class="block">
+      <span class="text-[11px] uppercase tracking-wider text-stone-500">${escapeHtml(label)}</span>
+      <input data-action-input="libraryMetadataEditorField" data-field="${escapeHtml(name)}" value="${escapeHtml(value || '')}" ${attrs} class="mt-1 w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm text-stone-100 placeholder-stone-600 focus:border-amber-400 focus:outline-none">
+    </label>
+  `;
+  return `
+    <div id="library-metadata-editor" class="mb-5 rounded-[1.5rem] border border-amber-500/25 bg-stone-950/75 p-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-white">Metadata Editor</p>
+          <p class="mt-1 text-xs text-stone-400">Update catalog metadata stored by Librarr. Ebook files are not modified.</p>
+        </div>
+        <button data-action="cancelLibraryMetadataEditor" class="rounded-md bg-stone-800 px-3 py-2 text-xs font-medium text-stone-300 hover:bg-stone-700">Cancel</button>
+      </div>
+      <div class="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div class="space-y-4">
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="md:col-span-2">${field('title', 'Title', draft.title, 'required')}</div>
+            ${field('edition_title', 'Edition Title', draft.edition_title)}
+            ${field('subtitle', 'Subtitle', draft.subtitle)}
+            ${field('publisher', 'Publisher', draft.publisher)}
+            ${field('publication_year', 'Publication Year', draft.publication_year, 'inputmode="numeric" maxlength="4"')}
+            ${field('language', 'Language', draft.language)}
+            ${field('tags', 'Tags / Genres', draft.tags, 'placeholder="fantasy, fiction, owned"')}
+          </div>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-stone-500">Description</span>
+            <textarea data-action-input="libraryMetadataEditorField" data-field="description" rows="4" class="mt-1 w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm text-stone-100 placeholder-stone-600 focus:border-amber-400 focus:outline-none">${escapeHtml(draft.description || '')}</textarea>
+          </label>
+          <div class="rounded-lg border border-stone-800 bg-stone-900/60 p-3 text-xs text-stone-400">
+            <p class="font-medium text-stone-200">Not editable here yet</p>
+            <p class="mt-1">Author, series, ISBN, library, destination folder, and filename preview are shown for context but are not persisted by the current book metadata endpoint.</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <div class="rounded-lg border border-stone-800 bg-stone-900/80 p-3">
+            <p class="text-xs font-semibold text-stone-100">Catalog Preview</p>
+            <dl class="mt-3 space-y-2 text-xs">
+              <div><dt class="text-stone-500">Author</dt><dd class="break-all text-stone-300">${escapeHtml(draft.author || t('details_placeholder_value'))}</dd></div>
+              <div><dt class="text-stone-500">Series</dt><dd class="break-all text-stone-300">${escapeHtml(draft.series || t('details_placeholder_value'))}</dd></div>
+              <div><dt class="text-stone-500">ISBN</dt><dd class="break-all text-stone-300">${escapeHtml(draft.isbn || t('details_placeholder_value'))}</dd></div>
+              <div><dt class="text-stone-500">Library</dt><dd class="break-all text-stone-300">${escapeHtml(draft.library || t('details_placeholder_value'))}</dd></div>
+              <div><dt class="text-stone-500">Current Folder</dt><dd class="break-all text-stone-300">${escapeHtml(preview.folder || t('details_placeholder_value'))}</dd></div>
+              <div><dt class="text-stone-500">Filename Preview</dt><dd class="break-all text-stone-300">${escapeHtml(preview.filename)}</dd></div>
+            </dl>
+          </div>
+          <div id="library-metadata-editor-validation" class="${errors.length ? '' : 'hidden'} rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-100">
+            ${errors.map(error => `<p>${escapeHtml(error)}</p>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button data-action="saveLibraryMetadataEditor" ${errors.length ? 'disabled' : ''} class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-stone-700 disabled:text-stone-400">Save</button>
+        <button data-action="resetLibraryMetadataEditor" class="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-stone-200 hover:bg-stone-700">Reset</button>
+      </div>
+    </div>
+  `;
+}
+
+function openLibraryMetadataEditor() {
+  const book = state.activeDetailBook;
+  if (!book?.id || !normalizedLibraryMode()) return;
+  state.libraryMetadataEditor = {
+    open: true,
+    draft: libraryMetadataDraftFromBook(book),
+    errors: [],
+  };
+  const context = state.activeDetailContext || {};
+  openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+function closeLibraryMetadataEditor() {
+  state.libraryMetadataEditor = { open: false, draft: null, errors: [] };
+  const context = state.activeDetailContext || {};
+  openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+function resetLibraryMetadataEditor() {
+  if (!state.activeDetailBook) return;
+  state.libraryMetadataEditor.draft = libraryMetadataDraftFromBook(state.activeDetailBook);
+  state.libraryMetadataEditor.errors = [];
+  const context = state.activeDetailContext || {};
+  openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+function updateLibraryMetadataEditorDraft(field, value) {
+  if (!state.libraryMetadataEditor.open) return;
+  state.libraryMetadataEditor.draft = state.libraryMetadataEditor.draft || {};
+  state.libraryMetadataEditor.draft[field] = value;
+  updateLibraryMetadataEditorValidation();
+}
+
+function updateLibraryMetadataEditorValidation() {
+  const errors = validateLibraryMetadataDraft(state.activeDetailBook, state.libraryMetadataEditor.draft || {});
+  state.libraryMetadataEditor.errors = errors;
+  const validationEl = document.getElementById('library-metadata-editor-validation');
+  if (validationEl) {
+    validationEl.classList.toggle('hidden', errors.length === 0);
+    validationEl.innerHTML = errors.map(error => `<p>${escapeHtml(error)}</p>`).join('');
+  }
+  const save = document.querySelector('[data-action="saveLibraryMetadataEditor"]');
+  if (save) save.disabled = errors.length > 0;
+}
+
+function validateLibraryMetadataDraft(book, draft) {
+  const candidate = libraryMetadataCandidate(book || {});
+  return validateMetadataEditorDraft(candidate, {
+    title: draft.title,
+    author: draft.author || 'Existing author',
+    publication_year: draft.publication_year,
+    isbn: '',
+  }).filter(error => !/destination/i.test(error));
+}
+
+function libraryMetadataPatchFromDraft(draft) {
+  return {
+    fields: {
+      title: String(draft.title || '').trim(),
+      edition_title: String(draft.edition_title || '').trim(),
+      subtitle: String(draft.subtitle || '').trim(),
+      publisher: String(draft.publisher || '').trim(),
+      publication_date: String(draft.publication_year || '').trim(),
+      language: String(draft.language || '').trim(),
+      description: String(draft.description || '').trim(),
+      genres: String(draft.tags || '').split(',').map(tag => tag.trim()).filter(Boolean),
+    },
+  };
+}
+
+async function saveLibraryMetadataEditor() {
+  const book = state.activeDetailBook;
+  const draft = state.libraryMetadataEditor.draft || {};
+  if (!book?.id) return;
+  const errors = validateLibraryMetadataDraft(book, draft);
+  if (errors.length) {
+    state.libraryMetadataEditor.errors = errors;
+    updateLibraryMetadataEditorValidation();
+    showToast(errors[0], 'error');
+    return;
+  }
   try {
     await apiJson(`/api/v1/books/${book.id}/metadata`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          title,
-          subtitle,
-          publisher,
-          publication_date: publicationDate,
-          language,
-          genres,
-        },
-      }),
+      body: JSON.stringify(libraryMetadataPatchFromDraft(draft)),
     });
-    showToast(t('metadata_edit'), 'success');
-    const currentIndex = state.libraryBooks.findIndex(item => item.id === book.id);
-    if (currentIndex >= 0) {
-      await loadLibrary();
-      await openBookDetails(currentIndex, 'libraryBooks');
-    }
+    state.libraryMetadataEditor = { open: false, draft: null, errors: [] };
+    await loadLibrary();
+    const context = state.activeDetailContext || {};
+    const refreshedIndex = state.libraryBooks.findIndex(item => item.id === book.id);
+    await openBookDetails(refreshedIndex >= 0 ? refreshedIndex : (context.index || 0), 'libraryBooks');
+    showToast('Metadata saved', 'success');
   } catch (err) {
     showToast(err.message || 'Failed to update metadata', 'error');
   }
+}
+
+function libraryMetadataCandidate(book) {
+  const files = Array.isArray(book?.files) ? book.files : [];
+  const firstFile = files[0] || {};
+  const format = String(firstFile.format || book?.formats?.[0] || 'book').toLowerCase();
+  return {
+    id: String(book?.id || 'book'),
+    title: book?.title || '',
+    author: book?.author || book?.primary_author?.name || '',
+    format,
+    path: firstFile.path || firstFile.originalPath || `${book?.title || 'book'}.${format}`,
+    destination_path: firstFile.path || firstFile.originalPath || '',
+    classification: 'library',
+    metadata: {
+      title: book?.metadata?.fields?.title?.value || book?.title || '',
+      author: book?.author || '',
+    },
+  };
+}
+
+function publicationYearFromMetadata(value) {
+  const match = String(value || '').match(/\d{4}/);
+  return match ? match[0] : '';
 }
 
 function guessMetadataSource(book) {
@@ -3384,7 +3554,7 @@ function metadataEditorDraftFromCandidate(candidate) {
   };
 }
 
-function openMetadataEditor(candidateID) {
+function openScanMetadataEditor(candidateID) {
   const candidate = findLibraryScanCandidate(candidateID);
   if (!candidate) return;
   state.libraryImport.scan.editor = {
@@ -4657,7 +4827,7 @@ const CLICK_ACTIONS = {
     renderLibraryScanWorkspace();
   },
   useSuggestedLibraryScanCandidate: el => resolveLibraryScanCandidate(el.dataset.candidateId, 'use_suggested'),
-  editLibraryScanCandidateMetadata: el => openMetadataEditor(el.dataset.candidateId),
+  editLibraryScanCandidateMetadata: el => openScanMetadataEditor(el.dataset.candidateId),
   saveMetadataEditor: () => saveMetadataEditor(false),
   saveAndImportMetadataEditor: () => saveMetadataEditor(true),
   cancelMetadataEditor: () => closeMetadataEditor(),

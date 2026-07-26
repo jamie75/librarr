@@ -320,13 +320,36 @@ func TestV1BookMetadataAndProvenanceHandlers(t *testing.T) {
 		t.Fatalf("metadata body = %+v", body)
 	}
 
-	req = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/books/%d/metadata", ids.projectHailMaryID), strings.NewReader(`{"fields":{"title":"Project Hail Mary (Edited)","genres":["Science Fiction","Space Opera"]}}`))
+	req = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/books/%d/metadata", ids.projectHailMaryID), strings.NewReader(`{"fields":{"title":"Project Hail Mary (Edited)","edition_title":"Signed Edition","subtitle":"A Novel","description":"Edited description","publisher":"Ballantine","publication_date":"2022","language":"fr","genres":["Science Fiction","Space Opera"]}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
 	rr = httptest.NewRecorder()
 	s.handleV1BookMetadataPatch(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("patch status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var patchBody struct {
+		Metadata struct {
+			Fields map[string]v1MetadataFieldSummary `json:"fields"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &patchBody); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{
+		"title":            "Project Hail Mary (Edited)",
+		"edition_title":    "Signed Edition",
+		"subtitle":         "A Novel",
+		"description":      "Edited description",
+		"publisher":        "Ballantine",
+		"publication_date": "2022",
+		"language":         "fr",
+		"genres":           "Science Fiction, Space Opera",
+	} {
+		got := patchBody.Metadata.Fields[field]
+		if got.Value != want || !got.ManualOverride {
+			t.Fatalf("field %s = %+v, want %q manual override", field, got, want)
+		}
 	}
 
 	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/provenance", ids.projectHailMaryID), nil)

@@ -122,6 +122,13 @@ The review UI supports:
 The editor uses metadata already discovered during the scan. It does not perform
 internet metadata lookup or cover lookup yet.
 
+The Library book-details Metadata Editor uses the same editing/validation
+patterns for already-imported books and saves catalog metadata through
+`PATCH /api/v1/books/{id}/metadata`. The current persisted fields are title,
+edition title, subtitle, publisher, publication date/year, language,
+description, and tags/genres. Author, series, ISBN, destination folder, and
+filename are shown as context until those domain update paths are added.
+
 - progress
 - summary cards
 - search

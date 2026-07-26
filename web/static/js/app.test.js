@@ -88,7 +88,7 @@ const functionBundle = [
   extractFunctionSource('renderLibraryScanMetadataEditor'),
   extractFunctionSource('findLibraryScanCandidate'),
   extractFunctionSource('metadataEditorDraftFromCandidate'),
-  extractFunctionSource('openMetadataEditor'),
+  extractFunctionSource('openScanMetadataEditor'),
   extractFunctionSource('closeMetadataEditor'),
   extractFunctionSource('resetMetadataEditor'),
   extractFunctionSource('updateMetadataEditorDraft'),
@@ -127,6 +127,18 @@ const functionBundle = [
   extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
+  extractFunctionSource('libraryMetadataDraftFromBook'),
+  extractFunctionSource('renderLibraryMetadataEditor'),
+  extractFunctionSource('openLibraryMetadataEditor'),
+  extractFunctionSource('closeLibraryMetadataEditor'),
+  extractFunctionSource('resetLibraryMetadataEditor'),
+  extractFunctionSource('updateLibraryMetadataEditorDraft'),
+  extractFunctionSource('updateLibraryMetadataEditorValidation'),
+  extractFunctionSource('validateLibraryMetadataDraft'),
+  extractFunctionSource('libraryMetadataPatchFromDraft'),
+  extractFunctionSource('saveLibraryMetadataEditor'),
+  extractFunctionSource('libraryMetadataCandidate'),
+  extractFunctionSource('publicationYearFromMetadata'),
 ].join('\n\n');
 
 function libraryImportState(overrides = {}) {
@@ -177,6 +189,9 @@ function libraryImportState(overrides = {}) {
 function createContext(overrides = {}) {
   const base = {
     t: key => key,
+    formatIdentifierList: identifiers => (identifiers || []).map(item => item.value || item).join(', '),
+    formatSize: size => `${size} B`,
+    renderBookCover: () => '<cover />',
     renderOnboardingChecklist: () => '<section id="onboarding">onboarding</section>',
     renderCompactBookCard: (book, index) => `<article data-book="${index}">${book.title}</article>`,
     renderMetricCard: (label, value) => `<metric data-label="${label}">${value}</metric>`,
@@ -186,8 +201,15 @@ function createContext(overrides = {}) {
     renderDashboardEmpty: () => '<empty />',
     escapeHtml: value => String(value),
     LIBRARY_IMPORT_FIELDS: ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'],
-    state: { libraryImport: libraryImportState() },
-    document: { getElementById: () => null },
+    state: {
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      libraryBooks: [],
+      activeDetailBook: null,
+      activeDetailContext: null,
+      config: { library_repository_mode: 'normalized' },
+    },
+    document: { getElementById: () => null, querySelector: () => null },
     apiJson: async () => ({ success: true }),
     showToast: () => {},
     scrollToSettingsSection: () => {},
@@ -1108,6 +1130,183 @@ test('metadata editor save posts edited fields and save import starts a single i
   assert.equal(calls[1].url, '/api/v1/library/import');
   assert.match(calls[1].body, /"candidate_ids":\["review-1"\]/);
 });
+
+function sampleDetailBook() {
+  return {
+    id: 42,
+    title: 'Old Title',
+    author: 'Andy Weir',
+    series: 'Hail Mary',
+    mediaType: 'ebook',
+    formats: ['EPUB'],
+    files: [{ path: '/books/Andy Weir - Old Title.epub', format: 'EPUB', size: 10 }],
+    identifiers: [{ type: 'isbn', value: '9781234567890' }],
+    editions: [{ title: 'Old Edition', subtitle: 'Old Subtitle', publisher: 'Ballantine', publication_date: '2021', language: 'en' }],
+    description: 'Old description',
+    metadata: {
+      fields: {
+        title: { value: 'Old Title' },
+        edition_title: { value: 'Old Edition' },
+        subtitle: { value: 'Old Subtitle' },
+        publisher: { value: 'Ballantine' },
+        publication_date: { value: '2021' },
+        language: { value: 'en' },
+        description: { value: 'Old description' },
+        genres: { value: 'Science Fiction' },
+      },
+    },
+  };
+}
+
+test('library book details metadata button uses delegated action instead of inline onclick', () => {
+  assert.match(appSource, /data-action="openLibraryMetadataEditor"/);
+  assert.doesNotMatch(appSource, /onclick="openMetadataEditor\(\)"/);
+});
+
+test('library metadata editor populates current book metadata and documents unsupported fields', () => {
+  const book = sampleDetailBook();
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: true, draft: null, errors: [] },
+      activeDetailBook: book,
+      libraryBooks: [book],
+    },
+    normalizedLibraryMode: () => true,
+  });
+
+  const html = context.renderLibraryMetadataEditor(book);
+
+  assert.match(html, /Metadata Editor/);
+  assert.match(html, /value="Old Title"/);
+  assert.match(html, /value="Old Edition"/);
+  assert.match(html, /value="Science Fiction"/);
+  assert.match(html, /Not editable here yet/);
+  assert.match(html, /Author, series, ISBN, library, destination folder, and filename preview/);
+});
+
+test('library metadata editor save persists supported fields and refreshes library/details', async () => {
+  const book = sampleDetailBook();
+  const calls = [];
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: {
+        open: true,
+        draft: {
+          title: 'New Title',
+          edition_title: 'New Edition',
+          subtitle: 'New Subtitle',
+          publisher: 'New Publisher',
+          publication_year: '2022',
+          language: 'fr',
+          description: 'New description',
+          tags: 'sci-fi, space',
+          author: 'Andy Weir',
+        },
+        errors: [],
+      },
+      activeDetailBook: book,
+      activeDetailContext: { index: 0, collection: 'libraryBooks', bookId: 42 },
+      libraryBooks: [book],
+    },
+    normalizedLibraryMode: () => true,
+    loadLibrary: async () => {
+      calls.push({ type: 'loadLibrary' });
+      context.state.libraryBooks = [{ ...book, id: 42, title: 'New Title' }];
+    },
+    openBookDetails: async (index, collection) => calls.push({ type: 'openBookDetails', index, collection }),
+    apiJson: async (url, options = {}) => {
+      calls.push({ type: 'api', url, method: options.method, body: options.body });
+      return { success: true };
+    },
+  });
+
+  await context.saveLibraryMetadataEditor();
+
+  assert.equal(calls[0].url, '/api/v1/books/42/metadata');
+  assert.equal(calls[0].method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    fields: {
+      title: 'New Title',
+      edition_title: 'New Edition',
+      subtitle: 'New Subtitle',
+      publisher: 'New Publisher',
+      publication_date: '2022',
+      language: 'fr',
+      description: 'New description',
+      genres: ['sci-fi', 'space'],
+    },
+  });
+  assert.deepEqual(calls.slice(1), [
+    { type: 'loadLibrary' },
+    { type: 'openBookDetails', index: 0, collection: 'libraryBooks' },
+  ]);
+  assert.equal(context.state.libraryMetadataEditor.open, false);
+});
+
+test('library metadata editor cancel and reset make no API changes', () => {
+  const book = sampleDetailBook();
+  const calls = [];
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: true, draft: { title: 'Changed' }, errors: [] },
+      activeDetailBook: book,
+      activeDetailContext: { index: 0, collection: 'libraryBooks', bookId: 42 },
+      libraryBooks: [book],
+    },
+    normalizedLibraryMode: () => true,
+    openBookDetails: async () => calls.push('openBookDetails'),
+    apiJson: async () => calls.push('api'),
+  });
+
+  context.resetLibraryMetadataEditor();
+  assert.equal(context.state.libraryMetadataEditor.draft.title, 'Old Title');
+  context.closeLibraryMetadataEditor();
+  assert.equal(context.state.libraryMetadataEditor.open, false);
+  assert.deepEqual(calls, ['openBookDetails', 'openBookDetails']);
+});
+
+test('library metadata editor API errors are displayed and editor remains open', async () => {
+  const book = sampleDetailBook();
+  const toasts = [];
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: true, draft: { ...contextSafeDraft(), title: 'New Title', author: 'Andy Weir' }, errors: [] },
+      activeDetailBook: book,
+      activeDetailContext: { index: 0, collection: 'libraryBooks', bookId: 42 },
+      libraryBooks: [book],
+    },
+    normalizedLibraryMode: () => true,
+    showToast: (msg, type) => toasts.push({ msg, type }),
+    apiJson: async () => { throw new Error('metadata service unavailable'); },
+  });
+
+  await context.saveLibraryMetadataEditor();
+
+  assert.equal(context.state.libraryMetadataEditor.open, true);
+  assert.deepEqual(toasts, [{ msg: 'metadata service unavailable', type: 'error' }]);
+});
+
+function contextSafeDraft() {
+  return {
+    title: 'Old Title',
+    edition_title: 'Old Edition',
+    subtitle: 'Old Subtitle',
+    publisher: 'Ballantine',
+    publication_year: '2021',
+    language: 'en',
+    description: 'Old description',
+    tags: 'Science Fiction',
+    author: 'Andy Weir',
+  };
+}
 
 test('retry failed import posts only failed ready candidates', async () => {
   const scanState = libraryImportState().scan;
