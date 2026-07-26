@@ -275,6 +275,77 @@ func TestQBittorrentAddTorrentAcceptsJSONSuccess(t *testing.T) {
 	}
 }
 
+func TestQBittorrentAddTorrentUsesConfiguredRemoteSavePath(t *testing.T) {
+	const hash = "e2f71d638953c009f17594d6982c6de68b06d985"
+	var gotSavePath, gotCategory string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "QBT_SID", Value: "abc123", Path: "/"})
+		_, _ = w.Write([]byte("Ok."))
+	})
+	mux.HandleFunc("/api/v2/torrents/add", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+			t.Fatalf("Content-Type = %q", got)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotSavePath = r.Form.Get("savepath")
+		gotCategory = r.Form.Get("category")
+		_, _ = w.Write([]byte(`{"added_torrent_ids":["` + hash + `"],"success_count":1}`))
+	})
+	mux.HandleFunc("/api/v2/torrents/info", torrentInfoHandler(hash, "Test Book"))
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
+	q.cfg.QBSavePath = "/downloads/rclone-mnt/downloads"
+	q.cfg.IncomingDir = "/data/incoming"
+	if err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Test Book", "", "", ""); err != nil {
+		t.Fatalf("AddTorrent returned error: %v", err)
+	}
+	if gotSavePath != "/downloads/rclone-mnt/downloads" {
+		t.Fatalf("savepath = %q", gotSavePath)
+	}
+	if gotSavePath == q.cfg.IncomingDir {
+		t.Fatalf("savepath used local incoming dir: %q", gotSavePath)
+	}
+	if gotCategory != "librarr" {
+		t.Fatalf("category = %q", gotCategory)
+	}
+}
+
+func TestQBittorrentAddTorrentOmitsEmptySavePath(t *testing.T) {
+	const hash = "e2f71d638953c009f17594d6982c6de68b06d985"
+	var sawSavePath bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "QBT_SID", Value: "abc123", Path: "/"})
+		_, _ = w.Write([]byte("Ok."))
+	})
+	mux.HandleFunc("/api/v2/torrents/add", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		_, sawSavePath = r.Form["savepath"]
+		_, _ = w.Write([]byte(`{"added_torrent_ids":["` + hash + `"],"success_count":1}`))
+	})
+	mux.HandleFunc("/api/v2/torrents/info", torrentInfoHandler(hash, "Test Book"))
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
+	q.cfg.QBSavePath = ""
+	if err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Test Book", "", "", ""); err != nil {
+		t.Fatalf("AddTorrent returned error: %v", err)
+	}
+	if sawSavePath {
+		t.Fatal("savepath field was sent even though no qBittorrent save path was configured")
+	}
+}
+
 func TestQBittorrentAddTorrentAcceptsOkBody(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +520,7 @@ func TestQBittorrentHTTPURLFetchedAndUploadedAsMultipart(t *testing.T) {
 		if string(body) != string(validTorrentBytes()) {
 			t.Fatalf("uploaded body mismatch")
 		}
-		if got := r.MultipartForm.Value["savepath"]; len(got) != 1 || got[0] != "/downloads" {
+		if got := r.MultipartForm.Value["savepath"]; len(got) != 1 || got[0] != "/downloads/rclone-mnt/downloads" {
 			t.Fatalf("savepath = %#v", got)
 		}
 		if got := r.MultipartForm.Value["category"]; len(got) != 1 || got[0] != "librarr" {
@@ -466,6 +537,8 @@ func TestQBittorrentHTTPURLFetchedAndUploadedAsMultipart(t *testing.T) {
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 	q.cfg.ProwlarrURL = srv.URL
 	q.cfg.ProwlarrAPIKey = "prowlarr-key"
+	q.cfg.QBSavePath = "/downloads/rclone-mnt/downloads"
+	q.cfg.IncomingDir = "/data/incoming"
 
 	if err := q.AddTorrent(srv.URL+"/download/book.torrent", "Search Result Name", "", "", hash); err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)

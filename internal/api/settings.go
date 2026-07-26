@@ -56,28 +56,34 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"remove_torrent_after_import": s.cfg.RemoveTorrentAfterImport,
 
 		// Integration URLs and credentials (sensitive ones are masked below).
-		"qb_url":               s.cfg.QBUrl,
-		"qb_user":              s.cfg.QBUser,
-		"qb_pass":              s.cfg.QBPass,
-		"transmission_url":     s.cfg.TransmissionURL,
-		"transmission_user":    s.cfg.TransmissionUser,
-		"transmission_pass":    s.cfg.TransmissionPass,
-		"torrent_client":       s.cfg.TorrentClient,
-		"prowlarr_url":         s.cfg.ProwlarrURL,
-		"prowlarr_api_key":     s.cfg.ProwlarrAPIKey,
-		"sabnzbd_url":          s.cfg.SABnzbdURL,
-		"sabnzbd_api_key":      s.cfg.SABnzbdAPIKey,
-		"sabnzbd_category":     s.cfg.SABnzbdCategory,
-		"abs_url":              s.cfg.ABSURL,
-		"abs_token":            s.cfg.ABSToken,
-		"kavita_url":           s.cfg.KavitaURL,
-		"kavita_user":          s.cfg.KavitaUser,
-		"kavita_pass":          s.cfg.KavitaPass,
-		"komga_url":            s.cfg.KomgaURL,
-		"komga_user":           s.cfg.KomgaUser,
-		"komga_pass":           s.cfg.KomgaPass,
-		"calibre_url":          s.cfg.CalibreURL,
-		"calibre_library_path": s.cfg.CalibreLibraryPath,
+		"qb_url":                 s.cfg.QBUrl,
+		"qb_user":                s.cfg.QBUser,
+		"qb_pass":                s.cfg.QBPass,
+		"qb_save_path":           s.cfg.QBSavePath,
+		"qb_category":            s.cfg.QBCategory,
+		"qb_audiobook_save_path": s.cfg.QBAudiobookSavePath,
+		"qb_audiobook_category":  s.cfg.QBAudiobookCategory,
+		"qb_manga_save_path":     s.cfg.QBMangaSavePath,
+		"qb_manga_category":      s.cfg.QBMangaCategory,
+		"transmission_url":       s.cfg.TransmissionURL,
+		"transmission_user":      s.cfg.TransmissionUser,
+		"transmission_pass":      s.cfg.TransmissionPass,
+		"torrent_client":         s.cfg.TorrentClient,
+		"prowlarr_url":           s.cfg.ProwlarrURL,
+		"prowlarr_api_key":       s.cfg.ProwlarrAPIKey,
+		"sabnzbd_url":            s.cfg.SABnzbdURL,
+		"sabnzbd_api_key":        s.cfg.SABnzbdAPIKey,
+		"sabnzbd_category":       s.cfg.SABnzbdCategory,
+		"abs_url":                s.cfg.ABSURL,
+		"abs_token":              s.cfg.ABSToken,
+		"kavita_url":             s.cfg.KavitaURL,
+		"kavita_user":            s.cfg.KavitaUser,
+		"kavita_pass":            s.cfg.KavitaPass,
+		"komga_url":              s.cfg.KomgaURL,
+		"komga_user":             s.cfg.KomgaUser,
+		"komga_pass":             s.cfg.KomgaPass,
+		"calibre_url":            s.cfg.CalibreURL,
+		"calibre_library_path":   s.cfg.CalibreLibraryPath,
 	}
 
 	// Merge defaults under settings (settings override).
@@ -184,8 +190,23 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.AnnasArchiveSecretKey = v
 		slog.Info("annas archive secret key updated")
 	}
+	s.applyStringSetting(data, "qb_save_path", &s.cfg.QBSavePath)
+	s.applyStringSetting(data, "qb_category", &s.cfg.QBCategory)
+	s.applyStringSetting(data, "qb_audiobook_save_path", &s.cfg.QBAudiobookSavePath)
+	s.applyStringSetting(data, "qb_audiobook_category", &s.cfg.QBAudiobookCategory)
+	s.applyStringSetting(data, "qb_manga_save_path", &s.cfg.QBMangaSavePath)
+	s.applyStringSetting(data, "qb_manga_category", &s.cfg.QBMangaCategory)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *Server) applyStringSetting(data map[string]interface{}, key string, target *string) {
+	if target == nil {
+		return
+	}
+	if value, ok := data[key].(string); ok && strings.TrimSpace(value) != "" {
+		*target = value
+	}
 }
 
 func (s *Server) loadSettings() map[string]interface{} {

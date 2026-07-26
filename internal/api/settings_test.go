@@ -28,11 +28,17 @@ func settingsTestServer(t *testing.T) (*Server, string) {
 	cfg := &config.Config{
 		SettingsFile: settingsPath,
 		// Seed the env-layer values that the handler injects as defaults.
-		ProwlarrURL:    "http://env-prowlarr:9696",
-		ProwlarrAPIKey: "ENV_API_KEY",
-		QBUrl:          "http://env-qbit:8080",
-		QBUser:         "admin",
-		QBPass:         "env-qb-pass",
+		ProwlarrURL:         "http://env-prowlarr:9696",
+		ProwlarrAPIKey:      "ENV_API_KEY",
+		QBUrl:               "http://env-qbit:8080",
+		QBUser:              "admin",
+		QBPass:              "env-qb-pass",
+		QBSavePath:          "/env/ebooks",
+		QBCategory:          "env-ebooks",
+		QBAudiobookSavePath: "/env/audiobooks",
+		QBAudiobookCategory: "env-audiobooks",
+		QBMangaSavePath:     "/env/manga",
+		QBMangaCategory:     "env-manga",
 	}
 
 	database, err := db.New(filepath.Join(dir, "test.db"))
@@ -45,6 +51,58 @@ func settingsTestServer(t *testing.T) (*Server, string) {
 	searchMgr := search.NewManager(cfg, nil, health)
 
 	return &Server{cfg: cfg, db: database, searchMgr: searchMgr}, settingsPath
+}
+
+func TestHandleSettingsExposesQBittorrentSavePathDefaults(t *testing.T) {
+	s, _ := settingsTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rr := httptest.NewRecorder()
+	s.handleGetSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["qb_save_path"] != "/env/ebooks" || settings["incoming_dir"] == settings["qb_save_path"] {
+		t.Fatalf("settings = %+v", settings)
+	}
+	if settings["qb_audiobook_save_path"] != "/env/audiobooks" || settings["qb_manga_save_path"] != "/env/manga" {
+		t.Fatalf("qB media paths missing: %+v", settings)
+	}
+}
+
+func TestHandleSaveSettingsAppliesQBittorrentSavePathsToRuntimeConfig(t *testing.T) {
+	s, settingsPath := settingsTestServer(t)
+	body, _ := json.Marshal(map[string]interface{}{
+		"qb_save_path":           "/remote/ebooks",
+		"qb_category":            "ebooks",
+		"qb_audiobook_save_path": "/remote/audiobooks",
+		"qb_audiobook_category":  "audio",
+		"qb_manga_save_path":     "/remote/manga",
+		"qb_manga_category":      "manga",
+		"incoming_dir":           "/data/incoming",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleSaveSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.cfg.QBSavePath != "/remote/ebooks" || s.cfg.IncomingDir == s.cfg.QBSavePath {
+		t.Fatalf("runtime paths: QBSavePath=%q IncomingDir=%q", s.cfg.QBSavePath, s.cfg.IncomingDir)
+	}
+	if s.cfg.QBAudiobookSavePath != "/remote/audiobooks" || s.cfg.QBMangaSavePath != "/remote/manga" {
+		t.Fatalf("runtime media paths: audio=%q manga=%q", s.cfg.QBAudiobookSavePath, s.cfg.QBMangaSavePath)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"qb_save_path": "/remote/ebooks"`) {
+		t.Fatalf("saved settings = %s", string(data))
+	}
 }
 
 func TestHandleTestProwlarrReturnsStructuredDiagnostics(t *testing.T) {

@@ -49,6 +49,12 @@ Portainer/homelab deployment:
 This avoids sharing the production database, settings file, or organized
 library paths.
 
+`INCOMING_DIR` and `MANGA_INCOMING_DIR` are Librarr-local staging paths inside
+the dogfood container. `QB_SAVE_PATH`, `QB_AUDIOBOOK_SAVE_PATH`, and
+`QB_MANGA_SAVE_PATH` are remote paths as seen by qBittorrent and should not be
+set to `/data/incoming` unless qBittorrent can actually write to that same
+container path.
+
 For local-only development, use equivalent paths under a disposable local
 directory and update the compose file in your private working copy.
 

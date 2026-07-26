@@ -19,9 +19,9 @@ services:
       MANGA_DIR: /books/manga
       INCOMING_DIR: /data/incoming
       MANGA_INCOMING_DIR: /data/manga-incoming
-      QB_SAVE_PATH: /data/incoming
-      QB_AUDIOBOOK_SAVE_PATH: /data/incoming/audiobooks
-      QB_MANGA_SAVE_PATH: /data/manga-incoming
+      QB_SAVE_PATH: /downloads
+      QB_AUDIOBOOK_SAVE_PATH: /audiobooks-incoming
+      QB_MANGA_SAVE_PATH: /manga-incoming
       QB_CATEGORY: librarr-v2
       QB_AUDIOBOOK_CATEGORY: librarr-v2-audiobooks
       QB_MANGA_CATEGORY: librarr-v2-manga

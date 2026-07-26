@@ -241,13 +241,14 @@ func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, ex
 	expectedInfoHash = firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL))
 	logTitle := netutil.SanitizeLogValue(title)
 	logCategory := netutil.SanitizeLogValue(category)
+	logSavePath := netutil.SanitizeLogValue(savePath)
 	var ids []string
 	var err error
 	if isMagnetURL(torrentURL) {
-		slog.Info("submitting magnet to qBittorrent", "title", logTitle, "category", logCategory)
+		slog.Info("submitting magnet to qBittorrent", "title", logTitle, "content_type", "application/x-www-form-urlencoded", "category", logCategory, "save_path", logSavePath)
 		ids, err = q.addTorrentURL(torrentURL, savePath, category)
 	} else if isHTTPURL(torrentURL) && q.isProwlarrTorrentURL(torrentURL) {
-		slog.Info("fetching torrent before qBittorrent upload", "title", logTitle, "category", logCategory)
+		slog.Info("fetching torrent before qBittorrent upload", "title", logTitle, "category", logCategory, "save_path", logSavePath)
 		var fetched fetchedTorrent
 		fetched, err = q.fetchTorrent(torrentURL)
 		if err == nil {
@@ -256,11 +257,11 @@ func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, ex
 			}
 			// The hash of the fetched bytes is authoritative for verification.
 			expectedInfoHash = fetched.infoHash
-			slog.Info("uploading torrent bytes to qBittorrent", "title", logTitle, "category", logCategory, "filename", netutil.SanitizeLogValue(fetched.filename), "bytes", len(fetched.body))
+			slog.Info("uploading torrent bytes to qBittorrent", "title", logTitle, "content_type", "multipart/form-data", "category", logCategory, "save_path", logSavePath, "filename", netutil.SanitizeLogValue(fetched.filename), "bytes", len(fetched.body))
 			ids, err = q.addTorrentFile(fetched, savePath, category)
 		}
 	} else {
-		slog.Info("submitting torrent URL to qBittorrent", "title", logTitle, "category", logCategory)
+		slog.Info("submitting torrent URL to qBittorrent", "title", logTitle, "content_type", "application/x-www-form-urlencoded", "category", logCategory, "save_path", logSavePath)
 		ids, err = q.addTorrentURL(torrentURL, savePath, category)
 	}
 	if err != nil {
@@ -283,9 +284,13 @@ func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, ex
 
 func (q *QBittorrentClient) addTorrentURL(torrentURL, savePath, category string) ([]string, error) {
 	data := url.Values{
-		"urls":     {torrentURL},
-		"savepath": {savePath},
-		"category": {category},
+		"urls": {torrentURL},
+	}
+	if savePath != "" {
+		data.Set("savepath", savePath)
+	}
+	if category != "" {
+		data.Set("category", category)
 	}
 
 	resp, err := q.doRequest("POST", "/api/v2/torrents/add", data)

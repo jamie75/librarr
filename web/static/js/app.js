@@ -2934,7 +2934,7 @@ document.getElementById('change-password-form')?.addEventListener('submit', asyn
 const INTEGRATION_FIELDS = {
   annas:          ['annas_archive_domain', 'annas_archive_secret_key'],
   prowlarr:       ['prowlarr_url', 'prowlarr_api_key'],
-  qbittorrent:    ['qb_url', 'qb_user', 'qb_pass'],
+  qbittorrent:    ['qb_url', 'qb_user', 'qb_pass', 'qb_save_path', 'qb_category', 'qb_audiobook_save_path', 'qb_audiobook_category', 'qb_manga_save_path', 'qb_manga_category'],
   transmission:   ['transmission_url', 'transmission_user', 'transmission_pass', 'torrent_client'],
   sabnzbd:        ['sabnzbd_url', 'sabnzbd_api_key', 'sabnzbd_category'],
   audiobookshelf: ['abs_url', 'abs_token'],

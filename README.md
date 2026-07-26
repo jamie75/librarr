@@ -381,6 +381,11 @@ services:
       INCOMING_DIR: /data/incoming
       PROWLARR_URL: http://prowlarr:9696
       QB_URL: https://qbittorrent.example.invalid
+      # Remote paths as seen by qBittorrent. These are not Librarr's local
+      # INCOMING_DIR staging paths unless both containers share the same path.
+      QB_SAVE_PATH: /downloads
+      QB_AUDIOBOOK_SAVE_PATH: /audiobooks-incoming
+      QB_MANGA_SAVE_PATH: /manga-incoming
       QB_CATEGORY: librarr
       OIDC_PROXY_HEADERS_ENABLED: "false"
     networks:

@@ -1456,6 +1456,14 @@ test('testConnection posts current qBittorrent settings and renders diagnostics'
   assert.match(elements['diagnostic-qbittorrent-result'].innerHTML, /API Version/);
 });
 
+test('qBittorrent integration save includes remote save paths and categories', () => {
+  assert.match(appSource, /qb_save_path/);
+  assert.match(appSource, /qb_audiobook_save_path/);
+  assert.match(appSource, /qb_manga_save_path/);
+  assert.match(indexHTML, /id="setting-qb_save_path"/);
+  assert.match(indexHTML, /Remote path as seen by qBittorrent/);
+});
+
 test('diagnosticPayload reads current unsaved Prowlarr form values', () => {
   const elements = {
     'setting-prowlarr_url': { value: 'http://unsaved-prowlarr:9697' },

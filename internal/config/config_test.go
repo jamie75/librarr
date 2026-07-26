@@ -178,6 +178,41 @@ func TestLoad_NormalizesSettingsFileDomain(t *testing.T) {
 	}
 }
 
+func TestLoad_AppliesQBittorrentSavePathsFromSettings(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := dir + "/settings.json"
+	if err := os.WriteFile(settingsPath, []byte(`{
+		"qb_save_path": "/remote/ebooks",
+		"qb_category": "ebooks-cat",
+		"qb_audiobook_save_path": "/remote/audiobooks",
+		"qb_audiobook_category": "audio-cat",
+		"qb_manga_save_path": "/remote/manga",
+		"qb_manga_category": "manga-cat",
+		"incoming_dir": "/data/incoming"
+	}`), 0600); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+	t.Setenv("SETTINGS_FILE", settingsPath)
+	t.Setenv("QB_SAVE_PATH", "/env/ebooks")
+
+	cfg := Load()
+	if cfg.QBSavePath != "/remote/ebooks" {
+		t.Fatalf("QBSavePath = %q", cfg.QBSavePath)
+	}
+	if cfg.QBCategory != "ebooks-cat" {
+		t.Fatalf("QBCategory = %q", cfg.QBCategory)
+	}
+	if cfg.QBAudiobookSavePath != "/remote/audiobooks" || cfg.QBAudiobookCategory != "audio-cat" {
+		t.Fatalf("audiobook qB settings = %q / %q", cfg.QBAudiobookSavePath, cfg.QBAudiobookCategory)
+	}
+	if cfg.QBMangaSavePath != "/remote/manga" || cfg.QBMangaCategory != "manga-cat" {
+		t.Fatalf("manga qB settings = %q / %q", cfg.QBMangaSavePath, cfg.QBMangaCategory)
+	}
+	if cfg.IncomingDir != "/data/incoming" {
+		t.Fatalf("IncomingDir = %q", cfg.IncomingDir)
+	}
+}
+
 func TestLoad_SettingsFileOverridesEnv(t *testing.T) {
 	// Env says one thing; settings file should win.
 	os.Setenv("PROWLARR_URL", "http://from-env:9696")
