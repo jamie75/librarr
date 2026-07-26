@@ -206,18 +206,15 @@ func validateTestURL(rawURL string) error {
 
 // handleTestProwlarr runs staged Prowlarr diagnostics.
 func (s *Server) handleTestProwlarr(w http.ResponseWriter, r *http.Request) {
-	var data struct {
-		URL    string `json:"url"`
-		APIKey string `json:"api_key"`
-	}
+	var data map[string]string
 	_ = json.NewDecoder(r.Body).Decode(&data)
 
-	testURL := data.URL
-	apiKey := data.APIKey
-	if testURL == "" {
+	testURL, hasURL := data["url"]
+	apiKey, hasAPIKey := data["api_key"]
+	if !hasURL {
 		testURL = s.cfg.ProwlarrURL
 	}
-	if apiKey == "" || apiKey == maskedValue {
+	if !hasAPIKey || apiKey == maskedValue {
 		apiKey = s.cfg.ProwlarrAPIKey
 	}
 
@@ -233,22 +230,19 @@ func (s *Server) handleTestProwlarr(w http.ResponseWriter, r *http.Request) {
 
 // handleTestQBittorrent runs staged qBittorrent diagnostics.
 func (s *Server) handleTestQBittorrent(w http.ResponseWriter, r *http.Request) {
-	var data struct {
-		URL      string `json:"url"`
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
+	var data map[string]string
 	_ = json.NewDecoder(r.Body).Decode(&data)
-	testURL := data.URL
-	username := data.Username
-	password := data.Password
-	if testURL == "" {
+
+	testURL, hasURL := data["url"]
+	username, hasUsername := data["username"]
+	password, hasPassword := data["password"]
+	if !hasURL {
 		testURL = s.cfg.QBUrl
 	}
-	if username == "" {
+	if !hasUsername {
 		username = s.cfg.QBUser
 	}
-	if password == "" || password == maskedValue {
+	if !hasPassword || password == maskedValue {
 		password = s.cfg.QBPass
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)

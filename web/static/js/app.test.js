@@ -1062,6 +1062,21 @@ test('testConnection posts current qBittorrent settings and renders diagnostics'
   assert.match(elements['diagnostic-qbittorrent-result'].innerHTML, /API Version/);
 });
 
+test('diagnosticPayload reads current unsaved Prowlarr form values', () => {
+  const elements = {
+    'setting-prowlarr_url': { value: 'http://unsaved-prowlarr:9697' },
+    'setting-prowlarr_api_key': { value: 'unsaved-key' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.diagnosticPayload('prowlarr'))), {
+    url: 'http://unsaved-prowlarr:9697',
+    api_key: 'unsaved-key',
+  });
+});
+
 function sampleScanResult() {
   return {
     job_id: 'job-1',

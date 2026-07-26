@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JeremiahM37/librarr/internal/config"
@@ -86,6 +87,49 @@ func TestHandleTestProwlarrReturnsStructuredDiagnostics(t *testing.T) {
 	}
 }
 
+func TestHandleTestProwlarrUsesPostedURLInsteadOfSavedConfig(t *testing.T) {
+	saved := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"saved-would-succeed"}`))
+	}))
+	defer saved.Close()
+	posted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer posted.Close()
+
+	s, _ := settingsTestServer(t)
+	s.cfg.ProwlarrURL = saved.URL
+	s.cfg.ProwlarrAPIKey = "saved-key"
+
+	body, _ := json.Marshal(map[string]interface{}{"url": posted.URL, "api_key": maskedValue})
+	req := httptest.NewRequest(http.MethodPost, "/api/test/prowlarr", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleTestProwlarr(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Steps   []struct {
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Fatalf("posted URL should have failed instead of falling back to saved URL: %+v", resp)
+	}
+	for _, step := range resp.Steps {
+		if step.Name == "API Validation" && step.Status == "failed" && strings.Contains(step.Message, "404") {
+			return
+		}
+	}
+	t.Fatalf("missing failed API validation for posted URL: %+v", resp.Steps)
+}
+
 func TestHandleTestQBittorrentReturnsAuthenticationSuggestion(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Fails.", http.StatusForbidden)
@@ -121,6 +165,64 @@ func TestHandleTestQBittorrentReturnsAuthenticationSuggestion(t *testing.T) {
 		}
 	}
 	t.Fatalf("missing failed auth step with suggestion: %+v", resp.Steps)
+}
+
+func TestHandleTestQBittorrentUsesPostedUsernameInsteadOfSavedConfig(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("username") != "admin" {
+				http.Error(w, "Fails.", http.StatusForbidden)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "QBT_SID", Value: "sid"})
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/app/version":
+			_, _ = w.Write([]byte("v5.0.0"))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	s, _ := settingsTestServer(t)
+	s.cfg.QBUrl = upstream.URL
+	s.cfg.QBUser = "admin"
+	s.cfg.QBPass = "saved-password"
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"url":      upstream.URL,
+		"username": "wrong-user",
+		"password": maskedValue,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/test/qbittorrent", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleTestQBittorrent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Steps   []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Fatalf("posted username should have failed instead of falling back to saved username: %+v", resp)
+	}
+	for _, step := range resp.Steps {
+		if step.Name == "Authentication" && step.Status == "failed" {
+			return
+		}
+	}
+	t.Fatalf("missing failed auth step for posted username: %+v", resp.Steps)
 }
 
 func saveSettings(t *testing.T, s *Server, payload map[string]interface{}) {

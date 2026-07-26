@@ -3,10 +3,12 @@ package diagnostics
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiagnoseProwlarrSuccess(t *testing.T) {
@@ -53,6 +55,47 @@ func TestDiagnoseProwlarrMissingConfiguration(t *testing.T) {
 	}
 	if result.Steps[0].Name != "Configuration" || result.Steps[0].Status != StatusFailed {
 		t.Fatalf("steps = %+v", result.Steps)
+	}
+}
+
+func TestDiagnoseInvalidHostnameReportsDNSFailure(t *testing.T) {
+	result := DiagnoseProwlarr(context.Background(), ProwlarrConfig{
+		URL:     "http://librarr-diagnostics.invalid:9696",
+		APIKey:  "secret",
+		Timeout: 200 * time.Millisecond,
+	})
+	step := findStep(result, "DNS Lookup")
+	if result.Success || step == nil || step.Status != StatusFailed || !strings.Contains(step.Message, "Unable to resolve hostname") {
+		t.Fatalf("result = %+v dns=%+v", result, step)
+	}
+}
+
+func TestDiagnoseWrongPortReportsTCPFailure(t *testing.T) {
+	addr := unusedLocalAddress(t)
+	result := DiagnoseProwlarr(context.Background(), ProwlarrConfig{
+		URL:     "http://" + addr,
+		APIKey:  "secret",
+		Timeout: 200 * time.Millisecond,
+	})
+	step := findStep(result, "TCP Connection")
+	if result.Success || step == nil || step.Status != StatusFailed {
+		t.Fatalf("result = %+v tcp=%+v", result, step)
+	}
+}
+
+func TestDiagnoseHTTPServerBehindHTTPSReportsTLSFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"2.0.5"}`))
+	}))
+	defer server.Close()
+	result := DiagnoseProwlarr(context.Background(), ProwlarrConfig{
+		URL:     "https://" + strings.TrimPrefix(server.URL, "http://"),
+		APIKey:  "secret",
+		Timeout: 500 * time.Millisecond,
+	})
+	step := findStep(result, "HTTPS")
+	if result.Success || step == nil || step.Status != StatusFailed {
+		t.Fatalf("result = %+v tls=%+v", result, step)
 	}
 }
 
@@ -116,4 +159,17 @@ func findStep(result Result, name string) *Step {
 		}
 	}
 	return nil
+}
+
+func unusedLocalAddress(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return addr
 }
