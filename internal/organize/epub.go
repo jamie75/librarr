@@ -174,9 +174,36 @@ type rootfile struct {
 type opfPackage struct {
 	XMLName  xml.Name    `xml:"package"`
 	Metadata opfMetadata `xml:"metadata"`
+	Manifest opfManifest `xml:"manifest"`
+	Guide    opfGuide    `xml:"guide"`
 }
 
 type opfMetadata struct {
 	Title   string `xml:"title"`
 	Creator string `xml:"creator"`
+	Meta    []struct {
+		Name    string `xml:"name,attr"`
+		Content string `xml:"content,attr"`
+	} `xml:"meta"`
+}
+
+type opfManifest struct {
+	Items []opfManifestItem `xml:"item"`
+}
+
+type opfManifestItem struct {
+	ID         string `xml:"id,attr"`
+	Href       string `xml:"href,attr"`
+	MediaType  string `xml:"media-type,attr"`
+	Properties string `xml:"properties,attr"`
+}
+
+type opfGuide struct {
+	References []opfGuideReference `xml:"reference"`
+}
+
+type opfGuideReference struct {
+	Type  string `xml:"type,attr"`
+	Href  string `xml:"href,attr"`
+	Title string `xml:"title,attr"`
 }

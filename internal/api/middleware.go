@@ -139,6 +139,9 @@ func authenticateRequest(cfg *config.Config, database *db.DB, sessions *SessionS
 		username := proxyIdentityFromRequest(r)
 		if username != "" {
 			if user, err := resolveOIDCUser(cfg, database, username); err == nil && user != nil {
+				if !user.Enabled {
+					return r, false
+				}
 				if sessions != nil {
 					if ensureSessionForUser(w, r, sessions, user) {
 						_ = database.UpdateLastLogin(user.ID)
@@ -172,10 +175,15 @@ func authenticateRequest(cfg *config.Config, database *db.DB, sessions *SessionS
 		cookie, err := r.Cookie("librarr_session")
 		if err == nil {
 			if data, ok := sessions.Get(cookie.Value); ok {
-				ctx := context.WithValue(r.Context(), ctxUserID, data.UserID)
-				ctx = context.WithValue(ctx, ctxUserRole, data.Role)
-				ctx = context.WithValue(ctx, ctxUsername, data.Username)
-				return r.WithContext(ctx), true
+				user, err := database.GetUser(data.UserID)
+				if err != nil || !user.Enabled {
+					sessions.Delete(cookie.Value)
+				} else {
+					ctx := context.WithValue(r.Context(), ctxUserID, data.UserID)
+					ctx = context.WithValue(ctx, ctxUserRole, data.Role)
+					ctx = context.WithValue(ctx, ctxUsername, data.Username)
+					return r.WithContext(ctx), true
+				}
 			}
 		}
 	}

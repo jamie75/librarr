@@ -364,7 +364,12 @@ The metadata editor is part of the scan review flow rather than a separate
 pipeline. It stores user edits on the scan candidate, sends them as explicit
 manual metadata overrides when import starts, and never modifies the source
 file. The first implementation is offline-only: no internet metadata provider
-or cover lookup is called from the editor.
+is called from the editor.
+
+Local cover handling follows the same ownership rule. Librarr may extract
+embedded artwork from files the user already owns, cache it under the data
+directory, and attach a normalized `covers` row through `LibraryService`.
+External cover downloads remain a separate metadata-provider milestone.
 
 ### Import guarantees
 

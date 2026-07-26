@@ -139,6 +139,15 @@ const functionBundle = [
   extractFunctionSource('saveLibraryMetadataEditor'),
   extractFunctionSource('libraryMetadataCandidate'),
   extractFunctionSource('publicationYearFromMetadata'),
+  extractFunctionSource('loadUsers'),
+  extractFunctionSource('editUser'),
+  extractFunctionSource('changeUserRole'),
+  extractFunctionSource('resetUserPassword'),
+  extractFunctionSource('toggleUserEnabled'),
+  extractFunctionSource('updateUser'),
+  extractFunctionSource('cancelCreateUser'),
+  extractFunctionSource('addUser'),
+  extractFunctionSource('loadInviteCodes'),
 ].join('\n\n');
 
 function libraryImportState(overrides = {}) {
@@ -1418,6 +1427,93 @@ test('diagnosticPayload reads current unsaved Prowlarr form values', () => {
     url: 'http://unsaved-prowlarr:9697',
     api_key: 'unsaved-key',
   });
+});
+
+test('loadUsers renders account table with status and management actions', async () => {
+  const elements = {
+    'user-management': { classList: fakeClassList(['hidden']) },
+    'users-list': { innerHTML: '' },
+  };
+  const context = createContext({
+    state: { currentUser: 'admin' },
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async url => {
+      assert.equal(url, '/api/users');
+      return {
+        success: true,
+        users: [
+          { id: 1, username: 'admin', role: 'admin', enabled: true, created_at: '2026-01-01T00:00:00Z' },
+          { id: 2, username: 'reader', role: 'user', enabled: false, created_at: '2026-01-02T00:00:00Z', last_login: '2026-01-03T00:00:00Z' },
+        ],
+      };
+    },
+  });
+
+  await context.loadUsers();
+
+  assert.equal(elements['user-management'].classList.contains('hidden'), false);
+  assert.match(elements['users-list'].innerHTML, /reader|Disabled|Reset Password|Enable|Delete/);
+  assert.match(elements['users-list'].innerHTML, /disabled aria-disabled="true"|>You</);
+});
+
+test('addUser posts direct create payload with selected role', async () => {
+  const calls = [];
+  const elements = {
+    'new-user-name': { value: 'reader' },
+    'new-user-pass': { value: 'secret123' },
+    'new-user-role': { value: 'admin' },
+    'new-user-admin': { checked: false },
+    'user-management': { classList: fakeClassList() },
+    'users-list': { innerHTML: '' },
+  };
+  const events = [];
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+      if (url === '/api/users') return { success: true, users: [] };
+      return { success: true };
+    },
+    showToast: (msg, kind) => events.push(`${kind}:${msg}`),
+  });
+
+  await context.addUser();
+
+  assert.deepEqual(calls[0], {
+    url: '/api/register',
+    method: 'POST',
+    body: { username: 'reader', password: 'secret123', role: 'admin' },
+  });
+  assert.equal(elements['new-user-name'].value, '');
+  assert.equal(elements['new-user-pass'].value, '');
+  assert.equal(elements['new-user-role'].value, 'user');
+  assert.deepEqual(events, ['success:user_created']);
+});
+
+test('loadInviteCodes renders role, uses, expiration, created, used, and expired state', async () => {
+  const elements = {
+    'invite-codes-list': { innerHTML: '' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async url => {
+      assert.equal(url, '/api/invites');
+      return {
+        invites: [
+          { id: 1, code: 'abc', role: 'user', uses: 1, max_uses: 2, expires_at: 1, created_at: 1 },
+        ],
+      };
+    },
+  });
+
+  await context.loadInviteCodes();
+
+  assert.match(elements['invite-codes-list'].innerHTML, /Role:/);
+  assert.match(elements['invite-codes-list'].innerHTML, /Uses: 1 \/ 2/);
+  assert.match(elements['invite-codes-list'].innerHTML, /Expiration:/);
+  assert.match(elements['invite-codes-list'].innerHTML, /Created:/);
+  assert.match(elements['invite-codes-list'].innerHTML, /Used: Yes/);
+  assert.match(elements['invite-codes-list'].innerHTML, /Expired: Yes/);
 });
 
 function sampleScanResult() {

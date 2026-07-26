@@ -205,12 +205,15 @@ Make metadata dependable, explainable, editable, and reusable across file format
 
 ### Covers
 
-- [ ] Extract covers from supported local formats where practical.
+- [x] Extract embedded EPUB covers from local files.
 - [ ] Download covers from selected metadata providers.
-- [ ] Cache covers locally.
-- [ ] Store cover provenance, dimensions, and checksum.
-- [ ] Serve covers from Librarr-owned API URLs.
-- [ ] Provide placeholders only when no cover is available.
+- [x] Cache extracted covers locally.
+- [x] Store cover provenance and dimensions.
+- [x] Serve local covers from Librarr-owned API URLs.
+- [x] Provide placeholders when no cover is available.
+- [ ] Add MOBI/AZW embedded cover extraction where practical.
+- [ ] Add PDF first-page thumbnails when a safe renderer is available.
+- [ ] Store cover checksums.
 
 ### Editing and refresh
 

@@ -118,6 +118,13 @@ tables, including:
 The cover endpoint serves a stored local cover image when one exists. It does
 not proxy external images in this milestone.
 
+Scan review may expose temporary local covers with:
+
+`GET /api/v1/library/scan/{job_id}/cover/{candidate_id}`
+
+Those images are extracted from local user-owned files during the active scan
+job and are used only for review before import.
+
 ## Performance strategy
 
 `GET /api/v1/books` now uses a batched repository-backed read model instead of

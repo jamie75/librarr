@@ -985,6 +985,27 @@ func TestUsers_CRUD(t *testing.T) {
 		}
 	})
 
+	t.Run("enable and disable user", func(t *testing.T) {
+		users, _ := d.ListUsers()
+		if !users[0].Enabled {
+			t.Fatal("new users should be enabled by default")
+		}
+		if err := d.SetUserEnabled(users[0].ID, false); err != nil {
+			t.Fatalf("SetUserEnabled false failed: %v", err)
+		}
+		user, _ := d.GetUser(users[0].ID)
+		if user.Enabled {
+			t.Fatal("expected user to be disabled")
+		}
+		if err := d.SetUserEnabled(users[0].ID, true); err != nil {
+			t.Fatalf("SetUserEnabled true failed: %v", err)
+		}
+		user, _ = d.GetUser(users[0].ID)
+		if !user.Enabled {
+			t.Fatal("expected user to be enabled")
+		}
+	})
+
 	t.Run("update last login", func(t *testing.T) {
 		users, _ := d.ListUsers()
 		err := d.UpdateLastLogin(users[0].ID)

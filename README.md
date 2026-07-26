@@ -40,6 +40,8 @@ Librarr 2.0 currently has:
 - manual-review detection and resolution controls
 - explicit import actions from scan review results
 - partial-failure reporting and retry of failed imports
+- embedded EPUB cover extraction with local cover caching
+- expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
 - normalized `/api/v1` read endpoints
 - compatibility endpoints for existing legacy behavior
@@ -120,7 +122,10 @@ The review UI supports:
 - Save, Save & Import, Reset, and Cancel actions
 
 The editor uses metadata already discovered during the scan. It does not perform
-internet metadata lookup or cover lookup yet.
+internet metadata lookup. EPUB files with embedded cover artwork are cached
+locally and displayed during scan review, manual review, metadata editing,
+Library, and book details. Unsupported formats or corrupt artwork continue to
+use the colored placeholder.
 
 The Library book-details Metadata Editor uses the same editing/validation
 patterns for already-imported books and saves catalog metadata through
@@ -128,6 +133,23 @@ patterns for already-imported books and saves catalog metadata through
 edition title, subtitle, publisher, publication date/year, language,
 description, and tags/genres. Author, series, ISBN, destination folder, and
 filename are shown as context until those domain update paths are added.
+
+### User management
+
+Administrators can manage local accounts from Settings:
+
+- view users, roles, enabled/disabled status, creation time, and last login
+- create users directly without invite codes
+- edit usernames and roles
+- reset passwords
+- disable or re-enable accounts
+- delete non-admin users
+- generate and revoke invite codes
+
+Once users exist, the SQLite users table is authoritative. `AUTH_USERNAME` and
+`AUTH_PASSWORD` are only used by the legacy zero-user authentication path, so
+changing those Docker environment variables later does not rename or modify
+existing database users.
 
 - progress
 - summary cards
@@ -519,7 +541,7 @@ Prefer Librarr 2.0 endpoints for new integrations.
 | GET | `/api/v1/books/{id}` | Book details |
 | GET | `/api/v1/books/{id}/files` | Files for a book |
 | GET | `/api/v1/books/{id}/editions` | Editions for a book |
-| GET | `/api/v1/books/{id}/cover` | Stored local cover |
+| GET | `/api/v1/books/{id}/cover` | Stored local book cover |
 | GET | `/api/v1/books/{id}/metadata` | Effective metadata |
 | PATCH | `/api/v1/books/{id}/metadata` | Partial metadata update |
 | GET | `/api/v1/books/{id}/provenance` | Metadata provenance |
@@ -530,6 +552,7 @@ Prefer Librarr 2.0 endpoints for new integrations.
 |---|---|---|
 | POST | `/api/v1/library/scan` | Start a scan job |
 | GET | `/api/v1/library/scan/{id}` | Scan job progress |
+| GET | `/api/v1/library/scan/{id}/cover/{candidate_id}` | Temporary local scan-review cover |
 | GET | `/api/v1/library/scan/{id}/results` | Completed review payload |
 | POST | `/api/v1/library/scan/{id}/resolve` | Resolve or edit a review candidate before import |
 | POST | `/api/v1/library/import` | Start explicit import from scan results |

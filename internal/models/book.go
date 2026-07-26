@@ -148,6 +148,7 @@ type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	Role         string    `json:"role"` // "admin" or "user"
+	Enabled      bool      `json:"enabled"`
 	TOTPSecret   string    `json:"-"`
 	TOTPEnabled  bool      `json:"totp_enabled"`
 	CreatedAt    time.Time `json:"created_at"`

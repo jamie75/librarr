@@ -2569,6 +2569,10 @@ function renderLibraryMetadataEditor(book) {
           </div>
         </div>
         <div class="space-y-3">
+          <div class="overflow-hidden rounded-lg border border-stone-800 bg-stone-900/80 p-3">
+            <p class="mb-2 text-xs font-semibold text-stone-100">Cover Preview</p>
+            <div class="w-28 overflow-hidden rounded-xl">${renderBookCover(book, 0, 'h-40')}</div>
+          </div>
           <div class="rounded-lg border border-stone-800 bg-stone-900/80 p-3">
             <p class="text-xs font-semibold text-stone-100">Catalog Preview</p>
             <dl class="mt-3 space-y-2 text-xs">
@@ -3506,6 +3510,10 @@ function renderLibraryScanMetadataEditor(candidate) {
           ${field('tags', 'Tags', draft.tags, 'placeholder="fantasy, fiction, owned"')}
         </div>
         <div class="space-y-3">
+          <div class="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+            <p class="mb-2 text-xs font-semibold text-slate-100">Cover Preview</p>
+            <div class="w-24 overflow-hidden rounded-md">${renderLibraryScanCover(candidate, (candidate.format || '').toUpperCase())}</div>
+          </div>
           <div class="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
             <p class="text-xs font-semibold text-slate-100">Live Import Preview</p>
             <dl class="mt-3 space-y-2 text-xs">
@@ -4529,25 +4537,44 @@ async function loadUsers() {
 
     const container = document.getElementById('users-list');
     const users = data.users || [];
+    if (users.length === 0) {
+      container.innerHTML = `<p class="px-4 py-3 text-xs text-slate-500">No users yet.</p>`;
+      return;
+    }
     container.innerHTML = users.map(u => {
-      const roleOptions = `<select data-action-change="changeUserRole" data-id="${u.id}" class="bg-slate-700 text-sm text-slate-300 rounded px-2 py-1 border-0">
+      const isCurrent = state.currentUser && u.username === state.currentUser;
+      const isAdmin = u.role === 'admin';
+      const roleOptions = `<select data-action-change="changeUserRole" data-id="${u.id}" class="bg-slate-800 text-sm text-slate-300 rounded px-2 py-1 border border-slate-700">
         <option value="user" ${u.role === 'user' ? 'selected' : ''}>${t('role_user')}</option>
         <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>${t('role_admin')}</option>
       </select>`;
       const totpBadge = u.totp_enabled ? '<span class="text-xs text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded">2FA</span>' : '';
-      const lastLogin = u.last_login ? new Date(u.last_login).toLocaleDateString() : t('never');
+      const created = u.created_at ? new Date(u.created_at).toLocaleDateString() : '—';
+      const lastLogin = u.last_login ? new Date(u.last_login).toLocaleString() : t('never');
+      const statusBadge = u.enabled === false
+        ? '<span class="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-300">Disabled</span>'
+        : '<span class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-300">Enabled</span>';
+      const deleteDisabled = isAdmin || isCurrent ? 'disabled aria-disabled="true"' : '';
+      const deleteClass = isAdmin || isCurrent ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-red-600 text-slate-300 hover:text-white';
+      const toggleLabel = u.enabled === false ? 'Enable' : 'Disable';
       return `
-        <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-          <div class="flex items-center gap-3">
-            <span class="text-sm font-medium text-white">${escapeHtml(u.username)}</span>
-            ${totpBadge}
-            <span class="text-xs text-slate-600">${t('last_login', {date: lastLogin})}</span>
+        <div class="grid min-w-[820px] grid-cols-[1.1fr_0.8fr_0.75fr_0.8fr_1fr_1.4fr] items-center gap-3 border-b border-slate-800 px-4 py-3 text-sm last:border-b-0">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="truncate font-medium text-white">${escapeHtml(u.username)}</span>
+              ${isCurrent ? '<span class="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] text-indigo-300">You</span>' : ''}
+              ${totpBadge}
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            ${roleOptions}
-            <button data-action="deleteUser" data-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2 py-1 text-xs bg-slate-700 hover:bg-red-600 text-slate-400 hover:text-white rounded transition-colors" title="${t('failed_delete_user')}">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
+          <div>${roleOptions}</div>
+          <div>${statusBadge}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(created)}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(lastLogin)}</div>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button data-action="editUser" data-id="${u.id}" data-username="${escapeHtml(u.username)}" data-role="${escapeHtml(u.role)}" class="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">Edit</button>
+            <button data-action="resetUserPassword" data-id="${u.id}" data-username="${escapeHtml(u.username)}" class="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">Reset Password</button>
+            <button data-action="toggleUserEnabled" data-id="${u.id}" data-username="${escapeHtml(u.username)}" data-enabled="${u.enabled !== false}" class="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">${toggleLabel}</button>
+            <button data-action="deleteUser" data-id="${u.id}" data-username="${escapeHtml(u.username)}" ${deleteDisabled} class="rounded px-2 py-1 text-xs transition-colors ${deleteClass}">Delete</button>
           </div>
         </div>
       `;
@@ -4558,14 +4585,55 @@ async function loadUsers() {
   }
 }
 
+async function editUser(id, username, role) {
+  const nextUsername = prompt('Username', username);
+  if (nextUsername === null) return;
+  const cleaned = nextUsername.trim();
+  if (!cleaned) {
+    showToast('Username is required', 'warning');
+    return;
+  }
+  const nextRole = prompt('Role: user or admin', role);
+  if (nextRole === null) return;
+  const cleanedRole = nextRole.trim().toLowerCase();
+  if (cleanedRole !== 'user' && cleanedRole !== 'admin') {
+    showToast("Role must be 'user' or 'admin'", 'warning');
+    return;
+  }
+  await updateUser(id, { username: cleaned, role: cleanedRole }, 'User updated');
+}
+
 async function changeUserRole(id, role) {
+  await updateUser(id, { role }, t('user_role_updated'));
+}
+
+async function resetUserPassword(id, username) {
+  const password = prompt(`New password for ${username}`);
+  if (password === null) return;
+  if (password.length < 6) {
+    showToast('Password must be at least 6 characters', 'warning');
+    return;
+  }
+  await updateUser(id, { password }, 'Password reset');
+}
+
+async function toggleUserEnabled(id, username, enabled) {
+  enabled = enabled === true || enabled === 'true';
+  const nextEnabled = !enabled;
+  const verb = nextEnabled ? 'enable' : 'disable';
+  if (!confirm(`Are you sure you want to ${verb} ${username}?`)) return;
+  await updateUser(id, { enabled: nextEnabled }, nextEnabled ? 'User enabled' : 'User disabled');
+}
+
+async function updateUser(id, payload, successMessage) {
   try {
     const data = await apiJson(`/api/users/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ role }),
+      body: JSON.stringify(payload),
     });
     if (data.success) {
-      showToast(t('user_role_updated'), 'success');
+      showToast(successMessage || 'User updated', 'success');
+      loadUsers();
     } else {
       showToast(data.error || t('failed_update_role'), 'error');
       loadUsers();
@@ -4591,9 +4659,21 @@ async function deleteUser(id, username) {
   }
 }
 
+function cancelCreateUser() {
+  document.getElementById('new-user-name').value = '';
+  document.getElementById('new-user-pass').value = '';
+  const role = document.getElementById('new-user-role');
+  if (role) role.value = 'user';
+  const admin = document.getElementById('new-user-admin');
+  if (admin) admin.checked = false;
+}
+
 async function addUser() {
   const username = document.getElementById('new-user-name').value.trim();
   const password = document.getElementById('new-user-pass').value;
+  const adminChecked = document.getElementById('new-user-admin')?.checked;
+  const selectedRole = document.getElementById('new-user-role')?.value || 'user';
+  const role = adminChecked ? 'admin' : selectedRole;
   if (!username || !password) {
     showToast(t('err_credentials_required'), 'warning');
     return;
@@ -4601,12 +4681,11 @@ async function addUser() {
   try {
     const data = await apiJson('/api/register', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, role }),
     });
     if (data.success) {
       showToast(t('user_created'), 'success');
-      document.getElementById('new-user-name').value = '';
-      document.getElementById('new-user-pass').value = '';
+      cancelCreateUser();
       loadUsers();
     } else {
       showToast(data.error || t('failed_create_user'), 'error');
@@ -4628,23 +4707,32 @@ async function loadInviteCodes() {
       el.innerHTML = `<p class="text-xs text-slate-500">No invite codes yet.</p>`;
       return;
     }
+    const nowSeconds = Date.now() / 1000;
     el.innerHTML = list.map(inv => {
       const expires = inv.expires_at
         ? new Date(inv.expires_at * 1000).toLocaleDateString()
         : 'Never';
       const usesLabel = `${inv.uses} / ${inv.max_uses}`;
       const exhausted = inv.uses >= inv.max_uses;
+      const expired = Boolean(inv.expires_at && inv.expires_at < nowSeconds);
+      const created = inv.created_at ? new Date(inv.created_at * 1000).toLocaleDateString() : '—';
+      const used = inv.uses > 0 ? 'Yes' : 'No';
       return `
-        <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-3 py-2 text-sm">
-          <div class="flex items-center gap-3 flex-1 min-w-0">
-            <code class="text-indigo-400 font-mono text-xs truncate">${escapeHtml(inv.code)}</code>
-            <span class="text-xs text-slate-500">role: ${escapeHtml(inv.role)}</span>
-            <span class="text-xs ${exhausted ? 'text-amber-400' : 'text-slate-500'}">uses: ${usesLabel}</span>
-            <span class="text-xs text-slate-500">expires: ${escapeHtml(expires)}</span>
+        <div class="rounded-lg bg-slate-800/50 px-3 py-2 text-sm">
+          <div class="flex items-center justify-between gap-3">
+            <code class="min-w-0 flex-1 truncate font-mono text-xs text-indigo-400">${escapeHtml(inv.code)}</code>
+            <div class="flex items-center gap-1 flex-shrink-0">
+              <button data-action="copyInviteCode" data-code="${escapeHtml(inv.code)}" class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" title="Copy">Copy</button>
+              <button data-action="revokeInviteCode" data-id="${inv.id}" class="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors" title="Delete">Delete</button>
+            </div>
           </div>
-          <div class="flex items-center gap-1 flex-shrink-0">
-            <button data-action="copyInviteCode" data-code="${escapeHtml(inv.code)}" class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors" title="Copy">Copy</button>
-            <button data-action="revokeInviteCode" data-id="${inv.id}" class="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors" title="Revoke">Revoke</button>
+          <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-500 md:grid-cols-6">
+            <span>Role: <span class="text-slate-300">${escapeHtml(inv.role)}</span></span>
+            <span class="${exhausted ? 'text-amber-400' : ''}">Uses: ${escapeHtml(usesLabel)}</span>
+            <span>Expiration: ${escapeHtml(expires)}</span>
+            <span>Created: ${escapeHtml(created)}</span>
+            <span>Used: ${used}</span>
+            <span class="${expired ? 'text-amber-400' : 'text-emerald-400'}">Expired: ${expired ? 'Yes' : 'No'}</span>
           </div>
         </div>`;
     }).join('');
@@ -4875,6 +4963,10 @@ const CLICK_ACTIONS = {
   doLogout: () => doLogout(),
   clearCompleted: () => clearCompleted(),
   addUser: () => addUser(),
+  cancelCreateUser: () => cancelCreateUser(),
+  editUser: el => editUser(+el.dataset.id, el.dataset.username, el.dataset.role),
+  resetUserPassword: el => resetUserPassword(+el.dataset.id, el.dataset.username),
+  toggleUserEnabled: el => toggleUserEnabled(+el.dataset.id, el.dataset.username, el.dataset.enabled),
   refreshDownloads: () => refreshDownloads(true), // toolbar button forces a refresh
   openBookDetails: el => openBookDetails(+el.dataset.index),
   openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),

@@ -244,7 +244,8 @@ scanner continues with the remaining configured roots.
 - No file organization or moves.
 - No external metadata providers.
 - No internet metadata lookup.
-- No cover downloading.
+- No cover downloading. Embedded EPUB artwork may be extracted from local
+  user-owned files and cached for review/import display.
 - No full metadata editor.
 - Duplicate detection intentionally reuses the current planner/service path; a
   later performance pass can add repository-level batch lookups if large real

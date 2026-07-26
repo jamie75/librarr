@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,7 @@ const maxCompletedJobs = 8
 type Manager struct {
 	catalog libraryimport.Catalog
 	now     func() time.Time
+	covers  *library.CoverCache
 
 	mu       sync.Mutex
 	jobs     map[string]*Job
@@ -31,12 +33,24 @@ type Manager struct {
 	activeID string
 }
 
-func NewManager(catalog libraryimport.Catalog) *Manager {
-	return &Manager{
+type Option func(*Manager)
+
+func WithCoverCache(covers *library.CoverCache) Option {
+	return func(m *Manager) {
+		m.covers = covers
+	}
+}
+
+func NewManager(catalog libraryimport.Catalog, opts ...Option) *Manager {
+	m := &Manager{
 		catalog: catalog,
 		now:     time.Now,
 		jobs:    map[string]*Job{},
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 type ActiveJobError struct {
@@ -104,6 +118,21 @@ func (m *Manager) Result(jobID string) (*Result, bool) {
 	result.Candidates = append([]Candidate(nil), job.Result.Candidates...)
 	result.Warnings = append([]Warning(nil), job.Result.Warnings...)
 	return &result, true
+}
+
+func (m *Manager) CoverPath(jobID, candidateID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job := m.jobs[jobID]
+	if job == nil || job.Result == nil {
+		return "", false
+	}
+	for _, candidate := range job.Result.Candidates {
+		if candidate.ID == candidateID && strings.TrimSpace(candidate.CoverPath) != "" {
+			return candidate.CoverPath, true
+		}
+	}
+	return "", false
 }
 
 func (m *Manager) UpdateCandidates(jobID string, updates []CandidateUpdate) (*Result, bool) {
@@ -509,7 +538,7 @@ func (m *Manager) scanRoot(ctx context.Context, jobID string, root rootConfig) (
 			p.CurrentPath = path
 			p.FilesDiscovered++
 		})
-		items = append(items, m.discoverFile(cleanRoot, root, path))
+		items = append(items, m.discoverFile(jobID, cleanRoot, root, path))
 		return nil
 	})
 	if err != nil {
@@ -518,7 +547,7 @@ func (m *Manager) scanRoot(ctx context.Context, jobID string, root rootConfig) (
 	return items, warnings
 }
 
-func (m *Manager) discoverFile(root string, cfg rootConfig, path string) discoveredItem {
+func (m *Manager) discoverFile(jobID, root string, cfg rootConfig, path string) discoveredItem {
 	rel, err := filepath.Rel(root, path)
 	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return unreadableCandidate(cfg.MediaType, root, path, "File is outside configured root")
@@ -559,6 +588,10 @@ func (m *Manager) discoverFile(root string, cfg rootConfig, path string) discove
 		base.Error = err.Error()
 		return discoveredItem{State: ClassificationUnreadable, Candidate: base}
 	}
+	if coverPath, err := m.extractScanCover(jobID, base.ID, path); err == nil && coverPath != "" {
+		base.CoverPath = coverPath
+		base.CoverURL = fmt.Sprintf("/api/v1/library/scan/%s/cover/%s", jobID, base.ID)
+	}
 	importCandidate := libraryimport.ImportCandidate{
 		Path:         path,
 		RelativePath: rel,
@@ -576,6 +609,18 @@ func (m *Manager) discoverFile(root string, cfg rootConfig, path string) discove
 		}},
 	}
 	return discoveredItem{State: ClassificationNew, Candidate: base, ImportCandidate: importCandidate}
+}
+
+func (m *Manager) extractScanCover(jobID, candidateID, sourcePath string) (string, error) {
+	if m == nil || m.covers == nil {
+		return "", nil
+	}
+	coverPath, err := m.covers.ExtractForScan(jobID, candidateID, sourcePath)
+	if err != nil {
+		slog.Debug("local cover extraction failed", "path", sourcePath, "error", err)
+		return "", nil
+	}
+	return coverPath, nil
 }
 
 func unreadableCandidate(mediaType library.MediaType, root, path, msg string) discoveredItem {

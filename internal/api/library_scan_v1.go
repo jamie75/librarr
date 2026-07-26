@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html"
 	"net/http"
+	"os"
 	"strings"
 
 	libraryscanner "github.com/JeremiahM37/librarr/internal/library/scanner"
@@ -75,6 +76,29 @@ func (s *Server) handleV1LibraryScanResults(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleV1LibraryScanCover(w http.ResponseWriter, r *http.Request) {
+	if s.libraryScanner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"success": false, "error": "Library scanner is not configured"})
+		return
+	}
+	jobID := strings.TrimSpace(r.PathValue("job_id"))
+	candidateID := strings.TrimSpace(r.PathValue("candidate_id"))
+	coverPath, ok := s.libraryScanner.CoverPath(jobID, candidateID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]interface{}{"success": false, "error": "Cover not found"})
+		return
+	}
+	data, err := os.ReadFile(coverPath)
+	if err != nil || len(data) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]interface{}{"success": false, "error": "Cover not found"})
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleV1LibraryScanResolve(w http.ResponseWriter, r *http.Request) {

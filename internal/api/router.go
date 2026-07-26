@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type Server struct {
 	cfg                 *config.Config
 	db                  *db.DB
 	libraryService      *library.LibraryService
+	coverCache          *library.CoverCache
 	importEngine        libraryimport.ImportEngine
 	libraryScanner      *libraryscanner.Manager
 	libraryScanImporter *libraryImportJobManager
@@ -123,12 +125,14 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	seriesDet := scheduler.NewSeriesDetector(database, searchMgr, ws)
 	authorMon := scheduler.NewAuthorMonitor(cfg, database, ws)
 
+	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
 		libraryService: librarySvc,
+		coverCache:     coverCache,
 		importEngine:   importEngine,
-		libraryScanner: libraryscanner.NewManager(librarySvc),
+		libraryScanner: libraryscanner.NewManager(librarySvc, libraryscanner.WithCoverCache(coverCache)),
 		searchMgr:      searchMgr,
 		downloadMgr:    downloadMgr,
 		qb:             qb,
@@ -163,6 +167,16 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 
 	s.registerRoutes()
 	return s
+}
+
+func defaultCoverCacheDir(cfg *config.Config) string {
+	if cfg != nil && strings.TrimSpace(cfg.DBPath) != "" {
+		return filepath.Join(filepath.Dir(cfg.DBPath), "covers")
+	}
+	if cfg != nil && strings.TrimSpace(cfg.SettingsFile) != "" {
+		return filepath.Join(filepath.Dir(cfg.SettingsFile), "covers")
+	}
+	return "/data/covers"
 }
 
 func (s *Server) library() *library.LibraryService {
@@ -381,6 +395,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("POST /api/v1/library/scan", requireAdmin(s.handleV1LibraryScanStart))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}", requireAdmin(s.handleV1LibraryScanJob))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/results", requireAdmin(s.handleV1LibraryScanResults))
+	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/cover/{candidate_id}", requireAdmin(s.handleV1LibraryScanCover))
 	s.mux.HandleFunc("POST /api/v1/library/scan/{job_id}/resolve", requireAdmin(s.handleV1LibraryScanResolve))
 	s.mux.HandleFunc("POST /api/v1/library/import", requireAdmin(s.handleV1LibraryImportStart))
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}", requireAdmin(s.handleV1LibraryImportJob))

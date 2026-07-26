@@ -104,6 +104,7 @@ type Candidate struct {
 	Series               string               `json:"series,omitempty"`
 	Volume               string               `json:"volume,omitempty"`
 	CoverURL             string               `json:"cover_url,omitempty"`
+	CoverPath            string               `json:"-"`
 	Metadata             Metadata             `json:"metadata"`
 	Classification       Classification       `json:"classification"`
 	ClassificationReason string               `json:"classification_reason,omitempty"`

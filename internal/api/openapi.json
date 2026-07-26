@@ -386,6 +386,20 @@
         }
       }
     },
+    "/api/v1/library/scan/{job_id}/cover/{candidate_id}": {
+      "get": {
+        "summary": "Serve a temporary local cover image extracted during scan review",
+        "description": "Returns user-owned artwork extracted from a local scan candidate when available. Does not download or proxy external covers.",
+        "parameters": [
+          {"name": "job_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "candidate_id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Local cover image"},
+          "404": {"description": "Cover not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
     "/api/v1/library/scan/{job_id}/resolve": {
       "post": {
         "summary": "Resolve or edit a scan review candidate in memory",
@@ -515,10 +529,10 @@
     "/api/tags":                   {"get": {"summary": "List tags"}, "post": {"summary": "Create a tag"}},
     "/api/tags/{id}":              {"delete": {"summary": "Delete a tag"}},
 
-    "/api/users":                  {"get": {"summary": "List users (admin only)"}},
+    "/api/users":                  {"get": {"summary": "List users with role, status, creation time, and last login (admin only)"}},
     "/api/users/{id}":             {
-      "patch":  {"summary": "Update user role/status (admin only)"},
-      "delete": {"summary": "Delete user (admin only). Refuses to delete the last admin (HTTP 409)."}
+      "patch":  {"summary": "Update user username, role, password, or enabled status (admin only)"},
+      "delete": {"summary": "Delete a non-admin user (admin only). Administrator accounts cannot be deleted."}
     },
     "/api/invites":                {"get": {"summary": "List invites (admin)"}, "post": {"summary": "Create invite (admin)"}},
     "/api/invites/{id}":           {"delete": {"summary": "Revoke invite (admin)"}},

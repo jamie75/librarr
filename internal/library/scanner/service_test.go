@@ -3,6 +3,7 @@ package scanner
 import (
 	"archive/zip"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -41,6 +42,27 @@ func TestScannerRecursiveScanningAndReviewPayload(t *testing.T) {
 	}
 	if byName["notes.txt"].Classification != ClassificationUnsupported {
 		t.Fatalf("unsupported = %+v", byName["notes.txt"])
+	}
+}
+
+func TestScannerAddsEmbeddedEPUBCoverURL(t *testing.T) {
+	roots := testRoots(t)
+	writeEPUBWithCover(t, filepath.Join(roots.EbookDir, "Covered.epub"), "Covered", "Jane Doe")
+	manager := NewManager(newFakeCatalog(), WithCoverCache(library.NewCoverCache(filepath.Join(t.TempDir(), "covers"))))
+
+	job := runScan(t, manager, roots)
+	if job.Result == nil || len(job.Result.Candidates) == 0 {
+		t.Fatal("missing scan result")
+	}
+	candidate := candidatesByFilename(job.Result.Candidates)["Covered.epub"]
+	if candidate.CoverURL == "" {
+		t.Fatalf("expected cover URL, candidate = %+v", candidate)
+	}
+	if candidate.CoverPath == "" {
+		t.Fatal("expected cached cover path")
+	}
+	if _, err := os.Stat(candidate.CoverPath); err != nil {
+		t.Fatalf("expected cached cover file: %v", err)
 	}
 }
 
@@ -280,6 +302,44 @@ func writeEPUB(t *testing.T, path, title, author string) {
 		t.Fatal(err)
 	}
 	if _, err := fmt.Fprintf(w, `<package><metadata><title>%s</title><creator>%s</creator></metadata></package>`, title, author); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeEPUBWithCover(t *testing.T, path, title, author string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	container, err := zw.Create("META-INF/container.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprint(container, `<container><rootfiles><rootfile full-path="OPS/content.opf"/></rootfiles></container>`); err != nil {
+		t.Fatal(err)
+	}
+	opf, err := zw.Create("OPS/content.opf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(opf, `<package><metadata><title>%s</title><creator>%s</creator><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="images/cover.png" media-type="image/png"/></manifest></package>`, title, author); err != nil {
+		t.Fatal(err)
+	}
+	img, err := zw.Create("OPS/images/cover.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	if _, err := img.Write(png); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {

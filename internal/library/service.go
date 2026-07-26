@@ -234,6 +234,11 @@ func (s *LibraryService) GetPrimaryCover(ctx context.Context, bookID int64) (*Co
 	return cover, translateLibraryError(err)
 }
 
+func (s *LibraryService) AttachCover(ctx context.Context, cover Cover) (*Cover, error) {
+	attached, err := s.covers.AttachCover(ctx, cover)
+	return attached, translateLibraryError(err)
+}
+
 func (s *LibraryService) FindEdition(ctx context.Context, bookID int64, title string) (*Edition, error) {
 	if s.editions == nil {
 		return nil, ErrUnsupportedOperation

@@ -116,6 +116,7 @@ func (d *DB) migrate() error {
 		username TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
 		role TEXT NOT NULL DEFAULT 'user',
+		enabled INTEGER NOT NULL DEFAULT 1,
 		totp_secret TEXT,
 		totp_enabled INTEGER DEFAULT 0,
 		created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
@@ -307,6 +308,7 @@ func (d *DB) migrate() error {
 		`ALTER TABLE download_jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE activity_log ADD COLUMN user TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE reading_history ADD COLUMN status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`,
 	}
 	for _, stmt := range addColumns {
 		if _, err := d.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

@@ -268,6 +268,10 @@ func (h *OIDCHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to resolve OIDC user", http.StatusInternalServerError)
 		return
 	}
+	if !user.Enabled {
+		http.Error(w, "Account is disabled", http.StatusForbidden)
+		return
+	}
 
 	// Create session.
 	h.db.UpdateLastLogin(user.ID)

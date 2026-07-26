@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -71,6 +72,7 @@ type libraryImportJob struct {
 type libraryImportJobManager struct {
 	engine        libraryimport.ImportEngine
 	updateScanner func(string, []libraryscanner.CandidateUpdate) (*libraryscanner.Result, bool)
+	attachCover   func(context.Context, libraryscanner.Candidate, *libraryimport.EngineResult)
 	now           func() time.Time
 
 	mu       sync.Mutex
@@ -87,10 +89,11 @@ func (e *activeLibraryImportError) Error() string {
 	return "library import already running"
 }
 
-func newLibraryImportJobManager(engine libraryimport.ImportEngine, updateScanner func(string, []libraryscanner.CandidateUpdate) (*libraryscanner.Result, bool)) *libraryImportJobManager {
+func newLibraryImportJobManager(engine libraryimport.ImportEngine, updateScanner func(string, []libraryscanner.CandidateUpdate) (*libraryscanner.Result, bool), attachCover func(context.Context, libraryscanner.Candidate, *libraryimport.EngineResult)) *libraryImportJobManager {
 	return &libraryImportJobManager{
 		engine:        engine,
 		updateScanner: updateScanner,
+		attachCover:   attachCover,
 		now:           time.Now,
 		jobs:          map[string]*libraryImportJob{},
 	}
@@ -215,6 +218,9 @@ func (m *libraryImportJobManager) run(ctx context.Context, jobID, scanJobID stri
 		default:
 			item.Status = "imported"
 			item.Reason = "Imported into library"
+			if m.attachCover != nil {
+				m.attachCover(ctx, candidate, result)
+			}
 			updates = append(updates, libraryscanner.CandidateUpdate{
 				ID:                   candidate.ID,
 				Classification:       libraryscanner.ClassificationAlreadyImported,
@@ -479,9 +485,26 @@ func (s *Server) libraryImportJobs() *libraryImportJobManager {
 				return nil, false
 			}
 			return s.libraryScanner.UpdateCandidates(jobID, updates)
+		}, func(ctx context.Context, candidate libraryscanner.Candidate, result *libraryimport.EngineResult) {
+			s.attachImportedCandidateCover(ctx, candidate, result)
 		})
 	}
 	return s.libraryScanImporter
+}
+
+func (s *Server) attachImportedCandidateCover(ctx context.Context, candidate libraryscanner.Candidate, result *libraryimport.EngineResult) {
+	if s == nil || s.coverCache == nil || s.libraryService == nil || result == nil || result.Execution == nil {
+		return
+	}
+	for _, execution := range result.Execution.Results {
+		if execution.Status != libraryimport.ExecutionStatusSuccess || execution.BookID == 0 {
+			continue
+		}
+		if _, err := s.coverCache.AttachBookCover(ctx, s.libraryService, execution.BookID, candidate.Path); err != nil {
+			slog.Debug("failed to attach imported book cover", "book_id", execution.BookID, "path", candidate.Path, "error", err)
+		}
+		return
+	}
 }
 
 func selectReadyImportCandidates(candidates []libraryscanner.Candidate, ids []string, allReady bool) []libraryscanner.Candidate {
