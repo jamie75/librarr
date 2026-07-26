@@ -27,7 +27,9 @@ Before tagging a beta or stable release:
 1. Merge the release candidate branch into `main`.
 2. Verify the Go module path and import paths are final.
 3. Verify Docker image names point to `ghcr.io/jamie75/librarr`.
-4. Run the full validation suite:
+4. Verify Settings/About and `/api/health` show the expected version, channel,
+   commit, and build time.
+5. Run the full validation suite:
 
    ```bash
    go test ./...
@@ -39,14 +41,20 @@ Before tagging a beta or stable release:
    git diff --check
    ```
 
-5. Build and run the Docker image locally.
-6. Validate first-run setup on a fresh database.
-7. Validate upgrade behavior on an existing legacy database.
-8. Validate scanner, review, import, metadata editing, covers, qBittorrent, and
+6. Build and run the Docker image locally.
+7. Validate first-run setup on a fresh database.
+8. Validate upgrade behavior on an existing legacy database.
+9. Validate scanner, review, import, metadata editing, covers, qBittorrent, and
    OPDS.
-9. Update [CHANGELOG.md](../CHANGELOG.md).
-10. Prepare GitHub release notes.
-11. Confirm attribution files are still present.
+10. Update [CHANGELOG.md](../CHANGELOG.md).
+11. Prepare GitHub release notes.
+12. Confirm attribution files are still present.
+
+## GHCR visibility
+
+The repository workflow can publish package tags, but GHCR package visibility
+and anonymous pull access are GitHub package settings. Verify them manually in
+GitHub before telling users they can pull images without authentication.
 
 ## Release notes template
 

@@ -124,6 +124,8 @@ const functionBundle = [
   extractFunctionSource('diagnosticStatusIcon'),
   extractFunctionSource('diagnosticStatusLabel'),
   extractFunctionSource('testConnection'),
+  extractFunctionSource('configItem'),
+  extractFunctionSource('loadConfig'),
   extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
@@ -1471,6 +1473,36 @@ test('settings exposes OPDS catalog connection details', () => {
   assert.match(indexHTML, /HTTP Basic Auth/);
   assert.match(indexHTML, /EPUB and PDF are preferred/);
   assert.match(indexHTML, /use HTTPS/);
+});
+
+test('loadConfig renders build identity from health endpoint', async () => {
+  const elements = {
+    'config-info': { innerHTML: '' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async url => {
+      if (url === '/api/config') {
+        return { qbittorrent: { url: 'https://qb.example.test' } };
+      }
+      if (url === '/api/health') {
+        return {
+          version: 'v2.0.0-beta.1',
+          channel: 'v2.0.0-beta.1',
+          commit: 'abc1234',
+          build_time: '2026-07-26T15:42:00Z',
+        };
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  await context.loadConfig();
+
+  assert.match(elements['config-info'].innerHTML, /qBittorrent/);
+  assert.match(elements['config-info'].innerHTML, /v2\.0\.0-beta\.1/);
+  assert.match(elements['config-info'].innerHTML, /abc1234/);
+  assert.match(elements['config-info'].innerHTML, /2026-07-26T15:42:00Z/);
 });
 
 test('diagnosticPayload reads current unsaved Prowlarr form values', () => {

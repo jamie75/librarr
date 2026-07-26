@@ -319,8 +319,9 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Warn("organize failed, keeping in place", "error", err)
-		destPath = filePath
+		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", "annas", "path", filePath, "error", err)
+		m.updateJob(job, "error", "File organization failed", err.Error())
+		return
 	}
 
 	result, err := m.importIntoLibrary(context.Background(), libraryimport.ImportRequest{
@@ -411,8 +412,9 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Warn("organize failed, keeping in place", "error", err)
-		destPath = filePath
+		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", job.Source, "path", filePath, "error", err)
+		m.updateJob(job, "error", "File organization failed", err.Error())
+		return
 	}
 
 	result, err := m.importIntoLibrary(context.Background(), libraryimport.ImportRequest{

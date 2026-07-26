@@ -48,16 +48,18 @@ Observed local repository state:
   - `v2.0-import-engine`
   - `v2.0-repository-switch`
 
-Missing or not present in the local tree:
+Repository hygiene now present in the local tree:
 
 - issue templates
 - pull request template
 - CODEOWNERS
 - SECURITY.md
-- NOTICE file
+- ACKNOWLEDGMENTS.md
+- CHANGELOG.md
 
-Those are not blockers for development, but they should be added before a
-public independence announcement.
+A separate NOTICE file remains optional because the MIT license text and
+project-origin acknowledgment are already preserved in LICENSE and
+ACKNOWLEDGMENTS.md.
 
 ## Active upstream dependencies and references
 
@@ -74,10 +76,18 @@ https://raw.githubusercontent.com/JeremiahM37/librarr-sources/main/sources.json
 ```
 
 That is an operational dependency on a companion repository outside this code
-base. Do not change it blindly unless a maintained Jamie-owned registry exists
-and has been validated. Recommended follow-up: create or confirm
-`jamie75/librarr-sources`, mirror the registry, then update the default URL or
-document `LIBRARR_SOURCES_URL` as the supported override.
+base. It is documented in [source-registry.md](source-registry.md). The URL is
+configurable through `LIBRARR_SOURCES_URL`, a local registry can be supplied
+with `LIBRARR_SOURCES_PATH`, and Librarr falls back to `sources-cache.json` if
+the remote registry is unavailable.
+
+Public audit of the companion repository found it is public, not a fork, MIT
+licensed, and contains runtime source endpoint/mirror definitions in
+`sources.json`. It is not needed at build time.
+
+Do not change it blindly unless a maintained Jamie-owned registry exists and has
+been validated. Recommended follow-up: create or confirm
+`jamie75/librarr-sources`, mirror the registry, then update the default URL.
 
 ## Module and import-path status
 
@@ -179,8 +189,6 @@ Completed foundation:
 
 Known release gaps:
 
-- add SECURITY.md
-- add issue and PR templates
 - decide or migrate the `librarr-sources` registry
 - verify package visibility and GHCR pull behavior
 - perform fresh-install and upgrade smoke tests from Docker images
@@ -195,11 +203,9 @@ Known release gaps:
 3. Publish a dogfood image under `ghcr.io/jamie75/librarr:v2-dogfood`.
 4. Validate real upgrade and fresh-install flows.
 5. Resolve the sources-registry dependency.
-6. Add public repo hygiene files: SECURITY.md, issue templates, PR template,
-   and CODEOWNERS if desired.
-7. Tag `v2.0.0-beta.1`.
-8. Publish beta release notes.
-9. Only after beta validation, decide whether to leave the GitHub fork network.
+6. Tag `v2.0.0-beta.1`.
+7. Publish beta release notes.
+8. Only after beta validation, decide whether to leave the GitHub fork network.
 
 ## Go/no-go recommendation
 
@@ -208,3 +214,82 @@ Go for continued Librarr 2.0 dogfood and beta preparation.
 No-go for immediate fork detachment until the sources-registry dependency,
 repository hygiene files, release smoke tests, GHCR visibility, and GitHub
 detachment consequences are reviewed one final time.
+
+## Pre-Merge Readiness
+
+This section is the final pre-PR readiness tracker for merging
+`feature/librarr-2` into `main`.
+
+### External source dependency status
+
+The `librarr-sources` dependency remains intentionally retained. It is
+runtime-configurable and cache-backed, but the built-in default still points to
+the upstream companion registry until a Jamie-owned replacement is confirmed.
+
+### Repository hygiene status
+
+- `SECURITY.md`: added.
+- issue templates: added.
+- pull request template: added.
+- CODEOWNERS: added for `@jamie75`.
+- ACKNOWLEDGMENTS and CHANGELOG: added.
+
+### Build identity status
+
+`/api/health` and Settings/About expose version, channel, commit, build time,
+and Go version. Dockerfile and GoReleaser builds inject the same variables when
+build metadata is available.
+
+### GHCR status
+
+The release workflow publishes `ghcr.io/<owner>/librarr:<tag>` for release tags
+and only publishes `latest` for stable semver tags. GHCR package visibility and
+anonymous pulls remain manual GitHub package settings.
+
+### Fresh-install result
+
+A disposable Docker fresh-install smoke test passed with
+`LIBRARR_LIBRARY_REPOSITORY_MODE=normalized` and `LIBRARR_IMPORT_ENGINE=v2`.
+The test verified startup, `/api/health` build identity, first-run setup
+semantics, first admin creation, authenticated session status, empty normalized
+library summary, settings persistence, OPDS authentication challenge, valid OPDS
+access, and restart persistence for users/configuration.
+
+### Upgrade result
+
+A disposable upgrade smoke test passed using the best available prior local
+image, `librarr:v2-dogfood`, as the starting point and the locally built
+pre-merge image as the upgrade target. The test verified database open,
+existing user login, settings persistence, normalized book visibility, cover URL
+association, and OPDS root visibility after upgrade.
+
+This was not run against the live dogfood database and did not verify every
+historical data shape. It intentionally used copied/disposable data only.
+
+### Import failure behavior
+
+When organization is enabled and organization fails, direct downloads now fail
+the job before library insertion. Torrent watcher imports now remain pending
+instead of inserting a record pointing at the incoming file. A fuller
+repair/retry workflow remains on the roadmap.
+
+### Branch divergence
+
+Local audit showed `feature/librarr-2` ahead of `main` by 49 commits, with no
+local commits behind `main`. The branch diff currently touches 230 files before
+including this uncommitted readiness pass. Recheck immediately before opening
+the PR.
+
+### Remaining manual steps
+
+- Confirm or migrate the `librarr-sources` companion registry.
+- Verify GHCR package visibility and anonymous pull policy.
+- Confirm GitHub Actions status for the pushed branch; the local `gh` CLI was
+  unavailable during this report.
+- Review GitHub fork-detachment warnings later, not during this merge.
+
+### Final go/no-go recommendation for opening the PR
+
+Go for opening a PR after reviewing/staging this uncommitted readiness pass and
+confirming GitHub Actions/package visibility in GitHub. Do not detach the fork,
+tag a release, publish a stable image, or merge until PR review is complete.

@@ -304,8 +304,7 @@ func (w *Watcher) importEbook(t TorrentInfo, savePath string) error {
 		author := metadata.Author
 		destPath, err := w.organizer.OrganizeEbook(bf, title, author)
 		if err != nil {
-			slog.Warn("organize ebook failed", "file", bf, "error", err)
-			destPath = bf
+			return fmt.Errorf("%w: organize ebook %q: %v", errTorrentContentPending, bf, err)
 		}
 
 		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeEbook, bf, destPath, title, author, metadata.Title, metadata.Author, fileFormat(destPath), t.TotalSize)
@@ -375,8 +374,7 @@ func (w *Watcher) importManga(t TorrentInfo, savePath string) error {
 	for _, mf := range mangaFiles {
 		destPath, err := w.organizer.OrganizeManga(mf, t.Name)
 		if err != nil {
-			slog.Warn("organize manga failed", "file", mf, "error", err)
-			destPath = mf
+			return fmt.Errorf("%w: organize manga %q: %v", errTorrentContentPending, mf, err)
 		}
 
 		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeManga, mf, destPath, t.Name, "", t.Name, "", fileFormat(destPath), t.TotalSize)

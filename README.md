@@ -526,6 +526,10 @@ you want those workflows.
 
 ### Sources registry
 
+Librarr loads search-source endpoint definitions from a small JSON registry at
+startup. See [docs/source-registry.md](docs/source-registry.md) for dependency
+details, override options, and offline behavior.
+
 | Variable | Description |
 |---|---|
 | `LIBRARR_SOURCES_URL` | URL of a JSON sources registry |
@@ -661,6 +665,7 @@ Avoid generic "Something went wrong" messages.
 - [CHANGELOG.md](CHANGELOG.md) — release history
 - [docs/releasing.md](docs/releasing.md) — release and Docker image process
 - [docs/INDEPENDENCE_READINESS.md](docs/INDEPENDENCE_READINESS.md) — fork-detachment readiness
+- [docs/source-registry.md](docs/source-registry.md) — source-definition dependency and override behavior
 - [docs/library-scanner-phase1.md](docs/library-scanner-phase1.md) — scanner, review, and import workflow
 - [docs/read-api.md](docs/read-api.md) — normalized read API
 - [docs/v2-dogfood.md](docs/v2-dogfood.md) — local Librarr 2.0 dogfood deployment

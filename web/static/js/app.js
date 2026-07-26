@@ -4152,22 +4152,31 @@ async function saveIntegration(name) {
 }
 
 async function loadConfig() {
-  try {
-    const data = await apiJson('/api/config');
-    state.config = data;
+	try {
+		const [data, health] = await Promise.all([
+			apiJson('/api/config'),
+			apiJson('/api/health').catch(() => null),
+		]);
+		state.config = data;
 
-    const configEl = document.getElementById('config-info');
-    const items = [];
+		const configEl = document.getElementById('config-info');
+		const items = [];
 
     if (data.prowlarr) items.push(configItem('Prowlarr', data.prowlarr.url || t('not_configured')));
     if (data.qbittorrent) items.push(configItem('qBittorrent', data.qbittorrent.url || t('not_configured')));
     if (data.transmission) items.push(configItem('Transmission', data.transmission.url || t('not_configured')));
-    if (data.sabnzbd) items.push(configItem('SABnzbd', data.sabnzbd.url || t('not_configured')));
-    if (data.kavita_url) items.push(configItem('Kavita', data.kavita_url));
-    if (data.audiobookshelf_url) items.push(configItem('Audiobookshelf', data.audiobookshelf_url));
+		if (data.sabnzbd) items.push(configItem('SABnzbd', data.sabnzbd.url || t('not_configured')));
+		if (data.kavita_url) items.push(configItem('Kavita', data.kavita_url));
+		if (data.audiobookshelf_url) items.push(configItem('Audiobookshelf', data.audiobookshelf_url));
+		if (health) {
+			items.push(configItem('Version', health.version || 'unknown'));
+			items.push(configItem('Channel', health.channel || 'development'));
+			items.push(configItem('Commit', health.commit || 'unknown'));
+			items.push(configItem('Built', health.build_time || 'unknown'));
+		}
 
-    configEl.innerHTML = items.length > 0 ? items.join('') : `<p class="text-slate-500">${t('no_config_data')}</p>`;
-  } catch (err) {
+		configEl.innerHTML = items.length > 0 ? items.join('') : `<p class="text-slate-500">${t('no_config_data')}</p>`;
+	} catch (err) {
     if (err.message !== 'Unauthorized') {
       document.getElementById('config-info').innerHTML = `<p class="text-red-400">${t('failed_load_config')}</p>`;
     }

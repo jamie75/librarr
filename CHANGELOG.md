@@ -20,6 +20,9 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Rich staged diagnostics for Prowlarr and qBittorrent.
 - Remote qBittorrent torrent upload and remote-to-local path mapping fixes.
 - OPDS 1.2 catalog with Basic Auth, covers, search, and file downloads.
+- Repository security policy, issue templates, pull request template, and
+  CODEOWNERS.
+- Visible build identity in Settings/About and `/api/health`.
 
 ### Changed
 
@@ -27,6 +30,8 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Product positioning now presents Librarr 2.0 as an independently maintained
   continuation with its own roadmap while preserving original attribution.
 - Docker release documentation now reserves `latest` for stable releases.
+- Completed-download imports no longer insert library records when file
+  organization is enabled but organization fails.
 
 ### Known limitations
 
@@ -36,6 +41,6 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Reading progress sync, annotations, highlights, and bookmarks are not yet
   implemented.
 - Media Assistant integration is planned but not implemented.
-- Partial import/organization failure handling may need additional production
-  hardening.
+- A full import-repair workflow for resolving failed organization attempts is
+  still planned.
 - User account editor UX still has rough edges.

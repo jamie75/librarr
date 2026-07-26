@@ -11,11 +11,14 @@ import (
 	"github.com/jamie75/librarr/internal/version"
 )
 
-// Version comes from the embedded VERSION file (see internal/version).
-// BuildTime may still be injected at build time via -ldflags.
+// Version, BuildTime, Commit, and Channel may be injected at build time via
+// -ldflags. Version falls back to the embedded VERSION file when no build-time
+// value is provided.
 var (
-	Version   = version.Version
+	Version   = "development"
 	BuildTime = "unknown"
+	Commit    = "unknown"
+	Channel   = "development"
 	GoVersion = runtime.Version()
 )
 
@@ -51,8 +54,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":          "ok",
-		"version":         Version,
+		"version":         reportedVersion(),
 		"build_time":      BuildTime,
+		"commit":          Commit,
+		"channel":         Channel,
 		"go_version":      GoVersion,
 		"uptime_seconds":  int(uptime.Seconds()),
 		"uptime_human":    formatDuration(uptime),
@@ -60,6 +65,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"sources":         sourceNames,
 		"library_items":   libraryTotal,
 	})
+}
+
+func reportedVersion() string {
+	if Version != "" && Version != "development" {
+		return Version
+	}
+	if version.Version != "" {
+		return version.Version
+	}
+	return Version
 }
 
 func formatDuration(d time.Duration) string {

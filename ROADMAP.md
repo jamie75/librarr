@@ -419,6 +419,17 @@ The next implementation sequence should be:
 5. Begin metadata provider and cover improvements.
 6. Begin the download-client adapter framework after diagnostics are reliable.
 
+## Import Repair Follow-up
+
+Librarr now avoids inserting library records when file organization is enabled
+but organization fails. A future import-repair workflow should add:
+
+- explicit repair state for failed organization/import attempts
+- retry after permissions or folder mappings are fixed
+- UI filters for repair-needed items
+- clear activity/history entries for failed and retried imports
+- duplicate protection across repair retries
+
 ## Definition of Done for Major Changes
 
 A major change is not complete until:

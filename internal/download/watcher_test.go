@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/library"
 	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/organize"
 )
 
 func TestRecordTorrentItemIsIdempotentAcrossWatcherPolls(t *testing.T) {
@@ -478,6 +480,46 @@ func TestWatcherUsesConfiguredImportEngine(t *testing.T) {
 	}
 	if got.RootPath != destFile || got.OriginalPath != sourceFile {
 		t.Fatalf("request paths = %+v", got)
+	}
+}
+
+func TestWatcherDoesNotImportEbookWhenOrganizationFails(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(filepath.Join(dir, "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	saveDir := filepath.Join(dir, "incoming", "Broken Org")
+	if err := os.MkdirAll(saveDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(saveDir, "book.epub")
+	if err := os.WriteFile(sourceFile, []byte("book"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ebookRoot := filepath.Join(dir, "ebooks-as-file")
+	if err := os.WriteFile(ebookRoot, []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{FileOrgEnabled: true, EbookDir: ebookRoot}
+	w := &Watcher{
+		cfg:       cfg,
+		db:        database,
+		organizer: organize.NewOrganizer(cfg),
+	}
+
+	err = w.importEbook(TorrentInfo{Name: "Broken Org", Hash: "hash-org-failure", TotalSize: 123}, saveDir)
+	if err == nil {
+		t.Fatal("expected organization failure")
+	}
+	if !errors.Is(err, errTorrentContentPending) {
+		t.Fatalf("expected pending organization error, got %v", err)
+	}
+	if database.HasSourceID("hash-org-failure") {
+		t.Fatal("library item should not be inserted when organization fails")
 	}
 }
 

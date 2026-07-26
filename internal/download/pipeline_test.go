@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -133,6 +134,52 @@ func TestPipelineDirectDownloadUsesConfiguredImportEngine(t *testing.T) {
 	}
 }
 
+func TestPipelineDirectDownloadDoesNotImportWhenOrganizationFails(t *testing.T) {
+	epubHeader := []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00}
+	payload := append(epubHeader, make([]byte, 2000)...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/epub+zip")
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	ebookRoot := filepath.Join(dir, "ebooks-as-file")
+	if err := os.WriteFile(ebookRoot, []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		IncomingDir:    filepath.Join(dir, "incoming"),
+		EbookDir:       ebookRoot,
+		FileOrgEnabled: true,
+		UserAgent:      "pipeline-test",
+		MaxRetries:     0,
+	}
+
+	database, err := db.New(filepath.Join(dir, "pipeline.db"))
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	defer database.Close()
+
+	health := search.NewHealthTracker(3, 300)
+	direct := NewDirectDownloader(cfg, srv.Client())
+	direct.validate = nil
+	organizer := organize.NewOrganizer(cfg)
+	mgr := NewManager(cfg, database, nil, nil, direct, organizer, nil, health)
+
+	job, err := mgr.StartDirectDownload(srv.URL, "Organization Failure Book", "test", "org-failure-1", "")
+	if err != nil {
+		t.Fatalf("StartDirectDownload: %v", err)
+	}
+
+	waitForJobTerminalStatus(t, mgr, job.ID, "error")
+
+	if database.HasSourceID("org-failure-1") {
+		t.Fatal("library item should not be inserted when organization fails")
+	}
+}
+
 func waitForJobStatus(t *testing.T, mgr *Manager, jobID, want string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -149,6 +196,28 @@ func waitForJobStatus(t *testing.T, mgr *Manager, jobID, want string) {
 		}
 		if status == "error" || status == "dead_letter" {
 			t.Fatalf("job reached unexpected terminal status %q", status)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for job status %q", want)
+}
+
+func waitForJobTerminalStatus(t *testing.T, mgr *Manager, jobID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.mu.Lock()
+		job := mgr.jobs[jobID]
+		status := ""
+		if job != nil {
+			status = job.Status
+		}
+		mgr.mu.Unlock()
+		if status == want {
+			return
+		}
+		if status == "completed" || status == "error" || status == "dead_letter" {
+			t.Fatalf("job reached terminal status %q, want %q", status, want)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

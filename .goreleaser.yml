@@ -19,6 +19,8 @@ builds:
       - -s -w
       - -X github.com/jamie75/librarr/internal/api.Version={{.Version}}
       - -X github.com/jamie75/librarr/internal/api.BuildTime={{.Date}}
+      - -X github.com/jamie75/librarr/internal/api.Commit={{.ShortCommit}}
+      - -X github.com/jamie75/librarr/internal/api.Channel={{.Version}}
 
 archives:
   - formats: ['tar.gz']
