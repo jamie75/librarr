@@ -1,7 +1,7 @@
 // ============================================================
 // I18N (INTERNATIONALIZATION)
 // ============================================================
-let currentLang = localStorage.getItem('librarr_lang') || 'en';
+let currentLang = 'en';
 
 const I18N = {
   en: {
@@ -26,7 +26,7 @@ const I18N = {
     home_welcome_title: 'Welcome to Librarr',
     home_welcome_subtitle: 'Import your existing collection or start discovering books.',
     home_import_library: 'Import Existing Library',
-    home_import_hint: 'Import starts in Settings, where you can configure folders and existing library paths.',
+    home_import_hint: 'Follow these steps to bring your existing books into Librarr.',
     home_onboarding_title: 'Get your library ready',
     home_step_admin_done: 'Create administrator account',
     home_step_configure_folders: 'Configure library folders',
@@ -34,16 +34,17 @@ const I18N = {
     home_step_review_books: 'Review imported books',
     dashboard_recent: 'Recently Added',
     dashboard_downloading: 'Currently Downloading',
-    dashboard_wishlist: 'Wishlist',
-    dashboard_activity: 'Recent Activity',
+    dashboard_wishlist: 'Reading Queue',
+    dashboard_activity: 'Recent Imports',
     dashboard_totals: 'Library Totals',
     dashboard_formats: 'Format Distribution',
     dashboard_empty: 'Nothing here yet.',
+    dashboard_continue_reading: 'Continue Reading',
+    dashboard_recently_read_placeholder: 'Reading progress will appear here in a future release.',
     library_kicker: 'Bookshelf',
     library_title: 'Your Library',
     library_formats: 'Formats',
     quick_details: 'Details',
-    quick_send: 'Send',
     quick_more: 'More',
     details_kicker: 'Book Details',
     details_metadata: 'Metadata',
@@ -69,11 +70,6 @@ const I18N = {
     activity_kicker: 'Timeline',
     activity_title: 'Recent Activity',
     activity_open_downloads: 'Open Downloads',
-    devices_kicker: 'Delivery',
-    devices_title: 'Devices & Destinations',
-    devices_empty: 'No delivery targets configured yet.',
-    devices_cta: 'Device delivery is a future Librarr 2.0 milestone.',
-    details_send_placeholder: 'Send to device is planned for a later Librarr 2.0 milestone.',
     open_external: 'Open',
     // Login modal
     login_subtitle: 'Sign in to continue',
@@ -133,7 +129,7 @@ const I18N = {
     // Library
     library_filter_placeholder: 'Filter library...',
     library_empty: 'Your library is empty',
-    library_empty_hint: 'Download some books to get started',
+    library_empty_hint: 'Import your folders or discover a new book to get started.',
     failed_load_library: 'Failed to load library',
     other: 'Other',
     n_items: '{n} items',
@@ -254,6 +250,7 @@ const I18N = {
     registration_failed: 'Registration failed',
     // Stats
     n_items_in_library: '{n} items in library',
+    n_books_in_library: '{n} books in library',
     // Search Preferences
     search_preferences: 'Search Preferences',
     filter_non_english: 'Filter non-English results',
@@ -305,7 +302,6 @@ const I18N = {
     library_title: 'Ваша библиотека',
     library_formats: 'Форматы',
     quick_details: 'Подробнее',
-    quick_send: 'Отправить',
     quick_more: 'Ещё',
     details_kicker: 'О книге',
     details_metadata: 'Метаданные',
@@ -320,11 +316,6 @@ const I18N = {
     activity_kicker: 'Лента',
     activity_title: 'Недавняя активность',
     activity_open_downloads: 'Открыть загрузки',
-    devices_kicker: 'Доставка',
-    devices_title: 'Устройства и назначения',
-    devices_empty: 'Пока не настроены цели доставки.',
-    devices_cta: 'Отправка на устройство — будущий этап Librarr 2.0.',
-    details_send_placeholder: 'Отправка на устройство запланирована на одном из следующих этапов Librarr 2.0.',
     open_external: 'Открыть',
     // Login modal
     login_subtitle: 'Войдите для продолжения',
@@ -384,7 +375,7 @@ const I18N = {
     // Library
     library_filter_placeholder: 'Фильтр библиотеки...',
     library_empty: 'Ваша библиотека пуста',
-    library_empty_hint: 'Скачайте несколько книг для начала',
+    library_empty_hint: 'Импортируйте папки или найдите новую книгу, чтобы начать.',
     failed_load_library: 'Не удалось загрузить библиотеку',
     other: 'Другое',
     n_items: '{n} элементов',
@@ -505,6 +496,7 @@ const I18N = {
     registration_failed: 'Ошибка регистрации',
     // Stats
     n_items_in_library: '{n} элементов в библиотеке',
+    n_books_in_library: '{n} книг в библиотеке',
     // Search Preferences
     search_preferences: 'Настройки поиска',
     filter_non_english: 'Фильтровать неанглоязычные результаты',
@@ -535,7 +527,6 @@ function t(key, vars) {
 
 function applyLanguage() {
   document.documentElement.lang = currentLang;
-  document.getElementById('lang-toggle').textContent = currentLang === 'en' ? 'RU' : 'EN';
 
   document.querySelectorAll('[data-i18n]').forEach(el => {
     el.textContent = t(el.dataset.i18n);
@@ -551,13 +542,6 @@ function applyLanguage() {
   });
 }
 
-function toggleLanguage() {
-  currentLang = currentLang === 'en' ? 'ru' : 'en';
-  localStorage.setItem('librarr_lang', currentLang);
-  applyLanguage();
-  refreshDynamicContent();
-}
-
 function refreshDynamicContent() {
   // Re-render current tab content with new language
   const tab = state.currentTab;
@@ -571,10 +555,6 @@ function refreshDynamicContent() {
     loadLibrary();
   } else if (tab === 'wishlist') {
     loadWishlist();
-  } else if (tab === 'activity') {
-    loadActivityTab();
-  } else if (tab === 'devices') {
-    loadDevicesTab();
   } else if (tab === 'settings') {
     loadConfig();
     loadSources();
@@ -1085,8 +1065,6 @@ function switchTab(tab) {
   if (tab === 'downloads') { refreshDownloads(); startDownloadPolling(); }
   else stopDownloadPolling();
   if (tab === 'wishlist') loadWishlist();
-  if (tab === 'activity') loadActivityTab();
-  if (tab === 'devices') loadDevicesTab();
   if (tab === 'settings') loadSettings();
   if (tab === 'settings' && window.location.hash) {
     scrollToSettingsSection(window.location.hash.slice(1));
@@ -1142,15 +1120,6 @@ function setupLibrarr2Shell() {
       <button data-action="switchTab" data-arg="search" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="search">
         <span data-i18n="nav_discover">Discover</span>
       </button>
-      <button data-action="switchTab" data-arg="wishlist" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="wishlist">
-        <span data-i18n="nav_wishlist">Wishlist</span>
-      </button>
-      <button data-action="switchTab" data-arg="activity" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="activity">
-        <span data-i18n="nav_activity">Activity</span>
-      </button>
-      <button data-action="switchTab" data-arg="devices" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="devices">
-        <span data-i18n="nav_devices">Devices</span>
-      </button>
       <button data-action="switchTab" data-arg="settings" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="settings">
         <span data-i18n="nav_settings">Settings</span>
       </button>
@@ -1181,34 +1150,6 @@ function setupLibrarr2Shell() {
     `;
     main.insertBefore(home, searchTab);
 
-    const activity = document.createElement('div');
-    activity.id = 'tab-activity';
-    activity.className = 'tab-content';
-    activity.innerHTML = `
-      <div class="flex items-end justify-between mb-6 gap-4 flex-wrap">
-        <div>
-          <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-2" data-i18n="activity_kicker">Timeline</p>
-          <h2 class="text-3xl font-semibold tracking-tight text-white" data-i18n="activity_title">Recent Activity</h2>
-        </div>
-        <button data-action="switchTab" data-arg="downloads" class="px-4 py-2.5 rounded-2xl bg-stone-800 text-stone-200 hover:bg-stone-700 transition-colors" data-i18n="activity_open_downloads">Open Downloads</button>
-      </div>
-      <div id="activity-feed" class="space-y-3"></div>
-    `;
-    main.insertBefore(activity, document.getElementById('tab-settings'));
-
-    const devices = document.createElement('div');
-    devices.id = 'tab-devices';
-    devices.className = 'tab-content';
-    devices.innerHTML = `
-      <div class="flex items-end justify-between mb-6 gap-4 flex-wrap">
-        <div>
-          <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-2" data-i18n="devices_kicker">Delivery</p>
-          <h2 class="text-3xl font-semibold tracking-tight text-white" data-i18n="devices_title">Devices & Destinations</h2>
-        </div>
-      </div>
-      <div id="devices-grid" class="grid gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
-    `;
-    main.insertBefore(devices, document.getElementById('tab-settings'));
   }
 
   if (!document.getElementById('book-detail-modal')) {
@@ -2069,7 +2010,6 @@ function renderLibraryBookCard(book, index) {
         </div>
         <div class="flex gap-2 flex-wrap">
           <button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-amber-500 text-stone-950 text-sm font-medium hover:bg-amber-400 transition-colors">${t('quick_details')}</button>
-          <button data-action="sendBookToDevices" data-index="${index}" class="px-3 py-2 rounded-xl bg-stone-800 text-stone-200 text-sm font-medium hover:bg-stone-700 transition-colors">${t('quick_send')}</button>
           ${book.externalUrl ? `<a href="${escapeHtml(book.externalUrl)}" target="_blank" rel="noreferrer" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('open_external')}</a>` : `<button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('quick_more')}</button>`}
         </div>
       </div>
@@ -2157,17 +2097,15 @@ async function loadHomeDashboard() {
     const statsRequest = useNormalized
       ? apiJson('/api/v1/library/summary')
       : apiJson('/api/stats');
-    const [statsRes, downloadsRes, wishlistRes, activityRes, libraryRes] = await Promise.allSettled([
+    const [statsRes, downloadsRes, activityRes, libraryRes] = await Promise.allSettled([
       statsRequest,
       apiJson('/api/downloads'),
-      apiJson('/api/wishlist'),
       apiJson('/api/activity?limit=6'),
       recentLibraryRequest,
     ]);
 
     const stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
     const downloads = downloadsRes.status === 'fulfilled' ? downloadsRes.value : [];
-    const wishlist = wishlistRes.status === 'fulfilled' ? (wishlistRes.value.items || []) : [];
     const activity = activityRes.status === 'fulfilled' ? (activityRes.value.events || []) : [];
     const recentBooks = libraryRes.status === 'fulfilled'
       ? (useNormalized
@@ -2187,7 +2125,6 @@ async function loadHomeDashboard() {
       recentBooks,
       formatCounts,
       downloads,
-      wishlist,
       activity,
       stats,
       bookCount,
@@ -2198,7 +2135,7 @@ async function loadHomeDashboard() {
   }
 }
 
-function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, downloads, wishlist, activity, stats, bookCount }) {
+function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, downloads, activity, stats, bookCount }) {
   if (showOnboarding) {
     return renderOnboardingChecklist();
   }
@@ -2231,60 +2168,22 @@ function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, d
       <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-semibold text-white">${t('dashboard_downloading')}</h3>
-          <button data-action="switchTab" data-arg="downloads" class="text-sm text-amber-300 hover:text-amber-200">${t('activity_open_downloads')}</button>
         </div>
         <div class="space-y-3">${(downloads || []).slice(0, 4).map(renderCompactDownload).join('') || renderDashboardEmpty()}</div>
       </section>
       <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-white">${t('dashboard_wishlist')}</h3>
-          <button data-action="switchTab" data-arg="wishlist" class="text-sm text-amber-300 hover:text-amber-200">${t('quick_more')}</button>
+          <h3 class="text-lg font-semibold text-white">${t('dashboard_continue_reading')}</h3>
         </div>
-        <div class="space-y-3">${wishlist.slice(0, 4).map(renderCompactWishlist).join('') || renderDashboardEmpty()}</div>
+        <div class="rounded-2xl border border-dashed border-stone-800 bg-stone-900/40 p-4 text-sm leading-6 text-stone-400">${t('dashboard_recently_read_placeholder')}</div>
       </section>
       <section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-semibold text-white">${t('dashboard_activity')}</h3>
-          <button data-action="switchTab" data-arg="activity" class="text-sm text-amber-300 hover:text-amber-200">${t('quick_more')}</button>
         </div>
         <div class="space-y-3">${activity.slice(0, 4).map(renderActivityRow).join('') || renderDashboardEmpty()}</div>
       </section>
     `;
-}
-
-async function loadActivityTab() {
-  const container = document.getElementById('activity-feed');
-  if (!container) return;
-  try {
-    const data = await apiJson('/api/activity?limit=30');
-    const events = data.events || [];
-    container.innerHTML = events.length ? events.map(renderActivityRow).join('') : `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('dashboard_empty')}</div>`;
-  } catch (err) {
-    if (err.message !== 'Unauthorized') {
-      container.innerHTML = `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${escapeHtml(err.message)}</div>`;
-    }
-  }
-}
-
-function loadDevicesTab() {
-  const container = document.getElementById('devices-grid');
-  if (!container) return;
-  const cfg = state.config || {};
-  const devices = [
-    { name: 'Audiobookshelf', configured: !!cfg.abs_url, detail: cfg.abs_url || t('devices_cta') },
-    { name: 'Kavita', configured: !!cfg.kavita_url, detail: cfg.kavita_url || t('devices_cta') },
-    { name: 'Komga', configured: !!cfg.komga_url, detail: cfg.komga_url || t('devices_cta') },
-    { name: 'Calibre', configured: !!cfg.calibre_url, detail: cfg.calibre_url || t('devices_cta') },
-  ];
-  container.innerHTML = devices.map(device => `
-    <article class="rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-lg font-semibold text-white">${escapeHtml(device.name)}</h3>
-        <span class="rounded-full px-3 py-1 text-xs ${device.configured ? 'bg-emerald-500/15 text-emerald-300' : 'bg-stone-800 text-stone-400'}">${device.configured ? t('connected') : t('not_configured')}</span>
-      </div>
-      <p class="text-sm text-stone-400 leading-6">${escapeHtml(device.detail)}</p>
-    </article>
-  `).join('') || `<div class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5 text-stone-400">${t('devices_empty')}</div>`;
 }
 
 function renderCompactBookCard(book, index) {
@@ -2345,12 +2244,9 @@ function renderOnboardingChecklist() {
 
   return `
     <section class="dashboard-panel lg:col-span-12 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
-      <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-        <div class="max-w-2xl">
-          <h3 class="text-xl font-semibold text-white mb-2">${t('home_onboarding_title')}</h3>
-          <p class="text-stone-400 leading-7">${t('home_import_hint')}</p>
-        </div>
-        <button data-action="openImportSettings" class="self-start px-4 py-2.5 rounded-2xl bg-stone-800 text-stone-100 font-medium hover:bg-stone-700 transition-colors">${t('home_import_library')}</button>
+      <div class="max-w-2xl">
+        <h3 class="text-xl font-semibold text-white mb-2">${t('home_onboarding_title')}</h3>
+        <p class="text-stone-400 leading-7">${t('home_import_hint')}</p>
       </div>
       <div class="mt-6 grid gap-3 md:grid-cols-2">
         ${checklistItems.map(item => `
@@ -2545,13 +2441,6 @@ function closeBookDetails() {
 
 function openHomeBookDetails(index) {
   openBookDetails(index, 'homeBooks');
-}
-
-function sendBookToDevices(index) {
-  const book = state.libraryBooks[index];
-  if (!book) return;
-  showToast(`${book.title}: ${t('details_send_placeholder')}`, 'info');
-  switchTab('devices');
 }
 
 function renderDetailMetaCard(label, value) {
@@ -4106,10 +3995,12 @@ async function revokeInviteCode(id) {
 // ============================================================
 async function loadStats() {
   try {
-    const data = await apiJson('/api/stats');
+    const useNormalized = normalizedLibraryMode();
+    const data = await apiJson(useNormalized ? '/api/v1/library/summary' : '/api/stats');
     const statsEl = document.getElementById('header-stats');
-    if (data.total_items !== undefined) {
-      statsEl.textContent = t('n_items_in_library', {n: data.total_items});
+    const count = useNormalized ? data.total_books : data.total_items;
+    if (count !== undefined) {
+      statsEl.textContent = t('n_books_in_library', {n: count});
       statsEl.classList.remove('hidden');
     }
   } catch (err) {
@@ -4236,7 +4127,6 @@ const CLICK_ACTIONS = {
   testConnection: el => testConnection(el.dataset.arg),
   saveIntegration: el => saveIntegration(el.dataset.arg),
   toggleMobileNav: () => toggleMobileNav(),
-  toggleLanguage: () => toggleLanguage(),
   showLoginForm: () => showLoginForm(),
   showRegisterForm: () => showRegisterForm(),
   showWishlistForm: () => showWishlistForm(),
@@ -4250,7 +4140,6 @@ const CLICK_ACTIONS = {
   openBookDetails: el => openBookDetails(+el.dataset.index),
   openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),
   closeBookDetails: () => closeBookDetails(),
-  sendBookToDevices: el => sendBookToDevices(+el.dataset.index),
   // Dynamically rendered rows/cards:
   startDownload: el => {
     // data-idx indexes the *rendered* (sorted) list, not state.searchResults.

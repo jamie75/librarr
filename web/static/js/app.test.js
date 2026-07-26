@@ -6,8 +6,10 @@ const vm = require('node:vm');
 
 const jsPath = path.join(__dirname, 'app.js');
 const htmlPath = path.join(__dirname, '..', '..', 'index.html');
+const cssPath = path.join(__dirname, '..', 'css', 'app.css');
 const appSource = fs.readFileSync(jsPath, 'utf8');
 const indexHTML = fs.readFileSync(htmlPath, 'utf8');
+const appCSS = fs.readFileSync(cssPath, 'utf8');
 
 function extractFunctionSource(name) {
   const asyncStart = appSource.indexOf(`async function ${name}`);
@@ -56,6 +58,8 @@ function extractFunctionSource(name) {
 const functionBundle = [
   extractFunctionSource('currentLibraryCount'),
   extractFunctionSource('buildHomeDashboardMarkup'),
+  extractFunctionSource('renderOnboardingChecklist'),
+  extractFunctionSource('renderLibraryBookCard'),
   extractFunctionSource('getLibraryImportFormValues'),
   extractFunctionSource('sanitizeLibraryImportValues'),
   extractFunctionSource('validateLibraryImportSettings'),
@@ -88,6 +92,7 @@ const functionBundle = [
   extractFunctionSource('pollLibraryImportJob'),
   extractFunctionSource('loadLibraryImportResults'),
   extractFunctionSource('refreshLibraryAfterScanImport'),
+  extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
   extractFunctionSource('saveLibraryImportSettings'),
 ].join('\n\n');
@@ -149,6 +154,7 @@ function createContext(overrides = {}) {
     showToast: () => {},
     scrollToSettingsSection: () => {},
     window: { setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {} },
+    normalizedLibraryMode: () => false,
   };
   const context = vm.createContext({ ...base, ...overrides });
   vm.runInContext(functionBundle, context);
@@ -589,6 +595,58 @@ test('index.html keeps the standard Settings save control', () => {
   assert.match(indexHTML, /id="settings-library-import-save-standard"/);
   assert.match(indexHTML, /data-action="saveLibraryImportStandard"/);
   assert.match(indexHTML, />Save<\/button>/);
+});
+
+test('main navigation is focused on Librarr 2.0 primary destinations', () => {
+  assert.match(indexHTML, /data-arg="home"/);
+  assert.match(indexHTML, /data-arg="library"/);
+  assert.match(indexHTML, /data-arg="search"[\s\S]*nav_discover/);
+  assert.match(indexHTML, /data-arg="settings"/);
+  assert.doesNotMatch(indexHTML, /id="lang-toggle"/);
+  assert.doesNotMatch(appSource, /lang-toggle|toggleLanguage/);
+  assert.doesNotMatch(appCSS, /Russian locale/);
+  assert.doesNotMatch(indexHTML, /data-arg="downloads" class="nav-tab/);
+  assert.doesNotMatch(indexHTML, /data-arg="wishlist" class="nav-tab/);
+});
+
+test('unfinished device actions are not exposed in book cards', () => {
+  const context = createContext({
+    renderBookCover: () => '<cover />',
+    renderFormatBadge: format => `<format>${format}</format>`,
+  });
+
+  const html = context.renderLibraryBookCard({ title: 'Book', author: 'Author', formats: ['EPUB'] }, 0);
+
+  assert.doesNotMatch(html, /sendBookToDevices|>Send</);
+  assert.doesNotMatch(appSource, /function sendBookToDevices|tab-devices|devices-grid/);
+});
+
+test('onboarding checklist does not duplicate the import action', () => {
+  const context = createContext({
+    state: { currentUser: 'admin', libraryImport: libraryImportState() },
+  });
+  const html = context.renderOnboardingChecklist();
+
+  assert.match(html, /home_onboarding_title/);
+  assert.doesNotMatch(html, /data-action="openImportSettings"/);
+});
+
+test('loadStats displays book-oriented header copy', async () => {
+  const statsEl = { textContent: '', classList: fakeClassList(['hidden']) };
+  const context = createContext({
+    document: { getElementById: id => id === 'header-stats' ? statsEl : null },
+    normalizedLibraryMode: () => true,
+    t: (key, vars) => key === 'n_books_in_library' ? `${vars.n} books in library` : key,
+    apiJson: async url => {
+      assert.equal(url, '/api/v1/library/summary');
+      return { total_books: 3 };
+    },
+  });
+
+  await context.loadStats();
+
+  assert.equal(statsEl.textContent, '3 books in library');
+  assert.equal(statsEl.classList.contains('hidden'), false);
 });
 
 test('renderLibraryScanWorkspace shows active scan button after onboarding', () => {

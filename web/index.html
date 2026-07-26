@@ -124,31 +124,23 @@
         <button data-action="doLogout" id="logout-btn" class="hidden p-2 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 transition-colors" data-i18n-title="sign_out" title="Sign out">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
         </button>
-        <button data-action="toggleLanguage" id="lang-toggle" class="p-2 text-xs font-bold text-slate-400 hover:text-indigo-400 rounded-lg hover:bg-slate-800 transition-colors">RU</button>
-        <button data-action="switchTab" data-arg="settings" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors" data-i18n-title="nav_settings" title="Settings">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        </button>
       </div>
     </div>
 
     <!-- Nav Tabs -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6">
       <nav class="flex gap-1 -mb-px overflow-x-auto" id="main-nav">
-        <button data-action="switchTab" data-arg="search" class="nav-tab active px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="search">
-          <svg class="w-4 h-4 inline mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg><span data-i18n="nav_search">Search</span>
+        <button data-action="switchTab" data-arg="home" class="nav-tab active px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="home">
+          <span data-i18n="nav_home">Home</span>
         </button>
         <button data-action="switchTab" data-arg="library" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="library">
-          <svg class="w-4 h-4 inline mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg><span data-i18n="nav_library">Library</span>
+          <span data-i18n="nav_library">Library</span>
         </button>
-        <button data-action="switchTab" data-arg="downloads" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap relative" data-tab="downloads">
-          <svg class="w-4 h-4 inline mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg><span data-i18n="nav_downloads">Downloads</span>
-          <span id="dl-badge" class="hidden ml-1 px-1.5 py-0.5 text-xs bg-indigo-600 text-white rounded-full"></span>
-        </button>
-        <button data-action="switchTab" data-arg="wishlist" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="wishlist">
-          <svg class="w-4 h-4 inline mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg><span data-i18n="nav_wishlist">Wishlist</span>
+        <button data-action="switchTab" data-arg="search" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="search">
+          <span data-i18n="nav_discover">Discover</span>
         </button>
         <button data-action="switchTab" data-arg="settings" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap" data-tab="settings">
-          <svg class="w-4 h-4 inline mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span data-i18n="nav_settings">Settings</span>
+          <span data-i18n="nav_settings">Settings</span>
         </button>
       </nav>
     </div>
@@ -277,6 +269,18 @@
 
     <!-- ==================== SETTINGS TAB ==================== -->
     <div id="tab-settings" class="tab-content">
+      <div class="mb-6 rounded-[1.75rem] border border-slate-800 bg-slate-900/80 p-5">
+        <p class="text-xs uppercase tracking-[0.24em] text-amber-300/80 mb-2">Administration</p>
+        <h2 class="text-2xl font-semibold tracking-tight text-white">Settings</h2>
+        <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Configure the folders, services, accounts, and search behavior Librarr uses to manage your library.</p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <a href="#settings-library-import" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Library</a>
+          <a href="#settings-integrations" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Integrations</a>
+          <a href="#settings-users" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Users</a>
+          <a href="#settings-preferences" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">Preferences</a>
+          <a href="#settings-about" class="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">About</a>
+        </div>
+      </div>
       <div id="settings-library-import" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>
@@ -344,7 +348,7 @@
         </div>
       </div>
 
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+      <div id="settings-users" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>
             <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider" data-i18n="s_user_mgmt_title">User Management</h3>
@@ -386,7 +390,7 @@
       </div>
 
       <!-- Integrations -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+      <div id="settings-integrations" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>
             <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Integrations</h3>
@@ -591,7 +595,7 @@
       </div>
 
       <!-- Connection Tests -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+      <div id="settings-connections" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4" data-i18n="s_connection_tests">Connection Tests</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="connection-tests">
           <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
@@ -640,7 +644,7 @@
       </div>
 
       <!-- Search Preferences -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+      <div id="settings-preferences" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
         <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4" data-i18n="search_preferences">Search Preferences</h3>
         <div class="flex items-center justify-between">
           <div>
@@ -677,7 +681,7 @@
       </div>
 
       <!-- Config Info -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <div id="settings-about" class="bg-slate-900 border border-slate-800 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4" data-i18n="s_configuration">Configuration</h3>
         <div id="config-info" class="space-y-2 text-sm text-slate-400" data-i18n="loading">Loading...</div>
       </div>

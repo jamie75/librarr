@@ -48,10 +48,6 @@
   .hamburger-btn { display: none; }
   .mobile-nav-overlay { display: none; }
 
-  /* Russian locale adjustments */
-  html[lang="ru"] .sub-tab { font-size: 0.75rem; }
-  html[lang="ru"] #tab-settings h3 { letter-spacing: 0.02em; }
-
   /* Mobile responsive */
   @media (max-width: 640px) {
     /* Hamburger menu toggle */
