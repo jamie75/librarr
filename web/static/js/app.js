@@ -3620,7 +3620,7 @@ function updateMetadataEditorPreview() {
 
 function metadataEditorPreview(candidate, draft) {
   const base = candidate.destination_path || candidate.path || candidate.filename || '';
-  const folder = pathDirname(base) || pathDirname(candidate.path || '') || '';
+  const folder = (pathDirname(base) || pathDirname(candidate.path || '') || '').replace(/\/(ebooks|audiobooks|manga)\/\1(?=\/|$)/gi, '/$1');
   const extension = (candidate.format || pathExtension(candidate.path || candidate.filename || '') || 'book').replace(/^\./, '').toLowerCase();
   const title = safeFilenamePart(draft.title || candidate.title || candidate.filename || 'Untitled');
   const author = safeFilenamePart(draft.author || candidate.author || '');
@@ -3981,6 +3981,7 @@ async function resolveLibraryScanCandidate(candidateID, action, values = {}, opt
       scan.editor = { candidateId: '', draft: null, errors: [] };
     }
     renderLibraryScanWorkspace();
+    await refreshLibraryAfterScanImport();
     showToast(action === 'edit_metadata' ? 'Metadata updated for import' : 'Candidate ready to import', 'success');
     return result;
   } catch (err) {

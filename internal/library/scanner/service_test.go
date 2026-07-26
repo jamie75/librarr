@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,25 @@ func TestScannerEmbeddedMetadataAndFilenameFallback(t *testing.T) {
 	}
 	if fallback.DestinationPath != fallback.Path {
 		t.Fatalf("destination path = %q, want %q", fallback.DestinationPath, fallback.Path)
+	}
+}
+
+func TestPreviewDestinationDoesNotDuplicateLibrarySegment(t *testing.T) {
+	candidate := Candidate{
+		Title:           "The Guardian's Path",
+		Author:          "Carla Jablonski",
+		Format:          "epub",
+		Path:            filepath.Join("/books", "ebooks", "Disney", "The Guardian's Path.epub"),
+		DestinationPath: filepath.Join("/books", "ebooks", "ebooks", "The Guardian's Path.epub"),
+	}
+
+	got := previewDestination(candidate)
+	want := filepath.Join("/books", "ebooks", "Carla Jablonski - The Guardian's Path.epub")
+	if got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+	if strings.Count(filepath.ToSlash(got), "/ebooks/") != 1 {
+		t.Fatalf("destination contains duplicated ebooks segment: %q", got)
 	}
 }
 

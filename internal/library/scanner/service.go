@@ -160,6 +160,12 @@ func (m *Manager) UpdateCandidates(jobID string, updates []CandidateUpdate) (*Re
 		if update.ExistingPath != "" {
 			job.Result.Candidates[i].ExistingPath = update.ExistingPath
 		}
+		if update.ExistingBookID != 0 {
+			job.Result.Candidates[i].ExistingBookID = update.ExistingBookID
+		}
+		if update.ExistingFileID != 0 {
+			job.Result.Candidates[i].ExistingFileID = update.ExistingFileID
+		}
 		job.Result.Candidates[i].Error = update.Error
 	}
 	job.Result.Totals = countTotals(job.Result.Candidates)
@@ -312,6 +318,7 @@ func previewDestination(candidate Candidate) string {
 	if strings.TrimSpace(dir) == "." || strings.TrimSpace(dir) == "" {
 		dir = filepath.Dir(candidate.Path)
 	}
+	dir = collapseRepeatedLibrarySegment(dir)
 	title := safePathSegment(firstNonBlank(candidate.Title, candidate.Metadata.Title, candidate.Filename, "Untitled"))
 	author := safePathSegment(firstNonBlank(candidate.Author, candidate.Metadata.Author))
 	format := strings.Trim(strings.ToLower(firstNonBlank(candidate.Format, strings.TrimPrefix(filepath.Ext(candidate.Path), "."))), ".")
@@ -326,6 +333,35 @@ func previewDestination(candidate Candidate) string {
 		return name
 	}
 	return filepath.Join(dir, name)
+}
+
+func collapseRepeatedLibrarySegment(dir string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(dir))
+	if cleaned == "." || cleaned == "" {
+		return dir
+	}
+	separator := string(filepath.Separator)
+	parts := strings.Split(cleaned, separator)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(out) > 0 && repeatedLibrarySegment(out[len(out)-1], part) {
+			continue
+		}
+		out = append(out, part)
+	}
+	return strings.Join(out, separator)
+}
+
+func repeatedLibrarySegment(previous, current string) bool {
+	if !strings.EqualFold(previous, current) {
+		return false
+	}
+	switch strings.ToLower(current) {
+	case "ebooks", "audiobooks", "manga":
+		return true
+	default:
+		return false
+	}
 }
 
 func safePathSegment(value string) string {
@@ -645,6 +681,15 @@ func applyPlan(candidate *Candidate, plan libraryimport.ImportPlan) {
 	candidate.Title = meta.Title
 	candidate.Author = meta.Author
 	candidate.DestinationPath = proposedDestination(plan)
+	if plan.Book.Existing != nil {
+		candidate.ExistingBookID = plan.Book.Existing.ID
+	}
+	if plan.File.Existing != nil {
+		candidate.ExistingFileID = plan.File.Existing.ID
+		if plan.File.Existing.BookID != 0 {
+			candidate.ExistingBookID = plan.File.Existing.BookID
+		}
+	}
 	candidate.Classification = ClassificationNew
 	candidate.ClassificationReason = "Ready to import"
 

@@ -50,7 +50,7 @@ func (c *CoverCache) AttachBookCover(ctx context.Context, svc *LibraryService, b
 	if c == nil || svc == nil || bookID == 0 || strings.TrimSpace(c.dir) == "" {
 		return nil, nil
 	}
-	if existing, err := svc.GetPrimaryCover(ctx, bookID); err == nil && existing != nil && strings.TrimSpace(existing.LocalPath) != "" {
+	if existing, err := svc.GetPrimaryCover(ctx, bookID); err == nil && usableCover(existing) {
 		return existing, nil
 	}
 	cover, err := organize.ExtractEmbeddedCover(sourcePath)
@@ -80,6 +80,21 @@ func (c *CoverCache) AttachBookCover(ctx context.Context, svc *LibraryService, b
 	}
 	slog.Debug("attached local book cover", "book_id", bookID, "source", cover.Source, "mime_type", cover.MimeType)
 	return attached, nil
+}
+
+func usableCover(cover *Cover) bool {
+	if cover == nil {
+		return false
+	}
+	if strings.TrimSpace(cover.SourceURL) != "" {
+		return true
+	}
+	localPath := strings.TrimSpace(cover.LocalPath)
+	if localPath == "" {
+		return false
+	}
+	info, err := os.Stat(localPath)
+	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
 func writeCoverFile(targetPath string, data []byte) error {

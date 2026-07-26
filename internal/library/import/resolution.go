@@ -161,8 +161,14 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 		}, nil
 	}
 	if len(exactTitleMatches) > 0 {
+		var existing *library.Book
+		if len(exactTitleMatches) == 1 {
+			book := exactTitleMatches[0]
+			existing = &book
+		}
 		return ResolvedBook{
-			Action: BookActionNeedsManualReview,
+			Action:   BookActionNeedsManualReview,
+			Existing: existing,
 			Evidence: []PlanningEvidence{{
 				Signal:      "title_conflict",
 				Value:       title,

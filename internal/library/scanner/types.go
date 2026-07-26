@@ -109,6 +109,8 @@ type Candidate struct {
 	Classification       Classification       `json:"classification"`
 	ClassificationReason string               `json:"classification_reason,omitempty"`
 	ExistingPath         string               `json:"existing_path,omitempty"`
+	ExistingBookID       int64                `json:"existing_book_id,omitempty"`
+	ExistingFileID       int64                `json:"existing_file_id,omitempty"`
 	DestinationPath      string               `json:"destination_path,omitempty"`
 	ManualReview         *ManualReviewDetails `json:"manual_review,omitempty"`
 	Duplicate            *DuplicateDetails    `json:"duplicate,omitempty"`
@@ -120,6 +122,8 @@ type CandidateUpdate struct {
 	Classification       Classification `json:"classification"`
 	ClassificationReason string         `json:"classification_reason,omitempty"`
 	ExistingPath         string         `json:"existing_path,omitempty"`
+	ExistingBookID       int64          `json:"existing_book_id,omitempty"`
+	ExistingFileID       int64          `json:"existing_file_id,omitempty"`
 	Error                string         `json:"error,omitempty"`
 }
 

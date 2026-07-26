@@ -1,8 +1,10 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -305,6 +307,184 @@ func TestV1LibraryScanResolveMetadataEditorFields(t *testing.T) {
 	}
 }
 
+func TestV1LibraryScanResultsBackfillExistingBookCover(t *testing.T) {
+	s, _, cleanup := newNormalizedLibraryScanAPIServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	ebookPath := filepath.Join(s.cfg.EbookDir, "The Guardian's Path.epub")
+	writeAPIEPUBWithCover(t, ebookPath, "The Guardian's Path", "Carla Jablonski")
+	book, edition := createAPIScanBook(t, s.libraryService, "The Guardian's Path", "Carla Jablonski")
+	if _, err := s.libraryService.AttachFile(ctx, library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "epub",
+		Path:        ebookPath,
+		ContentHash: "already-imported",
+		SourceType:  "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	scanJobID := startAPIScanWithCurrentRoots(t, s)
+	result := getAPIScanResult(t, s, scanJobID)
+	candidate := result.Candidates[0]
+	if candidate.Classification != libraryscanner.ClassificationAlreadyImported {
+		t.Fatalf("classification = %s candidate=%+v", candidate.Classification, candidate)
+	}
+	if candidate.CoverURL == "" {
+		t.Fatalf("expected scan cover URL, candidate = %+v", candidate)
+	}
+
+	cover, err := s.libraryService.GetPrimaryCover(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("expected backfilled cover: %v", err)
+	}
+	if cover.LocalPath == "" {
+		t.Fatalf("cover = %+v", cover)
+	}
+	if _, err := os.Stat(cover.LocalPath); err != nil {
+		t.Fatalf("cover file missing: %v", err)
+	}
+}
+
+func TestV1LibraryScanUseSuggestedAttachesCoverToExistingBook(t *testing.T) {
+	s, dbPath, cleanup := newNormalizedLibraryScanAPIServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	ebookPath := filepath.Join(s.cfg.EbookDir, "Conflict.epub")
+	writeAPIEPUBWithCover(t, ebookPath, "The Guardian's Path", "Carla Jablonski")
+	book, _ := createAPIScanBook(t, s.libraryService, "The Guardian's Path", "Different Author")
+
+	scanJobID := startAPIScanWithCurrentRoots(t, s)
+	result := getAPIScanResult(t, s, scanJobID)
+	candidate := result.Candidates[0]
+	if candidate.Classification != libraryscanner.ClassificationManualReview {
+		t.Fatalf("classification = %s candidate=%+v", candidate.Classification, candidate)
+	}
+	if candidate.CoverURL == "" {
+		t.Fatalf("expected manual review cover URL, candidate = %+v", candidate)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     candidate.ID,
+		"action": "use_suggested",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan/"+scanJobID+"/resolve", bytes.NewReader(body))
+	req.SetPathValue("job_id", scanJobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	cover, err := s.libraryService.GetPrimaryCover(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("expected attached cover: %v", err)
+	}
+	if cover.LocalPath == "" {
+		t.Fatalf("cover = %+v", cover)
+	}
+	count, err := s.libraryService.CountListedBooks(ctx, library.ListBooksQuery{MediaType: library.MediaTypeEbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("book count = %d, want 1", count)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/books?media_type=ebook", nil)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("books status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var list v1BookListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || !list.Items[0].Cover.Available || list.Items[0].Cover.URL == nil {
+		t.Fatalf("list items = %+v", list.Items)
+	}
+
+	reopened, err := db.New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	repo, err := library.NewNormalizedRepository(reopened.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := library.NewLibraryService(library.ServiceOptions{
+		BookRepository:        repo,
+		EditionRepository:     repo,
+		FileRepository:        repo,
+		MetadataRepository:    repo,
+		SeriesRepository:      repo,
+		ContributorRepository: repo,
+		IdentifierRepository:  repo,
+		CoverRepository:       repo,
+		TransactionManager:    repo,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := restarted.GetPrimaryCover(ctx, book.ID)
+	if err != nil {
+		t.Fatalf("expected cover after restart: %v", err)
+	}
+	if persisted.LocalPath != cover.LocalPath {
+		t.Fatalf("persisted cover path = %q, want %q", persisted.LocalPath, cover.LocalPath)
+	}
+}
+
+func TestV1LibraryScanUseSuggestedDoesNotOverwriteExistingCover(t *testing.T) {
+	s, _, cleanup := newNormalizedLibraryScanAPIServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	ebookPath := filepath.Join(s.cfg.EbookDir, "Conflict.epub")
+	writeAPIEPUBWithCover(t, ebookPath, "The Guardian's Path", "Carla Jablonski")
+	book, _ := createAPIScanBook(t, s.libraryService, "The Guardian's Path", "Different Author")
+	existingCoverPath := filepath.Join(t.TempDir(), "existing-cover.png")
+	if err := os.WriteFile(existingCoverPath, []byte{0x89, 0x50, 0x4e, 0x47, 1, 2, 3}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachCover(ctx, library.Cover{
+		BookID:    book.ID,
+		Source:    "existing",
+		LocalPath: existingCoverPath,
+		MimeType:  "image/png",
+		IsPrimary: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	scanJobID := startAPIScanWithCurrentRoots(t, s)
+	result := getAPIScanResult(t, s, scanJobID)
+	candidate := result.Candidates[0]
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     candidate.ID,
+		"action": "use_suggested",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan/"+scanJobID+"/resolve", bytes.NewReader(body))
+	req.SetPathValue("job_id", scanJobID)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	cover, err := s.libraryService.GetPrimaryCover(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cover.LocalPath != existingCoverPath {
+		t.Fatalf("cover path = %q, want existing %q", cover.LocalPath, existingCoverPath)
+	}
+}
+
 func TestV1LibraryImportUsesEditedMetadataOverride(t *testing.T) {
 	engine := &sequenceImportEngine{results: []*libraryimport.EngineResult{{InsertedCount: 1}}}
 	s, cleanup := newLibraryScanAPIServerWithEngine(t, engine)
@@ -431,6 +611,130 @@ func newLibraryScanAPIServerWithEngine(t *testing.T, engine libraryimport.Import
 	}
 	s.registerLibraryRoutes()
 	return s, func() { d.Close() }
+}
+
+func newNormalizedLibraryScanAPIServer(t *testing.T) (*Server, string, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "scan-normalized.db")
+	d, err := db.New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCompletedEmptyBackfill(t, d)
+	cfg := &config.Config{
+		APIKey:                "test-api-key",
+		LibraryRepositoryMode: "normalized",
+		SettingsFile:          filepath.Join(t.TempDir(), "settings.json"),
+		EbookDir:              filepath.Join(t.TempDir(), "ebooks"),
+		AudiobookDir:          filepath.Join(t.TempDir(), "audio"),
+		MangaDir:              filepath.Join(t.TempDir(), "manga"),
+	}
+	for _, dir := range []string{cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := map[string]interface{}{
+		"ebook_dir":     cfg.EbookDir,
+		"audiobook_dir": cfg.AudiobookDir,
+		"manga_dir":     cfg.MangaDir,
+	}
+	data, _ := json.Marshal(settings)
+	if err := os.WriteFile(cfg.SettingsFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := library.NewConfiguredLibraryService(context.Background(), cfg, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverCache := library.NewCoverCache(filepath.Join(t.TempDir(), "covers"))
+	s := &Server{
+		cfg:            cfg,
+		db:             d,
+		mux:            http.NewServeMux(),
+		sessions:       NewSessionStore(),
+		libraryService: selection.LibraryService,
+		coverCache:     coverCache,
+		libraryScanner: libraryscanner.NewManager(selection.LibraryService, libraryscanner.WithCoverCache(coverCache)),
+	}
+	s.registerLibraryRoutes()
+	return s, dbPath, func() { d.Close() }
+}
+
+func createAPIScanBook(t *testing.T, svc *library.LibraryService, title, author string) (*library.Book, *library.Edition) {
+	t.Helper()
+	ctx := context.Background()
+	book, err := svc.CreateBook(ctx, library.Book{Title: title, SortTitle: title, MediaType: library.MediaTypeEbook, Status: library.BookStatusOwned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edition, err := svc.CreateEdition(ctx, library.Edition{BookID: book.ID, Title: title})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(author) != "" {
+		if err := svc.AttachContributor(ctx, edition.ID, library.Contributor{Name: author, Roles: []library.ContributorRole{library.RoleAuthor}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return book, edition
+}
+
+func startAPIScanWithCurrentRoots(t *testing.T, s *Server) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/library/scan", nil)
+	req.Header.Set("X-Api-Key", s.cfg.APIKey)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("scan status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var started struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	waitAPIScanJob(t, s, started.JobID)
+	return started.JobID
+}
+
+func writeAPIEPUBWithCover(t *testing.T, path, title, author string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	container, err := zw.Create("META-INF/container.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := container.Write([]byte(`<container><rootfiles><rootfile full-path="OPS/content.opf"/></rootfiles></container>`)); err != nil {
+		t.Fatal(err)
+	}
+	opf, err := zw.Create("OPS/content.opf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opf.Write([]byte(`<package><metadata><title>` + title + `</title><creator>` + author + `</creator><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="images/cover.png" media-type="image/png"/></manifest></package>`)); err != nil {
+		t.Fatal(err)
+	}
+	img, err := zw.Create("OPS/images/cover.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	if _, err := img.Write(png); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitAPIScanJob(t *testing.T, s *Server, jobID string) *libraryscanner.Job {

@@ -690,6 +690,27 @@ test('unfinished device actions are not exposed in book cards', () => {
   assert.doesNotMatch(appSource, /function sendBookToDevices|tab-devices|devices-grid/);
 });
 
+test('library book card renders returned cover URL', () => {
+  let seenCover = '';
+  const context = createContext({
+    renderBookCover: book => {
+      seenCover = book.coverUrl || '';
+      return book.coverUrl ? `<img src="${book.coverUrl}" alt="">` : '<cover />';
+    },
+    renderFormatBadge: format => `<format>${format}</format>`,
+  });
+
+  const html = context.renderLibraryBookCard({
+    title: 'Covered Book',
+    author: 'Author',
+    formats: ['EPUB'],
+    coverUrl: '/api/v1/books/42/cover',
+  }, 0);
+
+  assert.equal(seenCover, '/api/v1/books/42/cover');
+  assert.match(html, /<img src="\/api\/v1\/books\/42\/cover"/);
+});
+
 test('onboarding checklist does not duplicate the import action', () => {
   const context = createContext({
     state: { currentUser: 'admin', libraryImport: libraryImportState() },
@@ -994,6 +1015,7 @@ test('manual review use suggested resolves candidate through scan endpoint', asy
   const scanState = libraryImportState().scan;
   scanState.result = manualReviewScanResult();
   const calls = [];
+  let refreshed = false;
   const context = createContext({
     state: { libraryImport: libraryImportState({ completed: true, scan: scanState }) },
     apiJson: async (url, options = {}) => {
@@ -1005,6 +1027,9 @@ test('manual review use suggested resolves candidate through scan endpoint', asy
       };
     },
   });
+  context.refreshLibraryAfterScanImport = async () => {
+    refreshed = true;
+  };
 
   await context.resolveLibraryScanCandidate('review-1', 'use_suggested');
 
@@ -1013,6 +1038,7 @@ test('manual review use suggested resolves candidate through scan endpoint', asy
   assert.match(calls[0].body, /"action":"use_suggested"/);
   assert.equal(context.state.libraryImport.scan.result.totals.ready_to_import, 1);
   assert.equal(context.state.libraryImport.scan.selected.has('review-1'), true);
+  assert.equal(refreshed, true);
 });
 
 test('metadata editor renders live preview and validation for manual review items', () => {
@@ -1048,6 +1074,22 @@ test('metadata editor renders live preview and validation for manual review item
   assert.match(html, /Import Location/);
   assert.match(html, /Carla Jablonski - The Guardian’s Path\.mobi/);
   assert.match(html, /Save & Import/);
+});
+
+test('metadata editor destination preview collapses duplicate library segment', () => {
+  const context = createContext();
+  const preview = context.metadataEditorPreview({
+    destination_path: '/books/ebooks/ebooks/Prince Of Persia.epub',
+    path: '/books/ebooks/Prince Of Persia.epub',
+    filename: 'Prince Of Persia.epub',
+    format: 'epub',
+  }, {
+    title: "The Guardian's Path",
+    author: 'Carla Jablonski',
+  });
+
+  assert.equal(preview.path, "/books/ebooks/Carla Jablonski - The Guardian's Path.epub");
+  assert.doesNotMatch(preview.path, /\/ebooks\/ebooks\//);
 });
 
 test('metadata editor validation blocks missing title, bad year, bad ISBN, and duplicate filename', () => {

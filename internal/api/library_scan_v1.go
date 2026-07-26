@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -75,6 +77,7 @@ func (s *Server) handleV1LibraryScanResults(w http.ResponseWriter, r *http.Reque
 		writeLibraryScanDebugHTML(w, result)
 		return
 	}
+	s.backfillScanCandidateCovers(r.Context(), result.Candidates, false)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -121,7 +124,46 @@ func (s *Server) handleV1LibraryScanResolve(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
+	if result != nil {
+		s.backfillScanCandidateCovers(r.Context(), result.Candidates, true)
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) backfillScanCandidateCovers(ctx context.Context, candidates []libraryscanner.Candidate, includeReady bool) {
+	for _, candidate := range candidates {
+		if candidate.CoverURL == "" && candidate.CoverPath == "" {
+			continue
+		}
+		switch candidate.Classification {
+		case libraryscanner.ClassificationAlreadyImported, libraryscanner.ClassificationDuplicate:
+		case libraryscanner.ClassificationNew:
+			if !includeReady {
+				continue
+			}
+		default:
+			continue
+		}
+		s.attachExistingScanCandidateCover(ctx, candidate)
+	}
+}
+
+func (s *Server) attachExistingScanCandidateCover(ctx context.Context, candidate libraryscanner.Candidate) {
+	if s == nil || s.coverCache == nil || s.libraryService == nil {
+		return
+	}
+	bookID := candidate.ExistingBookID
+	if bookID == 0 && strings.TrimSpace(candidate.ExistingPath) != "" {
+		if file, err := s.libraryService.FindFileByPath(ctx, candidate.ExistingPath); err == nil && file != nil {
+			bookID = file.BookID
+		}
+	}
+	if bookID == 0 {
+		return
+	}
+	if _, err := s.coverCache.AttachBookCover(ctx, s.libraryService, bookID, candidate.Path); err != nil {
+		slog.Debug("failed to backfill scan candidate cover", "book_id", bookID, "path", candidate.Path, "error", err)
+	}
 }
 
 func writeLibraryScanDebugHTML(w http.ResponseWriter, result *libraryscanner.Result) {
