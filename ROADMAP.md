@@ -125,7 +125,8 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Add clear scan, review, duplicate, manual-review, and import-error states.
 - [x] Render normalized Library cards as one logical book with grouped format chips.
 - [x] Add safe catalog-only and delete-files actions from normalized book details.
-- [ ] Add explicit duplicate logical-record repair tooling for historical data.
+- [x] Add explicit duplicate logical-record repair tooling for historical data.
+- [x] Add explicit dry-run-first nested ebook path repair for `/books/ebooks/ebooks/...`.
 - [ ] Defer complex editing until the normalized model is stable.
 
 ### 2.0.8 Connection diagnostics

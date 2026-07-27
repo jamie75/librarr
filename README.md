@@ -136,11 +136,35 @@ Book details provide two distinct admin actions:
   then removes the catalog record. Librarr only deletes paths already associated
   with the selected book and only when they resolve inside configured library
   roots.
+- **Merge Matching Duplicates** repairs historical split logical-book records
+  when normalized title and contributor matching show they are the same book.
 
-Librarr does not currently run an automatic destructive merge of historical
-duplicate book rows. Future imports and scanner imports use the normalized
-matching/import pipeline; existing duplicate logical records should be repaired
-through an explicit review workflow when that tool is added.
+Librarr does not run automatic destructive repair on startup. Administrators can
+explicitly repair historical duplicate rows from Book Details and can preview
+the nested ebook path repair from Settings before any files are moved.
+
+### Nested ebook path repair
+
+Older development builds could create cataloged files under a repeated ebook
+folder such as `/books/ebooks/ebooks/...`. Manual filesystem moves would break
+Library and OPDS records because normalized file paths are stored in the
+database.
+
+Administrators can use **Settings → Maintenance → Repair Nested Ebook Paths**:
+
+1. Merge matching duplicate books if needed.
+2. Preview the nested ebook path repair.
+3. Review ready, collision, missing, unsafe, and already-repaired entries.
+4. Run the repair only after taking a backup.
+5. Verify Library and OPDS.
+6. Rescan only if needed.
+
+The repair targets only the configured ebook root plus one repeated terminal
+segment, for example `EbookDir=/books/ebooks` repairs
+`/books/ebooks/ebooks/...` to `/books/ebooks/...`. It skips missing files,
+collisions, unsafe paths, and unknown files that are not represented in the
+catalog. Scanner imports from `/data/incoming` remain unmanaged/in-place until a
+separate organization workflow is implemented.
 
 ### Review and import
 

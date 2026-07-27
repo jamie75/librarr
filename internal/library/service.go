@@ -218,6 +218,11 @@ func (s *LibraryService) FindFilesByContentHash(ctx context.Context, hash string
 	return files, translateLibraryError(err)
 }
 
+func (s *LibraryService) MoveFile(ctx context.Context, fileID int64, path string) (*BookFile, error) {
+	file, err := s.files.MoveFile(ctx, fileID, path)
+	return file, translateLibraryError(err)
+}
+
 func (s *LibraryService) CreateEdition(ctx context.Context, edition Edition) (*Edition, error) {
 	if s.editions == nil {
 		return nil, ErrUnsupportedOperation

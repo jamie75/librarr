@@ -38,13 +38,18 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Completed-download imports no longer insert library records when file
   organization is enabled but organization fails.
 - Normalized format chips are deduplicated and sorted deliberately.
+- Book Details now includes an explicit admin-only duplicate merge repair for
+  historical logical-book splits.
+- Settings now includes an admin-only nested ebook path repair with dry-run
+  preview, collision/missing/unsafe statuses, safe moves, catalog path updates,
+  and empty-directory cleanup.
 
 ### Known limitations
 
 - Librarr 2.0 is not yet declared stable.
 - Some Library metadata editing paths still need polish.
-- Historical duplicate logical book rows are not automatically merged; explicit
-  review/repair tooling is still planned.
+- Historical duplicate logical book rows and nested ebook paths are not repaired
+  automatically; administrators must run the explicit repair tools.
 - MOBI, AZW3, and PDF cover extraction remain incomplete.
 - Reading progress sync, annotations, highlights, and bookmarks are not yet
   implemented.

@@ -238,13 +238,16 @@ func (s *Server) findMatchingScanBooks(ctx context.Context, candidate librarysca
 }
 
 func scanBookMatchSearchTerms(candidate libraryscanner.Candidate) []string {
-	terms := []string{candidate.Title, candidate.Metadata.Title, candidate.Author, candidate.Metadata.Author}
-	for _, title := range []string{candidate.Title, candidate.Metadata.Title} {
-		terms = append(terms, leadingWords(library.TitleMatchKey(title), 3))
-	}
-	for _, author := range []string{candidate.Author, candidate.Metadata.Author} {
-		terms = append(terms, leadingWords(library.ContributorMatchKey(author), 2))
-	}
+	return bookMatchSearchTerms(
+		firstNonBlank(candidate.Title, candidate.Metadata.Title),
+		firstNonBlank(candidate.Author, candidate.Metadata.Author),
+	)
+}
+
+func bookMatchSearchTerms(title, author string) []string {
+	terms := []string{title, author}
+	terms = append(terms, leadingWords(library.TitleMatchKey(title), 3))
+	terms = append(terms, leadingWords(library.ContributorMatchKey(author), 2))
 	return uniqueNonBlankTerms(terms)
 }
 

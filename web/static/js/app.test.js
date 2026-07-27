@@ -79,6 +79,7 @@ const functionBundle = [
   extractFunctionSource('renderBookDeleteConfirmation'),
   extractFunctionSource('openBookDeleteDialog'),
   extractFunctionSource('cancelBookDeleteDialog'),
+  extractFunctionSource('mergeMatchingBookDuplicates'),
   extractFunctionSource('confirmBookDelete'),
   extractFunctionSource('formatBookDeleteError'),
   extractFunctionSource('renderMetricCard'),
@@ -92,6 +93,13 @@ const functionBundle = [
   extractFunctionSource('libraryImportSummaryLines'),
   extractFunctionSource('applyLibraryImportLoadedState'),
   extractFunctionSource('setLibraryImportStep2State'),
+  extractFunctionSource('updateLibraryRepairCardVisibility'),
+  extractFunctionSource('renderNestedEbookPathRepair'),
+  extractFunctionSource('renderRepairMetric'),
+  extractFunctionSource('renderRepairEntry'),
+  extractFunctionSource('repairStatusClass'),
+  extractFunctionSource('previewNestedEbookPathRepair'),
+  extractFunctionSource('runNestedEbookPathRepair'),
   extractFunctionSource('renderLibraryScanWorkspace'),
   extractFunctionSource('renderLibraryScanReady'),
   extractFunctionSource('renderLibraryScanProgress'),
@@ -246,6 +254,7 @@ function createContext(overrides = {}) {
       libraryBooks: [],
       activeDetailBook: null,
       activeDetailContext: null,
+      libraryRepair: { nestedEbookPaths: { loading: false, running: false, plan: null, result: null, error: '' } },
       config: { library_repository_mode: 'normalized' },
     },
     document: { getElementById: () => null, querySelector: () => null },
@@ -852,6 +861,118 @@ test('index.html keeps the standard Settings save control', () => {
   assert.match(indexHTML, />Save<\/button>/);
 });
 
+test('admin nested ebook path repair card renders and normal users do not see it', () => {
+  const card = { classList: fakeClassList(['hidden']) };
+  const output = { innerHTML: '' };
+  const context = createContext({
+    state: {
+      currentRole: 'user',
+      libraryRepair: { nestedEbookPaths: { loading: false, running: false, plan: null, result: null, error: '' } },
+    },
+    document: { getElementById: id => id === 'settings-library-repairs' ? card : (id === 'settings-library-repairs-output' ? output : null) },
+  });
+
+  context.updateLibraryRepairCardVisibility();
+  assert.equal(card.classList.contains('hidden'), true);
+
+  context.state.currentRole = 'admin';
+  context.updateLibraryRepairCardVisibility();
+  assert.equal(card.classList.contains('hidden'), false);
+  assert.match(indexHTML, /Repair Nested Ebook Paths/);
+  assert.match(indexHTML, /data-action="previewNestedEbookPathRepair"/);
+  assert.match(indexHTML, /data-action="runNestedEbookPathRepair"/);
+});
+
+test('nested ebook path repair preview renders summary and statuses', async () => {
+  const output = { innerHTML: '' };
+  const plan = {
+    success: true,
+    legacy_root: '/books/ebooks/ebooks',
+    total_affected_files: 3,
+    summary: { ready: 1, collision: 1, missing: 1 },
+    entries: [
+      { book_title: 'Ready', file_id: 1, format: 'epub', source_path: '/books/ebooks/ebooks/A/Ready.epub', destination_path: '/books/ebooks/A/Ready.epub', status: 'ready', message: 'ready to move' },
+      { book_title: 'Collision', file_id: 2, format: 'mobi', source_path: '/books/ebooks/ebooks/A/Collision.mobi', destination_path: '/books/ebooks/A/Collision.mobi', status: 'collision', message: 'destination already exists' },
+      { book_title: 'Missing', file_id: 3, format: 'pdf', source_path: '/books/ebooks/ebooks/A/Missing.pdf', destination_path: '/books/ebooks/A/Missing.pdf', status: 'missing', message: 'source file is missing' },
+    ],
+  };
+  const context = createContext({
+    state: { libraryRepair: { nestedEbookPaths: { loading: false, running: false, plan: null, result: null, error: '' } } },
+    document: { getElementById: id => id === 'settings-library-repairs-output' ? output : null },
+    apiJson: async url => {
+      assert.equal(url, '/api/v1/library/repairs/nested-ebook-paths');
+      return plan;
+    },
+  });
+
+  await context.previewNestedEbookPathRepair();
+
+  assert.match(output.innerHTML, /Affected files/);
+  assert.match(output.innerHTML, /Ready/);
+  assert.match(output.innerHTML, /Collision/);
+  assert.match(output.innerHTML, /source file is missing/);
+});
+
+test('nested ebook path repair execution requires confirmation and renders success', async () => {
+  const calls = [];
+  const output = { innerHTML: '' };
+  const context = createContext({
+    state: {
+      libraryRepair: {
+        nestedEbookPaths: {
+          loading: false,
+          running: false,
+          error: '',
+          plan: { total_affected_files: 2, summary: { ready: 2 }, entries: [] },
+          result: null,
+        },
+      },
+    },
+    document: { getElementById: id => id === 'settings-library-repairs-output' ? output : null },
+    window: { confirm: () => false, setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {} },
+    apiJson: async () => {
+      calls.push('api');
+      return {};
+    },
+  });
+
+  await context.runNestedEbookPathRepair();
+  assert.deepEqual(calls, []);
+
+  context.window.confirm = () => true;
+  context.apiJson = async (url, options = {}) => {
+    calls.push(`${options.method}:${url}`);
+    return { executed: true, legacy_root_removed: true, total_affected_files: 2, summary: { moved: 2 }, entries: [] };
+  };
+  context.loadLibrary = async () => calls.push('loadLibrary');
+  context.showToast = (message, kind) => calls.push(`${kind}:${message}`);
+
+  await context.runNestedEbookPathRepair();
+
+  assert.deepEqual(calls.slice(0, 2), ['POST:/api/v1/library/repairs/nested-ebook-paths', 'loadLibrary']);
+  assert.match(output.innerHTML, /Repair complete/);
+  assert.match(output.innerHTML, /legacy nested directory was removed/);
+});
+
+test('nested ebook path repair API failure remains actionable', async () => {
+  const output = { innerHTML: '' };
+  const toasts = [];
+  const context = createContext({
+    state: {
+      libraryRepair: { nestedEbookPaths: { loading: false, running: false, plan: { summary: { ready: 1 }, entries: [] }, result: null, error: '' } },
+    },
+    document: { getElementById: id => id === 'settings-library-repairs-output' ? output : null },
+    window: { confirm: () => true, setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {} },
+    apiJson: async () => { throw new Error('permission denied'); },
+    showToast: (message, kind) => toasts.push({ message, kind }),
+  });
+
+  await context.runNestedEbookPathRepair();
+
+  assert.match(output.innerHTML, /permission denied/);
+  assert.deepEqual(toasts, [{ message: 'permission denied', kind: 'error' }]);
+});
+
 test('main navigation is focused on Librarr 2.0 primary destinations', () => {
   assert.match(indexHTML, /data-arg="home"/);
   assert.match(indexHTML, /data-arg="library"/);
@@ -909,6 +1030,53 @@ test('normalized book cards render one card with sorted unique format chips', ()
   assert.equal((html.match(/<format>/g) || []).length, 3);
   assert.match(html, /Ameritopia/);
   assert.match(html, /Mark R\. Levin/);
+});
+
+test('book management panel exposes admin duplicate merge repair', () => {
+  const context = createContext({
+    state: {
+      currentRole: 'admin',
+      bookDeleteDialog: { open: false, deleteFiles: false, loading: false, error: '' },
+    },
+  });
+  const html = context.renderBookDeletionPanel(
+    { id: 42, title: 'Men in Black', author: 'Mark R. Levin', formats: ['EPUB', 'MOBI'] },
+    [{ path: '/books/men-in-black.epub', format: 'EPUB', size: 10 }],
+  );
+
+  assert.match(html, /Merge Matching Duplicates/);
+  assert.match(html, /data-action="mergeMatchingBookDuplicates"/);
+});
+
+test('merge matching duplicate books posts repair endpoint and reopens surviving book', async () => {
+  const calls = [];
+  const context = createContext({
+    state: {
+      currentTab: 'library',
+      activeDetailBook: { id: 17, title: 'Men in Black- How the Supreme Court is Destroying America' },
+      libraryBooks: [{ id: 16, title: 'Men in Black: How the Supreme Court is Destroying America' }],
+    },
+    apiJson: async (url, options = {}) => {
+      calls.push({ type: 'api', url, method: options.method });
+      return { success: true, target_book_id: 16, merged_count: 1 };
+    },
+    loadLibrary: async () => {
+      calls.push({ type: 'loadLibrary' });
+      context.state.libraryBooks = [{ id: 16, title: 'Men in Black: How the Supreme Court is Destroying America' }];
+    },
+    openBookDetails: async (index, collection) => calls.push({ type: 'openBookDetails', index, collection }),
+    closeBookDetails: () => calls.push({ type: 'closeBookDetails' }),
+    showToast: (message, kind) => calls.push({ type: 'toast', message, kind }),
+  });
+  context.loadStats = async () => calls.push({ type: 'loadStats' });
+
+  await context.mergeMatchingBookDuplicates();
+
+  assert.deepEqual(calls.map(call => call.type), ['api', 'loadLibrary', 'loadStats', 'openBookDetails', 'toast']);
+  assert.equal(calls[0].url, '/api/v1/books/17/merge-matching');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(calls[3], { type: 'openBookDetails', index: 0, collection: 'libraryBooks' });
+  assert.match(calls[4].message, /Merged 1 duplicate book/);
 });
 
 test('book deletion panel explains remove-only and hides disk delete from non-admin users', () => {
