@@ -158,7 +158,7 @@ func primaryContributorName(book *library.Book) string {
 }
 
 func (s *batchState) findPlannedBook(candidate ImportCandidate) *ImportPlan {
-	titleKey := library.NormalizeKey(candidate.Metadata.SelectedTitle)
+	titleKey := importTitleMatchKey(candidate.Metadata.SelectedTitle)
 	authorKey := library.NormalizeKey(candidate.Metadata.SelectedAuthor)
 	for i := range s.plans {
 		plan := &s.plans[i]
@@ -174,7 +174,7 @@ func (s *batchState) findPlannedBook(candidate ImportCandidate) *ImportPlan {
 			plannedTitle = plan.Book.Proposed.Title
 			plannedAuthor = firstContributorName(plan.Contributors)
 		}
-		if library.NormalizeKey(plannedTitle) == titleKey &&
+		if importTitleMatchKey(plannedTitle) == titleKey &&
 			library.NormalizeKey(plannedAuthor) == authorKey &&
 			plan.Candidate.MediaType == candidate.MediaType {
 			return plan

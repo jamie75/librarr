@@ -181,6 +181,13 @@ func (e *ImportExecutor) resolveBook(ctx context.Context, plan ImportPlan) (*lib
 	if err != nil && !errors.Is(err, library.ErrBookNotFound) {
 		return nil, &ExecutionError{Stage: "book_search", Message: err.Error()}
 	}
+	if author != "" {
+		authorBooks, err := e.writer.SearchBooks(ctx, library.BookQuery{Title: author, MediaType: plan.Candidate.MediaType})
+		if err != nil && !errors.Is(err, library.ErrBookNotFound) {
+			return nil, &ExecutionError{Stage: "book_author_search", Message: err.Error()}
+		}
+		books = appendUniqueBooksByID(books, authorBooks)
+	}
 	if matched := exactBookMatch(ctx, e.writer, books, title, author, plan.Candidate.MediaType); matched != nil {
 		return matched, nil
 	}
@@ -479,7 +486,7 @@ func addEmbeddedMetadata(metadata map[string]string, key, value string) {
 }
 
 func exactBookMatch(ctx context.Context, writer RepositoryWriter, books []library.Book, title, author string, mediaType library.MediaType) *library.Book {
-	titleKey := library.NormalizeKey(title)
+	titleKey := importTitleMatchKey(title)
 	authorKey := library.NormalizeKey(author)
 	var exactTitleMatches []library.Book
 	var exactAuthorMatches []library.Book
@@ -493,7 +500,7 @@ func exactBookMatch(ctx context.Context, writer RepositoryWriter, books []librar
 		if fullBook.MediaType != "" && mediaType != "" && fullBook.MediaType != mediaType {
 			continue
 		}
-		if library.NormalizeKey(fullBook.Title) != titleKey {
+		if importTitleMatchKey(fullBook.Title) != titleKey {
 			continue
 		}
 		exactTitleMatches = append(exactTitleMatches, fullBook)

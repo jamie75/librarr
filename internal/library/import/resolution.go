@@ -3,6 +3,7 @@ package libraryimport
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 
 	"github.com/jamie75/librarr/internal/library"
@@ -98,9 +99,18 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 	if err != nil && !errors.Is(err, library.ErrNotFound) {
 		return ResolvedBook{}, err
 	}
+	if author != "" {
+		authorBooks, err := r.catalog.SearchBooks(ctx, library.BookQuery{Title: author, MediaType: candidate.MediaType})
+		if err != nil && !errors.Is(err, library.ErrNotFound) {
+			return ResolvedBook{}, err
+		}
+		books = appendUniqueBooksByID(books, authorBooks)
+	}
 
 	var exactTitleMatches []library.Book
 	var exactAuthorMatches []library.Book
+	titleKey := importTitleMatchKey(title)
+	authorKey := library.NormalizeKey(author)
 	for _, book := range books {
 		fullBook := book
 		if fullBook.ID != 0 {
@@ -108,12 +118,12 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 				fullBook = *loaded
 			}
 		}
-		if library.NormalizeKey(fullBook.Title) != library.NormalizeKey(title) {
+		if importTitleMatchKey(fullBook.Title) != titleKey {
 			continue
 		}
 		exactTitleMatches = append(exactTitleMatches, fullBook)
 		bookAuthor := library.NormalizeKey(primaryContributorName(&fullBook))
-		if author != "" && bookAuthor == library.NormalizeKey(author) {
+		if authorKey != "" && bookAuthor == authorKey {
 			exactAuthorMatches = append(exactAuthorMatches, fullBook)
 		}
 	}
@@ -196,6 +206,32 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 			Explanation: "No existing logical book matched the candidate",
 		}},
 	}, nil
+}
+
+var importTitleSeparatorPattern = regexp.MustCompile(`[\p{Pd}:;]+`)
+
+func importTitleMatchKey(value string) string {
+	value = importTitleSeparatorPattern.ReplaceAllString(value, " ")
+	return library.NormalizeKey(value)
+}
+
+func appendUniqueBooksByID(books []library.Book, extra []library.Book) []library.Book {
+	seen := make(map[int64]struct{}, len(books))
+	for _, book := range books {
+		if book.ID != 0 {
+			seen[book.ID] = struct{}{}
+		}
+	}
+	for _, book := range extra {
+		if book.ID != 0 {
+			if _, ok := seen[book.ID]; ok {
+				continue
+			}
+			seen[book.ID] = struct{}{}
+		}
+		books = append(books, book)
+	}
+	return books
 }
 
 type EditionResolver struct {

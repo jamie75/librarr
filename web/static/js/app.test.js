@@ -1513,6 +1513,10 @@ function sampleDetailBook() {
 
 test('library book details metadata button uses delegated action instead of inline onclick', () => {
   assert.match(appSource, /data-action="openLibraryMetadataEditor"/);
+  assert.match(appSource, /openLibraryMetadataEditor:\s*\(\)\s*=>\s*openLibraryMetadataEditor\(\)/);
+  assert.match(appSource, /saveLibraryMetadataEditor:\s*\(\)\s*=>\s*saveLibraryMetadataEditor\(\)/);
+  assert.match(appSource, /cancelLibraryMetadataEditor:\s*\(\)\s*=>\s*closeLibraryMetadataEditor\(\)/);
+  assert.match(appSource, /resetLibraryMetadataEditor:\s*\(\)\s*=>\s*resetLibraryMetadataEditor\(\)/);
   assert.doesNotMatch(appSource, /onclick="openMetadataEditor\(\)"/);
 });
 

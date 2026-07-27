@@ -37,6 +37,31 @@ func TestImportPlannerEPUBAndMOBISameBook(t *testing.T) {
 	}
 }
 
+func TestImportPlannerTreatsColonAndDashTitleVariantsAsSameBookForSameAuthor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Ameritopia-The Unmaking of America - Mark R. Levin.mobi")
+	writeFile(t, path, "mobi")
+
+	catalog := newFakeCatalog()
+	catalog.addBookWithEditionAndFile("Ameritopia: The Unmaking of America", "Mark R. Levin", library.MediaTypeEbook, "epub", "/books/ameritopia.epub", "hash-ameritopia")
+
+	planner := NewImportPlanner(catalog)
+	result, err := planner.Plan(context.Background(), PlanningContext{
+		Source:   library.ImportSource{Name: "manual", MediaType: library.MediaTypeEbook},
+		RootPath: path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := result.Plans[0]
+	if plan.Disposition != DispositionAttachNewFormat {
+		t.Fatalf("disposition = %s, want %s; plan=%+v", plan.Disposition, DispositionAttachNewFormat, plan)
+	}
+	if plan.Book.Existing == nil || plan.Book.Existing.Title != "Ameritopia: The Unmaking of America" {
+		t.Fatalf("book match = %+v", plan.Book)
+	}
+}
+
 func TestImportPlannerSameTitleDifferentAuthorNeedsManualReview(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Someone Else - Dune.azw3")
@@ -347,7 +372,8 @@ func (c *fakeCatalog) SearchBooks(_ context.Context, query library.BookQuery) ([
 		if query.MediaType != "" && book.MediaType != query.MediaType {
 			continue
 		}
-		if strings.EqualFold(library.NormalizeKey(book.Title), library.NormalizeKey(query.Title)) {
+		if strings.EqualFold(library.NormalizeKey(book.Title), library.NormalizeKey(query.Title)) ||
+			strings.EqualFold(library.NormalizeKey(primaryContributorName(&book)), library.NormalizeKey(query.Title)) {
 			books = append(books, book)
 		}
 	}
