@@ -308,7 +308,7 @@ func deleteResolvedBookFiles(files []resolvedBookDeleteFile) ([]v1BookDeleteFile
 			if os.IsNotExist(err) {
 				result.Missing = true
 			} else {
-				result.Error = "delete failed"
+				result.Error = sanitizedDeleteError(err)
 				hardFailure = true
 			}
 			results = append(results, result)
@@ -319,6 +319,26 @@ func deleteResolvedBookFiles(files []resolvedBookDeleteFile) ([]v1BookDeleteFile
 		results = append(results, result)
 	}
 	return results, hardFailure
+}
+
+func sanitizedDeleteError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "permission denied"
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "directory not empty"):
+		return "directory is not empty"
+	case strings.Contains(msg, "is a directory"):
+		return "path is a directory"
+	case strings.Contains(msg, "read-only file system"):
+		return "read-only file system"
+	default:
+		return "delete failed"
+	}
 }
 
 func removeEmptyLibraryParents(path, root string) {

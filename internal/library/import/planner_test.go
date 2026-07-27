@@ -149,6 +149,35 @@ func TestImportPlannerEmbeddedMetadataWins(t *testing.T) {
 	}
 }
 
+func TestImportPlannerUsesFilenameAuthorWhenEmbeddedAuthorLooksPublisher(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Disney - [Prince of Persia- The Sands of Time] - The Guardian's Path - Carla Jablonski (retail) (epub).epub")
+	writeEPUB(t, path, "The Guardian's Path", "Disney Book Group")
+
+	catalog := newFakeCatalog()
+	catalog.addBookWithEditionAndFile("The Guardian's Path", "Carla Jablonski", library.MediaTypeEbook, "mobi", "/books/guardian.mobi", "hash-guardian-mobi")
+
+	planner := NewImportPlanner(catalog)
+	result, err := planner.Plan(context.Background(), PlanningContext{
+		Source:   library.ImportSource{Name: "manual", MediaType: library.MediaTypeEbook},
+		RootPath: path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := result.Plans[0]
+	meta := plan.Candidate.Metadata
+	if meta.EmbeddedAuthor != "Disney Book Group" || meta.FilenameAuthor != "Carla Jablonski" || meta.SelectedAuthor != "Carla Jablonski" {
+		t.Fatalf("metadata = %+v", meta)
+	}
+	if plan.Disposition != DispositionAttachNewFormat {
+		t.Fatalf("disposition = %s, want %s; plan=%+v", plan.Disposition, DispositionAttachNewFormat, plan)
+	}
+	if plan.Book.Existing == nil || plan.Book.Existing.Title != "The Guardian's Path" {
+		t.Fatalf("book match = %+v", plan.Book)
+	}
+}
+
 func TestImportPlannerMOBIFilenameFallback(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Disney - [Prince of Persia- The Sands of Time] - The Guardian's Path - Carla Jablonski (retail) (epub).mobi")

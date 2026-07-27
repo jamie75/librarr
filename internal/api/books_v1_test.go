@@ -626,6 +626,16 @@ func TestV1BookDeletePartialFilesystemFailureKeepsCatalog(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
+	var body v1BookDeleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.FailedFiles != 1 || len(body.Files) == 0 || body.Files[len(body.Files)-1].Error == "" {
+		t.Fatalf("body = %+v", body)
+	}
+	if strings.Contains(body.Files[len(body.Files)-1].Error, blockedDir) {
+		t.Fatalf("file error leaked path: %+v", body.Files[len(body.Files)-1])
+	}
 	if _, err := s.libraryService.GetBook(context.Background(), bookID); err != nil {
 		t.Fatalf("book should remain after partial failure: %v", err)
 	}

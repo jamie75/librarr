@@ -2770,7 +2770,11 @@ async function confirmBookDelete() {
   const context = state.activeDetailContext || {};
   await openBookDetails(context.index || 0, context.collection || 'libraryBooks');
   try {
-    const response = await apiJson(`/api/v1/books/${book.id}?delete_files=${dialog.deleteFiles ? 'true' : 'false'}`, { method: 'DELETE' });
+    const resp = await api(`/api/v1/books/${book.id}?delete_files=${dialog.deleteFiles ? 'true' : 'false'}`, { method: 'DELETE' });
+    const response = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(formatBookDeleteError(response, resp.status));
+    }
     state.bookDeleteDialog = { open: false, deleteFiles: false, loading: false, error: '' };
     closeBookDetails();
     await loadLibrary();
@@ -2788,6 +2792,18 @@ async function confirmBookDelete() {
     state.bookDeleteDialog = { ...dialog, loading: false, error: err.message || 'Failed to delete book' };
     await openBookDetails(context.index || 0, context.collection || 'libraryBooks');
   }
+}
+
+function formatBookDeleteError(response = {}, status = 0) {
+  const message = response.error || (status ? `API error: ${status}` : 'Failed to delete book');
+  const files = Array.isArray(response.files) ? response.files : [];
+  const details = files
+    .filter(file => file?.error)
+    .map(file => `${file.filename || 'file'}: ${file.error}`);
+  if (details.length === 0) {
+    return message;
+  }
+  return `${message}: ${details.join('; ')}`;
 }
 
 function renderDetailMetaCard(label, value) {

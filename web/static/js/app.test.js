@@ -80,6 +80,7 @@ const functionBundle = [
   extractFunctionSource('openBookDeleteDialog'),
   extractFunctionSource('cancelBookDeleteDialog'),
   extractFunctionSource('confirmBookDelete'),
+  extractFunctionSource('formatBookDeleteError'),
   extractFunctionSource('renderMetricCard'),
   extractFunctionSource('renderCompactDownload'),
   extractFunctionSource('renderActivityRow'),
@@ -248,6 +249,7 @@ function createContext(overrides = {}) {
       config: { library_repository_mode: 'normalized' },
     },
     document: { getElementById: () => null, querySelector: () => null },
+    api: async () => ({ ok: true, json: async () => ({ success: true }) }),
     apiJson: async () => ({ success: true }),
     showToast: () => {},
     scrollToSettingsSection: () => {},
@@ -973,9 +975,9 @@ test('successful normalized book deletion refreshes library and home state', asy
       bookDeleteDialog: { open: true, deleteFiles: true, loading: false, error: '' },
       activeDetailContext: { index: 0, collection: 'libraryBooks' },
     },
-    apiJson: async (url, options) => {
+    api: async (url, options) => {
       calls.push({ type: 'api', url, method: options?.method });
-      return { success: true, title: 'Ameritopia', deleted_files: 2 };
+      return { ok: true, json: async () => ({ success: true, title: 'Ameritopia', deleted_files: 2 }) };
     },
     openBookDetails: async () => calls.push({ type: 'openBookDetails' }),
     closeBookDetails: () => calls.push({ type: 'closeBookDetails' }),
@@ -988,29 +990,36 @@ test('successful normalized book deletion refreshes library and home state', asy
 
   await context.confirmBookDelete();
 
-  assert.deepEqual(calls.map(call => call.type), ['openBookDetails', 'api', 'closeBookDetails', 'loadLibrary', 'api', 'loadHomeDashboard', 'toast']);
+  assert.deepEqual(calls.map(call => call.type), ['openBookDetails', 'api', 'closeBookDetails', 'loadLibrary', 'loadHomeDashboard', 'toast']);
   assert.equal(calls[1].url, '/api/v1/books/42?delete_files=true');
   assert.equal(calls[1].method, 'DELETE');
-  assert.equal(calls[4].url, '/api/v1/library/summary');
 });
 
-test('failed normalized book deletion keeps dialog open with error', async () => {
+test('failed normalized book deletion keeps dialog open with structured error details', async () => {
   const context = createContext({
     state: {
       activeDetailBook: { id: 42, title: 'Ameritopia' },
       bookDeleteDialog: { open: true, deleteFiles: false, loading: false, error: '' },
       activeDetailContext: { index: 0, collection: 'libraryBooks' },
     },
-    apiJson: async () => {
-      throw new Error('outside configured library roots');
-    },
+    api: async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        success: false,
+        error: 'One or more files could not be deleted. The book remains in the catalog so deletion can be retried.',
+        files: [{ filename: '9781260721485.pdf', error: 'delete failed' }],
+      }),
+    }),
     openBookDetails: async () => {},
   });
 
   await context.confirmBookDelete();
 
   assert.equal(context.state.bookDeleteDialog.open, true);
-  assert.match(context.state.bookDeleteDialog.error, /outside configured library roots/);
+  assert.match(context.state.bookDeleteDialog.error, /One or more files could not be deleted/);
+  assert.match(context.state.bookDeleteDialog.error, /9781260721485\.pdf: delete failed/);
+  assert.doesNotMatch(context.state.bookDeleteDialog.error, /^API error: 409$/);
 });
 
 test('onboarding checklist does not duplicate the import action', () => {

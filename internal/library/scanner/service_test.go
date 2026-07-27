@@ -235,6 +235,34 @@ func TestScannerManualReviewDetails(t *testing.T) {
 	}
 }
 
+func TestScannerUsesFilenameAuthorWhenEmbeddedAuthorLooksPublisher(t *testing.T) {
+	roots := testRoots(t)
+	filename := "Disney - [Prince of Persia- The Sands of Time] - The Guardian's Path - Carla Jablonski (retail) (epub).epub"
+	writeEPUB(t, filepath.Join(roots.EbookDir, filename), "The Guardian's Path", "Disney Book Group")
+	catalog := newFakeCatalog()
+	catalog.booksByID[1] = library.Book{
+		ID:        1,
+		Title:     "The Guardian's Path",
+		MediaType: library.MediaTypeEbook,
+		Contributors: []library.Contributor{{
+			Name:  "Carla Jablonski",
+			Roles: []library.ContributorRole{library.RoleAuthor},
+		}},
+	}
+
+	job := runScan(t, NewManager(catalog), roots)
+	candidate := candidatesByFilename(job.Result.Candidates)[filename]
+	if candidate.Classification == ClassificationManualReview {
+		t.Fatalf("candidate should not need manual review: %+v", candidate)
+	}
+	if candidate.Author != "Carla Jablonski" || candidate.Metadata.Author != "Carla Jablonski" {
+		t.Fatalf("candidate author = %q metadata=%+v", candidate.Author, candidate.Metadata)
+	}
+	if candidate.Metadata.Source != "embedded_metadata" || candidate.Metadata.Confidence != library.ConfidenceHigh {
+		t.Fatalf("metadata source/confidence = %+v", candidate.Metadata)
+	}
+}
+
 func TestScannerConcurrentScanRejected(t *testing.T) {
 	roots := testRoots(t)
 	for i := 0; i < 200; i++ {
