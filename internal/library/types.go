@@ -80,3 +80,10 @@ func TitleMatchKey(value string) string {
 	value = titleSeparatorPattern.ReplaceAllString(value, " ")
 	return NormalizeKey(value)
 }
+
+var contributorSeparatorPattern = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+
+func ContributorMatchKey(value string) string {
+	value = contributorSeparatorPattern.ReplaceAllString(value, " ")
+	return NormalizeKey(value)
+}

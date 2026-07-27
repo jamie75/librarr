@@ -159,7 +159,7 @@ func primaryContributorName(book *library.Book) string {
 
 func (s *batchState) findPlannedBook(candidate ImportCandidate) *ImportPlan {
 	titleKey := importTitleMatchKey(candidate.Metadata.SelectedTitle)
-	authorKey := library.NormalizeKey(candidate.Metadata.SelectedAuthor)
+	authorKey := library.ContributorMatchKey(candidate.Metadata.SelectedAuthor)
 	for i := range s.plans {
 		plan := &s.plans[i]
 		if plan.Disposition == DispositionConflict || plan.Disposition == DispositionNeedsManualReview || plan.Disposition == DispositionIgnoreDuplicate {
@@ -175,7 +175,7 @@ func (s *batchState) findPlannedBook(candidate ImportCandidate) *ImportPlan {
 			plannedAuthor = firstContributorName(plan.Contributors)
 		}
 		if importTitleMatchKey(plannedTitle) == titleKey &&
-			library.NormalizeKey(plannedAuthor) == authorKey &&
+			library.ContributorMatchKey(plannedAuthor) == authorKey &&
 			plan.Candidate.MediaType == candidate.MediaType {
 			return plan
 		}

@@ -205,13 +205,13 @@ func (s *Server) mergeMatchingScanBooks(ctx context.Context, jobID, candidateID 
 
 func (s *Server) findMatchingScanBooks(ctx context.Context, candidate libraryscanner.Candidate) ([]library.BookReadModel, error) {
 	titleKey := library.TitleMatchKey(firstNonBlank(candidate.Title, candidate.Metadata.Title, candidate.Filename))
-	authorKey := library.NormalizeKey(firstNonBlank(candidate.Author, candidate.Metadata.Author))
+	authorKey := library.ContributorMatchKey(firstNonBlank(candidate.Author, candidate.Metadata.Author))
 	if titleKey == "" || authorKey == "" {
 		return nil, errors.New("candidate title and author are required to merge matching books")
 	}
 	seen := map[int64]struct{}{}
 	var matches []library.BookReadModel
-	for _, search := range []string{candidate.Title, candidate.Metadata.Title, candidate.Author, candidate.Metadata.Author} {
+	for _, search := range scanBookMatchSearchTerms(candidate) {
 		search = strings.TrimSpace(search)
 		if search == "" {
 			continue
@@ -227,7 +227,7 @@ func (s *Server) findMatchingScanBooks(ctx context.Context, candidate librarysca
 			if library.TitleMatchKey(item.Book.Title) != titleKey {
 				continue
 			}
-			if library.NormalizeKey(primaryReadModelAuthor(item)) != authorKey {
+			if library.ContributorMatchKey(primaryReadModelAuthor(item)) != authorKey {
 				continue
 			}
 			seen[item.Book.ID] = struct{}{}
@@ -235,6 +235,46 @@ func (s *Server) findMatchingScanBooks(ctx context.Context, candidate librarysca
 		}
 	}
 	return matches, nil
+}
+
+func scanBookMatchSearchTerms(candidate libraryscanner.Candidate) []string {
+	terms := []string{candidate.Title, candidate.Metadata.Title, candidate.Author, candidate.Metadata.Author}
+	for _, title := range []string{candidate.Title, candidate.Metadata.Title} {
+		terms = append(terms, leadingWords(library.TitleMatchKey(title), 3))
+	}
+	for _, author := range []string{candidate.Author, candidate.Metadata.Author} {
+		terms = append(terms, leadingWords(library.ContributorMatchKey(author), 2))
+	}
+	return uniqueNonBlankTerms(terms)
+}
+
+func uniqueNonBlankTerms(terms []string) []string {
+	seen := map[string]struct{}{}
+	var unique []string
+	for _, term := range terms {
+		term = strings.TrimSpace(term)
+		if term == "" {
+			continue
+		}
+		key := library.NormalizeKey(term)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, term)
+	}
+	return unique
+}
+
+func leadingWords(value string, count int) string {
+	fields := strings.Fields(value)
+	if len(fields) <= count {
+		return strings.Join(fields, " ")
+	}
+	return strings.Join(fields[:count], " ")
 }
 
 func selectMergeTarget(matches []library.BookReadModel) library.BookReadModel {

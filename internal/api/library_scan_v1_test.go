@@ -495,7 +495,7 @@ func TestV1LibraryScanMergeMatchingBooksRepairsColonDashDuplicate(t *testing.T) 
 		t.Fatal(err)
 	}
 	targetBook, targetEdition := createAPIScanBook(t, s.libraryService, "Ameritopia: The Unmaking of America", "Mark R. Levin")
-	sourceBook, sourceEdition := createAPIScanBook(t, s.libraryService, "Ameritopia-The Unmaking of America", "Mark R. Levin")
+	sourceBook, sourceEdition := createAPIScanBook(t, s.libraryService, "Ameritopia-The Unmaking of America", "Mark R Levin")
 	if _, err := s.libraryService.AttachFile(ctx, library.BookFile{
 		EditionID:  targetEdition.ID,
 		MediaType:  library.MediaTypeEbook,
