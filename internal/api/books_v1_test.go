@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,32 @@ func TestV1BooksListSupportsPaginationSortSearchAndFormat(t *testing.T) {
 	}
 	if body.Items[0].PrimaryAuthor == nil || body.Items[0].PrimaryAuthor.Name != "Andy Weir" {
 		t.Fatalf("primary author = %+v", body.Items[0].PrimaryAuthor)
+	}
+}
+
+func TestV1BooksListGroupsMultipleFormatsUnderOneBook(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/books?media_type=ebook&search=project", nil)
+	rr := httptest.NewRecorder()
+	s.handleV1Books(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body v1BookListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].ID != ids.projectHailMaryID {
+		t.Fatalf("items = %+v", body.Items)
+	}
+	if body.Items[0].FileCount != 2 {
+		t.Fatalf("file_count = %d", body.Items[0].FileCount)
+	}
+	if got, want := strings.Join(body.Items[0].Formats, ","), "epub,mobi"; got != want {
+		t.Fatalf("formats = %q, want %q", got, want)
 	}
 }
 
@@ -400,6 +427,271 @@ func TestV1BookMetadataRejectsInvalidPatchBody(t *testing.T) {
 	}
 }
 
+func TestV1BookDeleteRemoveOnlyLeavesFiles(t *testing.T) {
+	s, bookID, paths, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected file to remain at %s: %v", path, err)
+		}
+	}
+	if _, err := s.libraryService.GetBook(context.Background(), bookID); !errors.Is(err, library.ErrBookNotFound) {
+		t.Fatalf("GetBook after remove = %v, want not found", err)
+	}
+}
+
+func TestV1BookDeleteRequiresAdminMiddleware(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	requireAdmin(s.handleV1BookDelete)(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status without admin = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d", bookID), nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxUserRole, "admin"))
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr = httptest.NewRecorder()
+	requireAdmin(s.handleV1BookDelete)(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status with admin = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestV1BookDeleteWithFilesDeletesManagedFiles(t *testing.T) {
+	s, bookID, paths, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body v1BookDeleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Success || body.DeletedFiles != 2 || body.FailedFiles != 0 {
+		t.Fatalf("body = %+v", body)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("file %s still exists or stat error=%v", path, err)
+		}
+	}
+	if _, err := s.libraryService.GetBook(context.Background(), bookID); !errors.Is(err, library.ErrBookNotFound) {
+		t.Fatalf("GetBook after delete = %v, want not found", err)
+	}
+}
+
+func TestV1BookDeleteRejectsPathsOutsideLibraryRoots(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	outside := filepath.Join(t.TempDir(), "outside.epub")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	edition, err := s.libraryService.FindEdition(context.Background(), bookID, "Delete Me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachFile(context.Background(), library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "pdf",
+		Path:        outside,
+		ContentHash: "hash-outside",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := s.libraryService.GetBook(context.Background(), bookID); err != nil {
+		t.Fatalf("book should remain after rejected delete: %v", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("outside file should remain: %v", err)
+	}
+}
+
+func TestV1BookDeleteRejectsSymlinkEscape(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	outside := filepath.Join(t.TempDir(), "outside.epub")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(s.cfg.EbookDir, "escape.epub")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	edition, err := s.libraryService.FindEdition(context.Background(), bookID, "Delete Me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachFile(context.Background(), library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "azw3",
+		Path:        link,
+		ContentHash: "hash-link",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := s.libraryService.GetBook(context.Background(), bookID); err != nil {
+		t.Fatalf("book should remain after rejected delete: %v", err)
+	}
+}
+
+func TestV1BookDeleteHandlesMissingFilesAsKnownOutcome(t *testing.T) {
+	s, bookID, paths, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+	if err := os.Remove(paths[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body v1BookDeleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.DeletedFiles != 1 || body.MissingFiles != 1 || body.FailedFiles != 0 {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestV1BookDeletePartialFilesystemFailureKeepsCatalog(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	blockedDir := filepath.Join(s.cfg.EbookDir, "blocked.epub")
+	if err := os.MkdirAll(filepath.Join(blockedDir, "child"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	edition, err := s.libraryService.FindEdition(context.Background(), bookID, "Delete Me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachFile(context.Background(), library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "pdf",
+		Path:        blockedDir,
+		ContentHash: "hash-blocked",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d?delete_files=true", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := s.libraryService.GetBook(context.Background(), bookID); err != nil {
+		t.Fatalf("book should remain after partial failure: %v", err)
+	}
+}
+
+func TestV1BookDeleteDoesNotRemoveSharedCoverCacheFile(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	coverPath := filepath.Join(s.coverCache.Dir(), "books", "shared-cover.png")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte{0x89, 0x50, 0x4e, 0x47, 1, 2, 3}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachCover(context.Background(), library.Cover{BookID: bookID, LocalPath: coverPath, MimeType: "image/png", IsPrimary: true}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.libraryService.CreateBook(context.Background(), library.Book{Title: "Other", MediaType: library.MediaTypeEbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachCover(context.Background(), library.Cover{BookID: other.ID, LocalPath: coverPath, MimeType: "image/png", IsPrimary: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(coverPath); err != nil {
+		t.Fatalf("shared cover cache file should remain: %v", err)
+	}
+}
+
+func TestV1BookDeleteRemovesUnreferencedCoverCacheFile(t *testing.T) {
+	s, bookID, _, cleanup := newNormalizedDeleteBookAPIServer(t)
+	defer cleanup()
+
+	coverPath := filepath.Join(s.coverCache.Dir(), "books", "delete-cover.png")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte{0x89, 0x50, 0x4e, 0x47, 1, 2, 3}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.libraryService.AttachCover(context.Background(), library.Cover{BookID: bookID, LocalPath: coverPath, MimeType: "image/png", IsPrimary: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/books/%d", bookID), nil)
+	req.SetPathValue("id", fmt.Sprint(bookID))
+	rr := httptest.NewRecorder()
+	s.handleV1BookDelete(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(coverPath); !os.IsNotExist(err) {
+		t.Fatalf("cover cache file should be removed, stat err=%v", err)
+	}
+}
+
 type normalizedBookAPIIDs struct {
 	projectHailMaryID int64
 	darkMatterID      int64
@@ -609,4 +901,70 @@ func newNormalizedBooksAPIServer(t *testing.T) (*Server, normalizedBookAPIIDs, f
 		audiobookID:       audiobookBook.ID,
 		mangaID:           mangaBook.ID,
 	}, func() { _ = d.Close() }
+}
+
+func newNormalizedDeleteBookAPIServer(t *testing.T) (*Server, int64, []string, func()) {
+	t.Helper()
+	base := t.TempDir()
+	d, err := db.New(filepath.Join(base, "delete-books-v1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCompletedEmptyBackfill(t, d)
+
+	cfg := &config.Config{
+		LibraryRepositoryMode: "normalized",
+		EbookDir:              filepath.Join(base, "ebooks"),
+		AudiobookDir:          filepath.Join(base, "audiobooks"),
+		MangaDir:              filepath.Join(base, "manga"),
+	}
+	for _, root := range []string{cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir} {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selection, err := library.NewConfiguredLibraryService(context.Background(), cfg, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfg: cfg, db: d, libraryService: selection.LibraryService, coverCache: library.NewCoverCache(filepath.Join(base, "covers"))}
+
+	ctx := context.Background()
+	book, err := selection.LibraryService.CreateBook(ctx, library.Book{Title: "Delete Me", MediaType: library.MediaTypeEbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edition, err := selection.LibraryService.CreateEdition(ctx, library.Edition{BookID: book.ID, Title: "Delete Me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := selection.LibraryService.AttachContributor(ctx, edition.ID, library.Contributor{Name: "Delete Author", Roles: []library.ContributorRole{library.RoleAuthor}}); err != nil {
+		t.Fatal(err)
+	}
+	epub := filepath.Join(cfg.EbookDir, "Delete Me.epub")
+	mobi := filepath.Join(cfg.EbookDir, "Delete Me.mobi")
+	for _, path := range []string{epub, mobi} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := selection.LibraryService.AttachFile(ctx, library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "epub",
+		Path:        epub,
+		ContentHash: "hash-delete-epub",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selection.LibraryService.AttachFile(ctx, library.BookFile{
+		EditionID:   edition.ID,
+		MediaType:   library.MediaTypeEbook,
+		Format:      "mobi",
+		Path:        mobi,
+		ContentHash: "hash-delete-mobi",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return s, book.ID, []string{epub, mobi}, func() { _ = d.Close() }
 }

@@ -311,6 +311,21 @@
       "get": {
         "summary": "Get a normalized Librarr 2.0 book",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}]
+      },
+      "delete": {
+        "summary": "Remove a normalized book from the catalog, optionally deleting managed files",
+        "description": "Admin-only. With delete_files=false, removes the normalized catalog record and leaves files on disk. With delete_files=true, Librarr resolves attached files from the selected book, verifies each path is inside configured library roots, deletes files first, then removes catalog records. The client never supplies filesystem paths.",
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "delete_files", "in": "query", "schema": {"type": "boolean", "default": false}}
+        ],
+        "responses": {
+          "200": {"description": "Book removed or deleted"},
+          "400": {"description": "Invalid or unsafe attached file path"},
+          "403": {"description": "Admin access required"},
+          "404": {"description": "Book not found"},
+          "409": {"description": "One or more files could not be deleted; catalog record was retained"}
+        }
       }
     },
     "/api/v1/books/{id}/metadata": {

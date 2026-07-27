@@ -604,6 +604,12 @@ const state = {
     draft: null,
     errors: [],
   },
+  bookDeleteDialog: {
+    open: false,
+    deleteFiles: false,
+    loading: false,
+    error: '',
+  },
   libraryImport: {
     completed: false,
     dirty: false,
@@ -1937,7 +1943,7 @@ function mapV1BookToUIBook(book) {
     series: book.series?.name || '',
     coverUrl: book.cover?.available ? (book.cover?.url || '') : '',
     mediaType: book.media_type || 'ebook',
-    formats: (book.formats || []).map(format => String(format).toUpperCase()),
+    formats: normalizeFormatLabels(book.formats || []),
     files: [],
     sourceRows: [],
     size: 0,
@@ -1946,6 +1952,29 @@ function mapV1BookToUIBook(book) {
     placeholderIndex: 0,
     nativeV1: true,
   };
+}
+
+function normalizeFormatLabels(formats) {
+  const order = new Map([
+    ['EPUB', 10],
+    ['PDF', 20],
+    ['AZW3', 30],
+    ['MOBI', 40],
+    ['CBZ', 50],
+    ['CBR', 51],
+    ['M4B', 60],
+    ['MP3', 61],
+  ]);
+  const seen = new Set();
+  return (formats || [])
+    .map(format => String(format || '').trim().toUpperCase())
+    .filter(Boolean)
+    .filter(format => {
+      if (seen.has(format)) return false;
+      seen.add(format);
+      return true;
+    })
+    .sort((a, b) => (order.get(a) ?? 100) - (order.get(b) ?? 100) || a.localeCompare(b));
 }
 
 function filterLibraryItems(items, query) {
@@ -2010,7 +2039,7 @@ function groupLibraryItems(items, tab) {
 
   return Array.from(groups.values()).map(group => ({
     ...group,
-    formats: Array.from(group.formats).sort(),
+    formats: normalizeFormatLabels(Array.from(group.formats)),
   }));
 }
 
@@ -2630,6 +2659,7 @@ async function openBookDetails(index, collection = 'libraryBooks') {
             <div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-4 text-sm text-stone-500">${t('dashboard_empty')}</div>
           </div>
         </section>
+        ${detailBook.id && normalizedLibraryMode() ? renderBookDeletionPanel(detailBook, detailFiles) : ''}
       </div>
     </div>
   `;
@@ -2643,10 +2673,121 @@ function closeBookDetails() {
   if (!modal) return;
   modal.classList.add('hidden');
   modal.classList.remove('flex');
+  state.bookDeleteDialog = { open: false, deleteFiles: false, loading: false, error: '' };
 }
 
 function openHomeBookDetails(index) {
   openBookDetails(index, 'homeBooks');
+}
+
+function renderBookDeletionPanel(book, files = []) {
+  const dialog = state.bookDeleteDialog || {};
+  const formats = normalizeFormatLabels((book.formats || []).concat((files || []).map(file => file.format)));
+  const fileList = (files || []).map(file => ({
+    filename: (file.path || file.originalPath || '').split('/').pop() || file.format || 'file',
+    format: String(file.format || '').toUpperCase(),
+    size: file.size || 0,
+  }));
+  return `
+    <section class="mt-8 rounded-[1.5rem] border border-red-500/20 bg-red-500/5 p-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-white">Library Management</h3>
+          <p class="mt-1 text-sm text-stone-400">Remove this book from Librarr, or delete its catalog entry and managed files.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button data-action="openBookDeleteDialog" data-delete-files="false" class="rounded-xl border border-stone-700 px-3 py-2 text-sm font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200">Remove from Library</button>
+          ${isAdminUser() ? `<button data-action="openBookDeleteDialog" data-delete-files="true" class="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-100 hover:bg-red-500/20">Delete Book and Files</button>` : ''}
+        </div>
+      </div>
+      ${dialog.open ? renderBookDeleteConfirmation(book, fileList, formats, dialog) : ''}
+    </section>
+  `;
+}
+
+function renderBookDeleteConfirmation(book, files, formats, dialog) {
+  const deleteFiles = Boolean(dialog.deleteFiles);
+  const title = book.title || t('unknown_title');
+  const author = book.author || t('details_placeholder_value');
+  const fileCount = files.length;
+  if (!deleteFiles) {
+    return `
+      <div class="mt-4 rounded-2xl border border-amber-500/25 bg-stone-950/70 p-4">
+        <p class="text-sm font-semibold text-white">Remove “${escapeHtml(title)}” from Librarr?</p>
+        <p class="mt-2 text-sm text-stone-400">The ${escapeHtml(formats.join(' · ') || 'book')} files will remain on disk and may return during a future library scan.</p>
+        ${dialog.error ? `<p class="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">${escapeHtml(dialog.error)}</p>` : ''}
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button data-action="confirmBookDelete" ${dialog.loading ? 'disabled' : ''} class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-400 disabled:opacity-60">Remove from Library</button>
+          <button data-action="cancelBookDeleteDialog" ${dialog.loading ? 'disabled' : ''} class="rounded-xl bg-stone-800 px-4 py-2 text-sm font-medium text-stone-200 hover:bg-stone-700 disabled:opacity-60">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="mt-4 rounded-2xl border border-red-500/35 bg-red-500/10 p-4">
+      <p class="text-sm font-semibold text-red-50">Delete “${escapeHtml(title)}” and ${fileCount} ${fileCount === 1 ? 'file' : 'files'}?</p>
+      <p class="mt-1 text-sm text-red-100/80">${escapeHtml(author)} · ${escapeHtml(formats.join(' · ') || 'Files')}</p>
+      <p class="mt-3 text-sm text-red-100/80">This removes the catalog record and deletes the managed files listed below. This cannot be undone.</p>
+      <div class="mt-3 max-h-44 overflow-y-auto rounded-xl border border-red-500/20 bg-stone-950/50">
+        ${files.length ? files.map(file => `
+          <div class="flex items-center justify-between gap-3 border-b border-red-500/10 px-3 py-2 last:border-0">
+            <span class="min-w-0 truncate text-sm text-stone-100">${escapeHtml(file.filename)}</span>
+            <span class="shrink-0 text-xs text-stone-400">${escapeHtml(file.format || '')}${file.size ? ` · ${escapeHtml(formatSize(file.size))}` : ''}</span>
+          </div>
+        `).join('') : `<p class="px-3 py-2 text-sm text-stone-400">No files are currently attached to this book.</p>`}
+      </div>
+      ${dialog.error ? `<p class="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">${escapeHtml(dialog.error)}</p>` : ''}
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button data-action="confirmBookDelete" ${dialog.loading ? 'disabled' : ''} class="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:bg-red-400 disabled:opacity-60">Delete Book and ${fileCount} ${fileCount === 1 ? 'File' : 'Files'}</button>
+        <button data-action="cancelBookDeleteDialog" ${dialog.loading ? 'disabled' : ''} class="rounded-xl bg-stone-800 px-4 py-2 text-sm font-medium text-stone-200 hover:bg-stone-700 disabled:opacity-60">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function openBookDeleteDialog(deleteFiles) {
+  state.bookDeleteDialog = {
+    open: true,
+    deleteFiles: deleteFiles === true || String(deleteFiles) === 'true',
+    loading: false,
+    error: '',
+  };
+  const context = state.activeDetailContext || {};
+  openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+function cancelBookDeleteDialog() {
+  state.bookDeleteDialog = { open: false, deleteFiles: false, loading: false, error: '' };
+  const context = state.activeDetailContext || {};
+  openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+async function confirmBookDelete() {
+  const book = state.activeDetailBook;
+  const dialog = state.bookDeleteDialog || {};
+  if (!book?.id || dialog.loading) return;
+  state.bookDeleteDialog = { ...dialog, loading: true, error: '' };
+  const context = state.activeDetailContext || {};
+  await openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+  try {
+    const response = await apiJson(`/api/v1/books/${book.id}?delete_files=${dialog.deleteFiles ? 'true' : 'false'}`, { method: 'DELETE' });
+    state.bookDeleteDialog = { open: false, deleteFiles: false, loading: false, error: '' };
+    closeBookDetails();
+    await loadLibrary();
+    await loadStats();
+    if (state.currentTab === 'home') {
+      await loadHomeDashboard();
+    }
+    const title = response.title || book.title || t('unknown_title');
+    if (dialog.deleteFiles) {
+      showToast(`Deleted “${title}” and ${response.deleted_files || 0} ${(response.deleted_files || 0) === 1 ? 'file' : 'files'}.`, 'success');
+    } else {
+      showToast(`Removed “${title}” from Librarr. Files were left on disk.`, 'success');
+    }
+  } catch (err) {
+    state.bookDeleteDialog = { ...dialog, loading: false, error: err.message || 'Failed to delete book' };
+    await openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+  }
 }
 
 function renderDetailMetaCard(label, value) {
@@ -5173,6 +5314,9 @@ const CLICK_ACTIONS = {
   openBookDetails: el => openBookDetails(+el.dataset.index),
   openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),
   closeBookDetails: () => closeBookDetails(),
+  openBookDeleteDialog: el => openBookDeleteDialog(el.dataset.deleteFiles),
+  cancelBookDeleteDialog: () => cancelBookDeleteDialog(),
+  confirmBookDelete: () => confirmBookDelete(),
   // Dynamically rendered rows/cards:
   startDownload: el => {
     // data-idx indexes the *rendered* (sorted) list, not state.searchResults.

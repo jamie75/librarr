@@ -48,6 +48,8 @@ Librarr 2.0 currently has:
 - manual-review detection and resolution controls
 - explicit import actions from scan review results
 - partial-failure reporting and retry of failed imports
+- logical book cards that group available formats such as EPUB and MOBI
+- safe library removal with separate catalog-only and delete-files actions
 - embedded EPUB cover extraction with local cover caching
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
@@ -118,6 +120,27 @@ Representative real-world scan results during development were roughly:
 - 2 manual review
 
 Treat those numbers as an example, not a benchmark or guarantee.
+
+### Library management
+
+In normalized Librarr 2.0 mode, the Library displays one card per logical book.
+Available formats are shown as compact chips on the card and as individual files
+in the details view. For example, a single book can show both `EPUB` and `MOBI`
+without appearing as two separate books.
+
+Book details provide two distinct admin actions:
+
+- **Remove from Library** removes the normalized catalog record and leaves files
+  untouched. Those files may return during a future scan.
+- **Delete Book and Files** deletes the managed files attached to that book and
+  then removes the catalog record. Librarr only deletes paths already associated
+  with the selected book and only when they resolve inside configured library
+  roots.
+
+Librarr does not currently run an automatic destructive merge of historical
+duplicate book rows. Future imports and scanner imports use the normalized
+matching/import pipeline; existing duplicate logical records should be repaired
+through an explicit review workflow when that tool is added.
 
 ### Review and import
 

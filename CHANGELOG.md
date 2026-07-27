@@ -17,6 +17,9 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Library scanner with scan jobs, progress, review results, duplicate detection,
   manual review, and explicit import actions.
 - Metadata editor for scan-review candidates and imported library books.
+- Normalized Library cards group multiple formats under one logical book.
+- Admin book details actions for removing catalog records or deleting managed
+  files with explicit confirmation.
 - Embedded EPUB cover extraction with local cover caching.
 - Expanded local user management.
 - Rich staged diagnostics for Prowlarr and qBittorrent.
@@ -34,11 +37,14 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Docker release documentation now reserves `latest` for stable releases.
 - Completed-download imports no longer insert library records when file
   organization is enabled but organization fails.
+- Normalized format chips are deduplicated and sorted deliberately.
 
 ### Known limitations
 
 - Librarr 2.0 is not yet declared stable.
 - Some Library metadata editing paths still need polish.
+- Historical duplicate logical book rows are not automatically merged; explicit
+  review/repair tooling is still planned.
 - MOBI, AZW3, and PDF cover extraction remain incomplete.
 - Reading progress sync, annotations, highlights, and bookmarks are not yet
   implemented.

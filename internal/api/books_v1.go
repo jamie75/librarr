@@ -515,7 +515,7 @@ func buildV1BookSummary(item library.BookReadModel) v1BookSummary {
 		PrimaryAuthor: mapPrimaryAuthor(item.PrimaryAuthor),
 		Contributors:  mapContributors(item.Contributors),
 		Identifiers:   mapIdentifiers(item.Identifiers),
-		Formats:       item.Formats,
+		Formats:       orderedUniqueFormats(item.Formats),
 		EditionCount:  item.EditionCount,
 		FileCount:     item.FileCount,
 		Cover:         mapBookCover(item.Book.ID, item.LocalCover),
@@ -699,8 +699,54 @@ func uniqueFormats(files []library.BookFile) []string {
 		seen[format] = struct{}{}
 		formats = append(formats, format)
 	}
-	slices.Sort(formats)
+	return orderedUniqueFormats(formats)
+}
+
+func orderedUniqueFormats(values []string) []string {
+	seen := map[string]struct{}{}
+	formats := make([]string, 0, len(values))
+	for _, value := range values {
+		format := strings.TrimSpace(strings.ToLower(value))
+		if format == "" {
+			continue
+		}
+		if _, ok := seen[format]; ok {
+			continue
+		}
+		seen[format] = struct{}{}
+		formats = append(formats, format)
+	}
+	slices.SortStableFunc(formats, func(a, b string) int {
+		ar, br := formatOrderRank(a), formatOrderRank(b)
+		if ar != br {
+			return ar - br
+		}
+		return strings.Compare(a, b)
+	})
 	return formats
+}
+
+func formatOrderRank(format string) int {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "epub":
+		return 10
+	case "pdf":
+		return 20
+	case "azw3":
+		return 30
+	case "mobi":
+		return 40
+	case "cbz":
+		return 50
+	case "cbr":
+		return 51
+	case "m4b":
+		return 60
+	case "mp3":
+		return 61
+	default:
+		return 100
+	}
 }
 
 func formatAPITime(value time.Time) string {

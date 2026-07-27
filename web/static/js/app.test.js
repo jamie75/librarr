@@ -71,9 +71,15 @@ const functionBundle = [
   extractFunctionSource('renderActivityChip'),
   extractFunctionSource('renderOnboardingChecklist'),
   extractFunctionSource('mapV1BookToUIBook'),
+  extractFunctionSource('normalizeFormatLabels'),
   extractFunctionSource('renderBookCover'),
   extractFunctionSource('makePlaceholderHtml'),
   extractFunctionSource('renderLibraryBookCard'),
+  extractFunctionSource('renderBookDeletionPanel'),
+  extractFunctionSource('renderBookDeleteConfirmation'),
+  extractFunctionSource('openBookDeleteDialog'),
+  extractFunctionSource('cancelBookDeleteDialog'),
+  extractFunctionSource('confirmBookDelete'),
   extractFunctionSource('renderMetricCard'),
   extractFunctionSource('renderCompactDownload'),
   extractFunctionSource('renderActivityRow'),
@@ -235,6 +241,7 @@ function createContext(overrides = {}) {
     state: {
       libraryImport: libraryImportState(),
       libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      bookDeleteDialog: { open: false, deleteFiles: false, loading: false, error: '' },
       libraryBooks: [],
       activeDetailBook: null,
       activeDetailContext: null,
@@ -880,6 +887,130 @@ test('library book card renders returned cover URL', () => {
 	}, 0);
 
 	assert.match(html, /<img src="\/api\/v1\/books\/42\/cover"/);
+});
+
+test('normalized book cards render one card with sorted unique format chips', () => {
+  const context = createContext({
+    renderBookCover: () => '<cover />',
+    renderFormatBadge: format => `<format>${format}</format>`,
+  });
+  const book = context.mapV1BookToUIBook({
+    id: 42,
+    title: 'Ameritopia',
+    primary_author: { name: 'Mark R. Levin' },
+    media_type: 'ebook',
+    formats: ['mobi', 'EPUB', 'epub', 'azw3'],
+  });
+  const html = context.renderLibraryBookCard(book, 0);
+
+  assert.deepEqual(book.formats, ['EPUB', 'AZW3', 'MOBI']);
+  assert.equal((html.match(/<format>/g) || []).length, 3);
+  assert.match(html, /Ameritopia/);
+  assert.match(html, /Mark R\. Levin/);
+});
+
+test('book deletion panel explains remove-only and hides disk delete from non-admin users', () => {
+  const context = createContext({
+    state: {
+      currentRole: 'user',
+      bookDeleteDialog: { open: true, deleteFiles: false, loading: false, error: '' },
+    },
+  });
+  const html = context.renderBookDeletionPanel(
+    { id: 42, title: 'Ameritopia', author: 'Mark R. Levin', formats: ['EPUB', 'MOBI'] },
+    [{ path: '/books/Ameritopia.epub', format: 'EPUB', size: 10 }, { path: '/books/Ameritopia.mobi', format: 'MOBI', size: 10 }],
+  );
+
+  assert.match(html, /Remove “Ameritopia” from Librarr/);
+  assert.match(html, /files will remain on disk/);
+  assert.doesNotMatch(html, /Delete Book and Files/);
+});
+
+test('admin destructive delete confirmation lists files and explicit count', () => {
+  const context = createContext({
+    state: {
+      currentRole: 'admin',
+      bookDeleteDialog: { open: true, deleteFiles: true, loading: false, error: '' },
+    },
+  });
+  const html = context.renderBookDeletionPanel(
+    { id: 42, title: 'Ameritopia', author: 'Mark R. Levin', formats: ['mobi', 'epub'] },
+    [{ path: '/books/Ameritopia.epub', format: 'EPUB', size: 10 }, { path: '/books/Ameritopia.mobi', format: 'MOBI', size: 20 }],
+  );
+
+  assert.match(html, /Delete “Ameritopia” and 2 files/);
+  assert.match(html, /Ameritopia\.epub/);
+  assert.match(html, /Ameritopia\.mobi/);
+  assert.match(html, /Delete Book and 2 Files/);
+});
+
+test('cancel book deletion makes no API request', async () => {
+  const calls = [];
+  const context = createContext({
+    state: {
+      bookDeleteDialog: { open: true, deleteFiles: true, loading: false, error: '' },
+      activeDetailContext: { index: 0, collection: 'libraryBooks' },
+    },
+    apiJson: async () => {
+      calls.push('api');
+      return {};
+    },
+    openBookDetails: async () => calls.push('openBookDetails'),
+  });
+
+  context.cancelBookDeleteDialog();
+
+  assert.equal(calls.includes('api'), false);
+  assert.equal(context.state.bookDeleteDialog.open, false);
+});
+
+test('successful normalized book deletion refreshes library and home state', async () => {
+  const calls = [];
+  const context = createContext({
+    state: {
+      currentTab: 'home',
+      activeDetailBook: { id: 42, title: 'Ameritopia' },
+      bookDeleteDialog: { open: true, deleteFiles: true, loading: false, error: '' },
+      activeDetailContext: { index: 0, collection: 'libraryBooks' },
+    },
+    apiJson: async (url, options) => {
+      calls.push({ type: 'api', url, method: options?.method });
+      return { success: true, title: 'Ameritopia', deleted_files: 2 };
+    },
+    openBookDetails: async () => calls.push({ type: 'openBookDetails' }),
+    closeBookDetails: () => calls.push({ type: 'closeBookDetails' }),
+    loadLibrary: async () => calls.push({ type: 'loadLibrary' }),
+    loadStats: async () => calls.push({ type: 'loadStats' }),
+    loadHomeDashboard: async () => calls.push({ type: 'loadHomeDashboard' }),
+    showToast: (message, kind) => calls.push({ type: 'toast', message, kind }),
+    normalizedLibraryMode: () => true,
+  });
+
+  await context.confirmBookDelete();
+
+  assert.deepEqual(calls.map(call => call.type), ['openBookDetails', 'api', 'closeBookDetails', 'loadLibrary', 'api', 'loadHomeDashboard', 'toast']);
+  assert.equal(calls[1].url, '/api/v1/books/42?delete_files=true');
+  assert.equal(calls[1].method, 'DELETE');
+  assert.equal(calls[4].url, '/api/v1/library/summary');
+});
+
+test('failed normalized book deletion keeps dialog open with error', async () => {
+  const context = createContext({
+    state: {
+      activeDetailBook: { id: 42, title: 'Ameritopia' },
+      bookDeleteDialog: { open: true, deleteFiles: false, loading: false, error: '' },
+      activeDetailContext: { index: 0, collection: 'libraryBooks' },
+    },
+    apiJson: async () => {
+      throw new Error('outside configured library roots');
+    },
+    openBookDetails: async () => {},
+  });
+
+  await context.confirmBookDelete();
+
+  assert.equal(context.state.bookDeleteDialog.open, true);
+  assert.match(context.state.bookDeleteDialog.error, /outside configured library roots/);
 });
 
 test('onboarding checklist does not duplicate the import action', () => {
