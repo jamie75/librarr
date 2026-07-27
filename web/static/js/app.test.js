@@ -66,6 +66,8 @@ const functionBundle = [
   extractFunctionSource('renderRecentlyAddedShelf'),
   extractFunctionSource('renderHomeBookCard'),
   extractFunctionSource('renderNeedsAttention'),
+  extractFunctionSource('hasDashboardActivity'),
+  extractFunctionSource('renderDashboardActivity'),
   extractFunctionSource('renderActivityChip'),
   extractFunctionSource('renderOnboardingChecklist'),
   extractFunctionSource('mapV1BookToUIBook'),
@@ -311,9 +313,18 @@ test('home dashboard renders recent shelf with whole-card details action and cov
   ]);
 
   assert.match(markup, /data-action="openHomeBookDetails"/);
+  assert.match(markup, /w-44 sm:w-48/);
   assert.match(markup, /src="\/api\/v1\/books\/42\/cover"/);
   assert.match(markup, /cover-placeholder/);
   assert.match(markup, /focus-visible:ring-2/);
+});
+
+test('compact home hero still renders welcome text and primary actions', () => {
+  assert.match(appSource, /home-hero rounded-\[2rem\] p-4 sm:p-5 mb-4/);
+  assert.match(appSource, /home-hero-title/);
+  assert.match(appSource, /home-hero-subtitle/);
+  assert.match(appSource, /home_open_library/);
+  assert.match(appSource, /home_discover/);
 });
 
 test('home dashboard hides needs attention when empty and renders actionable items when present', () => {
@@ -361,6 +372,42 @@ test('home dashboard activity summary normalizes downloads response and counts f
   assert.equal(summary.failed, 1);
   assert.equal(summary.manualReview, 1);
   assert.equal(summary.ready, 1);
+});
+
+test('all-zero dashboard activity renders compact empty state instead of zero boxes', () => {
+  const context = createContext();
+  const markup = context.renderDashboardActivity({
+    downloading: 0,
+    waiting: 0,
+    ready: 0,
+    manualReview: 0,
+    importing: 0,
+    failed: 0,
+  }, true);
+
+  assert.match(markup, /dashboard_all_clear/);
+  assert.doesNotMatch(markup, /dashboard_downloading_count/);
+  assert.doesNotMatch(markup, />0</);
+});
+
+test('nonzero dashboard activity renders only meaningful states', () => {
+  const context = createContext();
+  const markup = context.renderDashboardActivity({
+    downloading: 2,
+    waiting: 0,
+    ready: 1,
+    manualReview: 0,
+    importing: 0,
+    failed: 1,
+  }, true);
+
+  assert.match(markup, /dashboard_downloading_count/);
+  assert.match(markup, /dashboard_ready_to_import/);
+  assert.match(markup, /dashboard_failed/);
+  assert.doesNotMatch(markup, /dashboard_waiting/);
+  assert.doesNotMatch(markup, /dashboard_manual_review/);
+  assert.match(markup, /data-action="switchTab"/);
+  assert.match(markup, /data-action="openImportSettings"/);
 });
 
 test('home quick actions hide admin-only scan action for normal users', () => {

@@ -43,7 +43,7 @@ const I18N = {
     dashboard_attention: 'Needs Attention',
     dashboard_quick_actions: 'Quick Actions',
     dashboard_no_recent_books: 'Newly imported books will appear here.',
-    dashboard_all_clear: 'Everything looks calm.',
+    dashboard_all_clear: 'No active downloads or imports.',
     dashboard_recent_count: 'Added in the last 30 days',
     dashboard_authors: 'Authors',
     dashboard_files: 'Files',
@@ -1158,14 +1158,14 @@ function setupLibrarr2Shell() {
     home.id = 'tab-home';
     home.className = 'tab-content active';
     home.innerHTML = `
-      <section class="home-hero rounded-[2rem] p-5 sm:p-6 mb-5">
-        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <section class="home-hero rounded-[2rem] p-4 sm:p-5 mb-4">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div class="max-w-2xl">
-            <p class="text-xs uppercase tracking-[0.28em] text-amber-300/80 mb-2" data-i18n="home_kicker">Librarr 2.0</p>
-            <h2 id="home-hero-title" class="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-2" data-i18n="home_title">Welcome back</h2>
-            <p id="home-hero-subtitle" class="text-stone-300/80 leading-7" data-i18n="home_subtitle">Your self-hosted book library, downloads, and reading catalog in one place.</p>
+            <p class="text-[11px] uppercase tracking-[0.26em] text-amber-300/80 mb-1.5" data-i18n="home_kicker">Librarr 2.0</p>
+            <h2 id="home-hero-title" class="text-2xl sm:text-[1.7rem] font-semibold tracking-tight text-white mb-1.5" data-i18n="home_title">Welcome back</h2>
+            <p id="home-hero-subtitle" class="text-sm sm:text-base text-stone-300/80 leading-6" data-i18n="home_subtitle">Your self-hosted book library, downloads, and reading catalog in one place.</p>
           </div>
-          <div id="home-hero-actions" class="flex flex-wrap gap-3">
+          <div id="home-hero-actions" class="flex flex-wrap gap-2.5">
             <button data-action="switchTab" data-arg="library" class="px-4 py-2.5 rounded-2xl bg-amber-500 text-stone-950 font-medium hover:bg-amber-400 transition-colors" data-i18n="home_open_library">Open Library</button>
             <button data-action="switchTab" data-arg="search" class="px-4 py-2.5 rounded-2xl bg-white/10 text-white font-medium hover:bg-white/15 transition-colors" data-i18n="home_discover">Discover Books</button>
           </div>
@@ -2186,15 +2186,8 @@ function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, d
 			${renderRecentlyAddedShelf(recentBooks)}
 		</section>
 		<section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
-			<h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_downloading')}</h3>
-			<div class="grid grid-cols-2 gap-2">
-				${renderActivityChip(t('dashboard_downloading_count'), summary.downloading || 0, 'switchTab', 'downloads')}
-				${renderActivityChip(t('dashboard_waiting'), summary.waiting || 0, 'switchTab', 'downloads')}
-				${renderActivityChip(t('dashboard_ready_to_import'), summary.ready || 0, isAdmin ? 'openImportSettings' : '', '')}
-				${renderActivityChip(t('dashboard_manual_review'), summary.manualReview || 0, isAdmin ? 'openImportSettings' : '', '')}
-				${renderActivityChip(t('dashboard_importing'), summary.importing || 0, isAdmin ? 'openImportSettings' : '', '')}
-				${renderActivityChip(t('dashboard_failed'), summary.failed || 0, 'switchTab', 'downloads')}
-			</div>
+			<h3 class="text-lg font-semibold text-white mb-3">${t('dashboard_downloading')}</h3>
+			${renderDashboardActivity(summary, isAdmin)}
 		</section>
 		<section class="dashboard-panel lg:col-span-5 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
 			<h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_totals')}</h3>
@@ -2258,7 +2251,7 @@ function renderRecentlyAddedShelf(books) {
 function renderHomeBookCard(book, index) {
 	const author = book.author || book.series || t('details_placeholder_value');
 	return `
-		<button data-action="openHomeBookDetails" data-index="${index}" class="group w-36 sm:w-40 shrink-0 snap-start rounded-[1.35rem] bg-stone-900/60 p-2 text-left outline-none transition-all hover:-translate-y-0.5 hover:bg-stone-900 focus-visible:ring-2 focus-visible:ring-amber-400/70" aria-label="${escapeHtml(`${book.title || t('unknown_title')} details`)}">
+		<button data-action="openHomeBookDetails" data-index="${index}" class="group w-44 sm:w-48 shrink-0 snap-start rounded-[1.35rem] bg-stone-900/60 p-2 text-left outline-none transition-all hover:-translate-y-0.5 hover:bg-stone-900 focus-visible:ring-2 focus-visible:ring-amber-400/70" aria-label="${escapeHtml(`${book.title || t('unknown_title')} details`)}">
 			<div class="relative overflow-hidden rounded-[1.1rem] shadow-[0_16px_40px_rgba(0,0,0,0.28)]">
 				${renderBookCover(book, index, 'h-52')}
 				<div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"></div>
@@ -2268,6 +2261,35 @@ function renderHomeBookCard(book, index) {
 			<p class="mt-1 text-xs text-stone-400 line-clamp-1">${escapeHtml(author)}</p>
 		</button>
 	`;
+}
+
+function hasDashboardActivity(summary) {
+	return Boolean(summary && [
+		'downloading',
+		'waiting',
+		'ready',
+		'manualReview',
+		'importing',
+		'failed',
+	].some(key => Number(summary[key] || 0) > 0));
+}
+
+function renderDashboardActivity(summary, isAdmin) {
+	if (!hasDashboardActivity(summary)) {
+		return `<div class="rounded-2xl border border-dashed border-stone-800 bg-stone-900/30 px-4 py-5 text-sm text-stone-400">${t('dashboard_all_clear')}</div>`;
+	}
+	const chips = [
+		{ key: 'downloading', label: t('dashboard_downloading_count'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'waiting', label: t('dashboard_waiting'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'ready', label: t('dashboard_ready_to_import'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
+		{ key: 'manualReview', label: t('dashboard_manual_review'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
+		{ key: 'importing', label: t('dashboard_importing'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
+		{ key: 'failed', label: t('dashboard_failed'), action: 'switchTab', arg: 'downloads' },
+	];
+	return `<div class="grid grid-cols-2 gap-2">${chips
+		.filter(chip => Number(summary[chip.key] || 0) > 0)
+		.map(chip => renderActivityChip(chip.label, summary[chip.key], chip.action, chip.arg))
+		.join('')}</div>`;
 }
 
 function renderNeedsAttention(items) {
@@ -2302,7 +2324,7 @@ function renderActivityChip(label, count, action, arg) {
 }
 
 function renderMetricCard(label, value) {
-	return `<div class="rounded-[1.25rem] bg-stone-900/65 p-3"><p class="text-[11px] uppercase tracking-[0.16em] text-stone-500">${escapeHtml(label)}</p><p class="mt-2 text-2xl font-semibold text-white">${escapeHtml(String(value))}</p></div>`;
+	return `<div class="rounded-[1.25rem] bg-stone-900/65 p-3.5"><p class="text-[10px] uppercase tracking-[0.18em] text-stone-500">${escapeHtml(label)}</p><p class="mt-1.5 text-3xl font-semibold tracking-tight text-white">${escapeHtml(String(value))}</p></div>`;
 }
 
 function currentLibraryCount(useNormalized, stats) {
@@ -2474,13 +2496,13 @@ function renderActivityRow(event) {
   const label = event.action || event.event || '';
   const detail = event.detail || event.message || '';
   const title = event.title || event.subject || '';
-  return `<div class="rounded-[1.25rem] border border-stone-800 bg-stone-900/60 p-4">
-    <div class="flex items-center justify-between gap-4">
+  return `<div class="rounded-[1rem] border border-stone-800 bg-stone-900/60 px-3.5 py-3">
+    <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="text-sm font-medium text-white line-clamp-1">${escapeHtml(title || label || 'Activity')}</p>
-        <p class="mt-1 text-xs text-stone-400 line-clamp-2">${escapeHtml(detail || label || '')}</p>
+        <p class="text-sm font-semibold leading-5 text-white line-clamp-1">${escapeHtml(title || label || 'Activity')}</p>
+        <p class="mt-0.5 text-xs leading-5 text-stone-400 line-clamp-2">${escapeHtml(detail || label || '')}</p>
       </div>
-      <span class="shrink-0 text-xs text-stone-500">${escapeHtml(formatRelativeTime(timestamp))}</span>
+      <span class="shrink-0 pt-0.5 text-[11px] text-stone-500">${escapeHtml(formatRelativeTime(timestamp))}</span>
     </div>
   </div>`;
 }
