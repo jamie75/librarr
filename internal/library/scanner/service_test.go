@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jamie75/librarr/internal/library"
+	libraryimport "github.com/jamie75/librarr/internal/library/import"
 )
 
 func TestScannerRecursiveScanningAndReviewPayload(t *testing.T) {
@@ -138,6 +139,42 @@ func TestPreviewDestinationDoesNotDuplicateLibrarySegment(t *testing.T) {
 	}
 	if strings.Count(filepath.ToSlash(got), "/ebooks/") != 1 {
 		t.Fatalf("destination contains duplicated ebooks segment: %q", got)
+	}
+}
+
+func TestApplyPlanDoesNotExposeDuplicatedLibrarySegment(t *testing.T) {
+	candidate := Candidate{
+		Title:     "Ameritopia-The Unmaking of America",
+		Author:    "Mark R. Levin",
+		Format:    "mobi",
+		MediaType: library.MediaTypeEbook,
+		Path:      filepath.Join("/books", "ebooks", "Ameritopia-The Unmaking of America.mobi"),
+	}
+	plan := libraryimport.ImportPlan{
+		Candidate: libraryimport.ImportCandidate{
+			Path:      candidate.Path,
+			MediaType: library.MediaTypeEbook,
+			Format:    "mobi",
+			Metadata: libraryimport.CandidateMetadata{
+				SelectedTitle:  candidate.Title,
+				SelectedAuthor: candidate.Author,
+			},
+		},
+		Book: libraryimport.ResolvedBook{Action: libraryimport.BookActionNeedsManualReview},
+		File: libraryimport.FileDecision{
+			Action:   libraryimport.FileActionNeedsManualReview,
+			Proposed: &library.BookFile{Path: filepath.Join("/books", "ebooks", "ebooks", candidate.Title, candidate.Author, candidate.Filename)},
+		},
+		Disposition: libraryimport.DispositionNeedsManualReview,
+	}
+
+	applyPlan(&candidate, plan)
+
+	if strings.Contains(filepath.ToSlash(candidate.DestinationPath), "/ebooks/ebooks/") {
+		t.Fatalf("destination contains duplicated ebooks segment: %q", candidate.DestinationPath)
+	}
+	if candidate.ManualReview == nil || strings.Contains(filepath.ToSlash(candidate.ManualReview.SuggestedDestination), "/ebooks/ebooks/") {
+		t.Fatalf("manual review destination = %+v", candidate.ManualReview)
 	}
 }
 

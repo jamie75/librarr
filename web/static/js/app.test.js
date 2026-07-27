@@ -1182,6 +1182,32 @@ test('renderLibraryScanReview shows manual review details and resolution control
   assert.match(html, /Skip/);
 });
 
+test('ambiguous library scan manual review exposes merge matching books action', async () => {
+  const ambiguous = manualReviewScanResult();
+  ambiguous.candidates[0].classification_reason = 'Multiple existing books share the same title and author';
+  ambiguous.candidates[0].manual_review.reason = 'Multiple existing books share the same title and author';
+  const calls = [];
+  const context = createContext({
+    state: { libraryImport: libraryImportState({ completed: true, scan: { ...libraryImportState().scan, result: ambiguous } }) },
+    apiJson: async (url, options) => {
+      calls.push({ url, method: options?.method, body: options?.body });
+      return {
+        ...ambiguous,
+        candidates: [{ ...ambiguous.candidates[0], classification: 'already_imported', manual_review: null }],
+      };
+    },
+    refreshLibraryAfterScanImport: async () => {},
+  });
+
+  const html = context.renderLibraryScanReview(ambiguous);
+  assert.match(html, /Merge Matching Books/);
+
+  await context.resolveLibraryScanCandidate('review-1', 'merge_matching_books');
+
+  assert.equal(calls[0].url, '/api/v1/library/scan/job-1/resolve');
+  assert.match(calls[0].body, /"action":"merge_matching_books"/);
+});
+
 test('renderLibraryScanReview shows duplicate details', () => {
   const context = createContext({
     state: { libraryImport: libraryImportState({ completed: true, scan: { ...libraryImportState().scan, result: sampleScanResult() } }) },

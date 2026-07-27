@@ -3784,6 +3784,7 @@ function renderLibraryScanDuplicate(duplicate) {
 
 function renderLibraryScanManualReview(candidate, title, author) {
   const review = candidate.manual_review || {};
+  const canMergeMatches = /multiple existing books/i.test(review.reason || candidate.classification_reason || '');
   return `
     <div class="mt-3 rounded-md border border-orange-500/25 bg-orange-500/8 p-3">
       <p class="text-xs font-semibold text-orange-100">Manual Review Required</p>
@@ -3794,6 +3795,7 @@ function renderLibraryScanManualReview(candidate, title, author) {
         ${review.suggested_destination ? `<div class="md:col-span-2"><dt class="text-orange-200/70">Suggested Destination</dt><dd class="break-all">${escapeHtml(review.suggested_destination)}</dd></div>` : ''}
       </dl>
       <div class="mt-3 flex flex-wrap gap-2">
+        ${canMergeMatches ? `<button data-action="mergeMatchingLibraryScanBooks" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-amber-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-amber-400">Merge Matching Books</button>` : ''}
         <button data-action="useSuggestedLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-orange-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-orange-400">Use Suggested</button>
         <button data-action="editLibraryScanCandidateMetadata" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Edit Metadata</button>
         <button data-action="skipLibraryScanCandidate" data-candidate-id="${escapeHtml(candidate.id)}" class="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">Skip</button>
@@ -4315,7 +4317,12 @@ async function resolveLibraryScanCandidate(candidateID, action, values = {}, opt
     }
     renderLibraryScanWorkspace();
     await refreshLibraryAfterScanImport();
-    showToast(action === 'edit_metadata' ? 'Metadata updated for import' : 'Candidate ready to import', 'success');
+    const successMessage = action === 'edit_metadata'
+      ? 'Metadata updated for import'
+      : action === 'merge_matching_books'
+        ? 'Matching books merged'
+        : 'Candidate ready to import';
+    showToast(successMessage, 'success');
     return result;
   } catch (err) {
     showToast(err.message || 'Could not resolve review item', 'error');
@@ -5258,6 +5265,7 @@ const CLICK_ACTIONS = {
     renderLibraryScanWorkspace();
   },
   useSuggestedLibraryScanCandidate: el => resolveLibraryScanCandidate(el.dataset.candidateId, 'use_suggested'),
+  mergeMatchingLibraryScanBooks: el => resolveLibraryScanCandidate(el.dataset.candidateId, 'merge_matching_books'),
   editLibraryScanCandidateMetadata: el => openScanMetadataEditor(el.dataset.candidateId),
   saveMetadataEditor: () => saveMetadataEditor(false),
   saveAndImportMetadataEditor: () => saveMetadataEditor(true),

@@ -3,7 +3,6 @@ package libraryimport
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 
 	"github.com/jamie75/librarr/internal/library"
@@ -118,7 +117,7 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 				fullBook = *loaded
 			}
 		}
-		if importTitleMatchKey(fullBook.Title) != titleKey {
+		if library.TitleMatchKey(fullBook.Title) != titleKey {
 			continue
 		}
 		exactTitleMatches = append(exactTitleMatches, fullBook)
@@ -208,11 +207,8 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 	}, nil
 }
 
-var importTitleSeparatorPattern = regexp.MustCompile(`[\p{Pd}:;]+`)
-
 func importTitleMatchKey(value string) string {
-	value = importTitleSeparatorPattern.ReplaceAllString(value, " ")
-	return library.NormalizeKey(value)
+	return library.TitleMatchKey(value)
 }
 
 func appendUniqueBooksByID(books []library.Book, extra []library.Book) []library.Book {

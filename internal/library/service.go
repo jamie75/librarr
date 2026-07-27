@@ -329,6 +329,25 @@ func (s *LibraryService) DeleteBook(ctx context.Context, id int64) error {
 	return translateLibraryError(s.books.DeleteBook(ctx, id))
 }
 
+type bookMerger interface {
+	MergeBooks(context.Context, int64, int64) (*Book, error)
+}
+
+func (s *LibraryService) MergeBooks(ctx context.Context, sourceID, targetID int64) (*Book, error) {
+	if sourceID == 0 || targetID == 0 {
+		return nil, fmt.Errorf("%w: source and target book ids are required", ErrInvalidDomainObject)
+	}
+	if sourceID == targetID {
+		return nil, fmt.Errorf("%w: source and target book ids must be different", ErrInvalidDomainObject)
+	}
+	merger, ok := s.books.(bookMerger)
+	if !ok {
+		return nil, ErrUnsupportedOperation
+	}
+	merged, err := merger.MergeBooks(ctx, sourceID, targetID)
+	return merged, translateLibraryError(err)
+}
+
 func (s *LibraryService) RefreshBook(context.Context, int64) error {
 	return ErrUnsupportedOperation
 }
