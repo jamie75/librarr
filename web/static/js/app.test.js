@@ -57,9 +57,26 @@ function extractFunctionSource(name) {
 
 const functionBundle = [
   extractFunctionSource('currentLibraryCount'),
+  extractFunctionSource('normalizeDownloadsResponse'),
+  extractFunctionSource('isAdminUser'),
+  extractFunctionSource('homeDisplayName'),
+  extractFunctionSource('buildDashboardActivitySummary'),
+  extractFunctionSource('buildDashboardAttention'),
   extractFunctionSource('buildHomeDashboardMarkup'),
+  extractFunctionSource('renderRecentlyAddedShelf'),
+  extractFunctionSource('renderHomeBookCard'),
+  extractFunctionSource('renderNeedsAttention'),
+  extractFunctionSource('renderActivityChip'),
   extractFunctionSource('renderOnboardingChecklist'),
+  extractFunctionSource('mapV1BookToUIBook'),
+  extractFunctionSource('renderBookCover'),
+  extractFunctionSource('makePlaceholderHtml'),
   extractFunctionSource('renderLibraryBookCard'),
+  extractFunctionSource('renderMetricCard'),
+  extractFunctionSource('renderCompactDownload'),
+  extractFunctionSource('renderActivityRow'),
+  extractFunctionSource('renderDashboardEmpty'),
+  extractFunctionSource('buildFormatCounts'),
   extractFunctionSource('getLibraryImportFormValues'),
   extractFunctionSource('sanitizeLibraryImportValues'),
   extractFunctionSource('validateLibraryImportSettings'),
@@ -211,6 +228,7 @@ function createContext(overrides = {}) {
     renderActivityRow: item => `<activity>${item.title}</activity>`,
     renderDashboardEmpty: () => '<empty />',
     escapeHtml: value => String(value),
+    COVER_GRADIENTS: ['from-amber-700 to-stone-900', 'from-slate-700 to-stone-900'],
     LIBRARY_IMPORT_FIELDS: ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'],
     state: {
       libraryImport: libraryImportState(),
@@ -266,18 +284,128 @@ test('buildHomeDashboardMarkup returns dashboard panels for non-empty libraries'
   const context = createContext();
   const markup = context.buildHomeDashboardMarkup({
     showOnboarding: false,
-    recentBooks: [{ title: 'The Martian' }],
+    recentBooks: [{ title: 'The Martian', author: 'Andy Weir', formats: ['EPUB'], coverUrl: '/api/v1/books/1/cover' }],
     formatCounts: { EPUB: 1 },
     downloads: [],
     wishlist: [],
     activity: [],
+    activitySummary: {},
+    attention: [],
     stats: { ebooks: 1, audiobooks: 0, manga: 0 },
     bookCount: 1,
+    isAdmin: true,
   });
 
   assert.match(markup, /dashboard_recent/);
   assert.match(markup, /dashboard_totals/);
+  assert.match(markup, /dashboard_downloading/);
+  assert.match(markup, /dashboard_quick_actions/);
   assert.doesNotMatch(markup, /id="onboarding"/);
+});
+
+test('home dashboard renders recent shelf with whole-card details action and covers', () => {
+  const context = createContext();
+  const markup = context.renderRecentlyAddedShelf([
+    { title: 'Project Hail Mary', author: 'Andy Weir', formats: ['EPUB'], coverUrl: '/api/v1/books/42/cover' },
+    { title: 'No Cover', author: 'Writer', formats: [] },
+  ]);
+
+  assert.match(markup, /data-action="openHomeBookDetails"/);
+  assert.match(markup, /src="\/api\/v1\/books\/42\/cover"/);
+  assert.match(markup, /cover-placeholder/);
+  assert.match(markup, /focus-visible:ring-2/);
+});
+
+test('home dashboard hides needs attention when empty and renders actionable items when present', () => {
+  const context = createContext();
+  let markup = context.buildHomeDashboardMarkup({
+    showOnboarding: false,
+    recentBooks: [],
+    formatCounts: {},
+    downloads: [],
+    activity: [],
+    activitySummary: {},
+    attention: [],
+    stats: {},
+    bookCount: 3,
+    isAdmin: true,
+  });
+  assert.doesNotMatch(markup, /dashboard_attention/);
+
+  markup = context.buildHomeDashboardMarkup({
+    showOnboarding: false,
+    recentBooks: [],
+    formatCounts: {},
+    downloads: [],
+    activity: [],
+    activitySummary: { failed: 1 },
+    attention: [{ title: '1 import failed', reason: 'Check details', action: 'switchTab', arg: 'downloads', label: 'View Details' }],
+    stats: {},
+    bookCount: 3,
+    isAdmin: true,
+  });
+  assert.match(markup, /dashboard_attention/);
+  assert.match(markup, /1 import failed/);
+  assert.match(markup, /data-action="switchTab"/);
+});
+
+test('home dashboard activity summary normalizes downloads response and counts failures', () => {
+  const context = createContext();
+  assert.deepEqual(context.normalizeDownloadsResponse({ downloads: [{ status: 'downloading' }] }), [{ status: 'downloading' }]);
+  const summary = context.buildDashboardActivitySummary(
+    [{ status: 'downloading' }, { status: 'retry_wait' }, { status: 'error' }],
+    [{ detail: 'Manual review required' }, { detail: 'Ready to import' }]
+  );
+  assert.equal(summary.downloading, 1);
+  assert.equal(summary.waiting, 1);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.manualReview, 1);
+  assert.equal(summary.ready, 1);
+});
+
+test('home quick actions hide admin-only scan action for normal users', () => {
+  const context = createContext();
+  const userMarkup = context.buildHomeDashboardMarkup({
+    showOnboarding: false,
+    recentBooks: [],
+    formatCounts: {},
+    downloads: [],
+    activity: [],
+    activitySummary: {},
+    attention: [],
+    stats: {},
+    bookCount: 2,
+    isAdmin: false,
+  });
+  assert.doesNotMatch(userMarkup, /home_scan_library/);
+  assert.match(userMarkup, /dashboard_open_opds/);
+
+  const adminMarkup = context.buildHomeDashboardMarkup({
+    showOnboarding: false,
+    recentBooks: [],
+    formatCounts: {},
+    downloads: [],
+    activity: [],
+    activitySummary: {},
+    attention: [],
+    stats: {},
+    bookCount: 2,
+    isAdmin: true,
+  });
+  assert.match(adminMarkup, /home_scan_library/);
+});
+
+test('empty-library onboarding respects admin actions and OPDS step', () => {
+  const context = createContext();
+  const adminMarkup = context.renderOnboardingChecklist(true);
+  assert.match(adminMarkup, /home_import_library/);
+  assert.match(adminMarkup, /home_scan_library/);
+  assert.match(adminMarkup, /home_step_opds/);
+
+  const userMarkup = context.renderOnboardingChecklist(false);
+  assert.doesNotMatch(userMarkup, /home_import_library/);
+  assert.doesNotMatch(userMarkup, /home_scan_library/);
+  assert.match(userMarkup, /dashboard_open_opds/);
 });
 
 test('index.html uses renamed import folder label and helper text', () => {
@@ -693,24 +821,18 @@ test('unfinished device actions are not exposed in book cards', () => {
 });
 
 test('library book card renders returned cover URL', () => {
-  let seenCover = '';
-  const context = createContext({
-    renderBookCover: book => {
-      seenCover = book.coverUrl || '';
-      return book.coverUrl ? `<img src="${book.coverUrl}" alt="">` : '<cover />';
-    },
-    renderFormatBadge: format => `<format>${format}</format>`,
-  });
+	const context = createContext({
+		renderFormatBadge: format => `<format>${format}</format>`,
+	});
 
   const html = context.renderLibraryBookCard({
     title: 'Covered Book',
     author: 'Author',
     formats: ['EPUB'],
     coverUrl: '/api/v1/books/42/cover',
-  }, 0);
+	}, 0);
 
-  assert.equal(seenCover, '/api/v1/books/42/cover');
-  assert.match(html, /<img src="\/api\/v1\/books\/42\/cover"/);
+	assert.match(html, /<img src="\/api\/v1\/books\/42\/cover"/);
 });
 
 test('onboarding checklist does not duplicate the import action', () => {
