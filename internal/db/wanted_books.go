@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jamie75/librarr/internal/models"
 )
@@ -31,6 +32,17 @@ func normalizeWantedBook(in models.WantedBook) models.WantedBook {
 		in.Status = "wanted"
 	}
 	return in
+}
+
+type WantedSearchUpdate struct {
+	Status          string
+	LastSearch      time.Time
+	LastResultCount int
+	LastSuccess     bool
+	LastError       string
+	BestMatchScore  float64
+	LastMatchTitle  string
+	Query           string
 }
 
 func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error) {
@@ -61,14 +73,35 @@ func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error
 }
 
 func (d *DB) GetWantedBook(id int64) (*models.WantedBook, error) {
-	row := d.db.QueryRow(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, added_at, updated_at
+	row := d.db.QueryRow(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
 		FROM wanted_books WHERE id = ?`, id)
 	return scanWantedBook(row)
 }
 
 func (d *DB) ListWantedBooks() ([]models.WantedBook, error) {
-	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, added_at, updated_at
-		FROM wanted_books ORDER BY monitored DESC, added_at DESC, id DESC`)
+	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+		FROM wanted_books ORDER BY monitored DESC, COALESCE(last_search, added_at) DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []models.WantedBook
+	for rows.Next() {
+		item, err := scanWantedBook(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (d *DB) ListMonitoredWantedBooks() ([]models.WantedBook, error) {
+	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+		FROM wanted_books
+		WHERE monitored = 1 AND status != 'ignored'
+		ORDER BY COALESCE(last_search, added_at) ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +159,101 @@ func (d *DB) DeleteWantedBook(id int64) error {
 	return nil
 }
 
+func (d *DB) UpdateWantedSearch(id int64, update WantedSearchUpdate) (*models.WantedBook, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	status := strings.TrimSpace(strings.ToLower(update.Status))
+	if status == "" {
+		status = "wanted"
+	}
+	lastError := strings.TrimSpace(update.LastError)
+	lastMatchTitle := strings.TrimSpace(update.LastMatchTitle)
+	_, err := d.db.Exec(`UPDATE wanted_books
+		SET status = ?, last_search = ?, last_result_count = ?, last_success = ?, last_error = ?, best_match_score = ?, last_match_title = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		status,
+		update.LastSearch.UTC().Format(time.RFC3339),
+		update.LastResultCount,
+		wantedBoolToInt(update.LastSuccess),
+		lastError,
+		update.BestMatchScore,
+		lastMatchTitle,
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return d.GetWantedBook(id)
+}
+
+func (d *DB) AddWantedSearchHistory(id int64, update WantedSearchUpdate) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`INSERT INTO wanted_search_history (
+		wanted_book_id, title, author, query, status, result_count, success, error, best_match_score, best_match_title, searched_at
+	) SELECT id, title, author, ?, ?, ?, ?, ?, ?, ?, ?
+	  FROM wanted_books WHERE id = ?`,
+		strings.TrimSpace(update.Query),
+		strings.TrimSpace(strings.ToLower(update.Status)),
+		update.LastResultCount,
+		wantedBoolToInt(update.LastSuccess),
+		strings.TrimSpace(update.LastError),
+		update.BestMatchScore,
+		strings.TrimSpace(update.LastMatchTitle),
+		update.LastSearch.UTC().Format(time.RFC3339),
+		id,
+	)
+	return err
+}
+
+func (d *DB) PruneWantedSearchHistory(maxRows int) error {
+	if maxRows <= 0 {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`DELETE FROM wanted_search_history
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+				       ROW_NUMBER() OVER (PARTITION BY wanted_book_id ORDER BY searched_at DESC, id DESC) AS row_num
+				FROM wanted_search_history
+			) ranked
+			WHERE ranked.row_num > ?
+		)`, maxRows)
+	return err
+}
+
+func (d *DB) ListWantedSearchHistory(limit int) ([]models.WantedSearchHistory, error) {
+	query := `SELECT id, wanted_book_id, title, author, query, status, result_count, success, error, best_match_score, best_match_title, searched_at
+		FROM wanted_search_history
+		ORDER BY searched_at DESC, id DESC`
+	var rows *sql.Rows
+	var err error
+	if limit > 0 {
+		rows, err = d.db.Query(query+` LIMIT ?`, limit)
+	} else {
+		rows, err = d.db.Query(query)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []models.WantedSearchHistory
+	for rows.Next() {
+		item, err := scanWantedSearchHistory(rows)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, *item)
+	}
+	return history, rows.Err()
+}
+
 type wantedBookScanner interface {
 	Scan(dest ...any) error
 }
@@ -133,6 +261,8 @@ type wantedBookScanner interface {
 func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 	var item models.WantedBook
 	var monitored int
+	var lastSuccess int
+	var lastSearch sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
 		&item.Title,
@@ -148,12 +278,46 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 		&item.MediaType,
 		&monitored,
 		&item.Status,
+		&lastSearch,
+		&item.LastResultCount,
+		&lastSuccess,
+		&item.LastError,
+		&item.BestMatchScore,
+		&item.LastMatchTitle,
 		&item.AddedAt,
 		&item.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	item.Monitored = monitored == 1
+	item.LastSuccess = lastSuccess == 1
+	if lastSearch.Valid {
+		timestamp := lastSearch.Time
+		item.LastSearch = &timestamp
+	}
+	return &item, nil
+}
+
+func scanWantedSearchHistory(scanner wantedBookScanner) (*models.WantedSearchHistory, error) {
+	var item models.WantedSearchHistory
+	var success int
+	if err := scanner.Scan(
+		&item.ID,
+		&item.WantedBookID,
+		&item.Title,
+		&item.Author,
+		&item.Query,
+		&item.Status,
+		&item.ResultCount,
+		&success,
+		&item.Error,
+		&item.BestMatchScore,
+		&item.BestMatchTitle,
+		&item.SearchedAt,
+	); err != nil {
+		return nil, err
+	}
+	item.Success = success == 1
 	return &item, nil
 }
 

@@ -73,14 +73,28 @@ const I18N = {
     wanted_group_wanted: 'Wanted',
     wanted_group_ignored: 'Ignored',
     wanted_status_wanted: 'Wanted',
+    wanted_status_found: 'Found',
     wanted_status_downloaded: 'Downloaded',
     wanted_status_ignored: 'Ignored',
     wanted_status_missing: 'Missing',
-    wanted_status_searching: 'Searching (future)',
+    wanted_status_searching: 'Searching',
+    wanted_status_imported: 'Imported',
     wanted_status_downloaded_future: 'Downloaded (future)',
     wanted_toggle_monitored: 'Monitored',
     wanted_toggle_unmonitored: 'Unmonitored',
     wanted_remove: 'Remove',
+    wanted_search_now: 'Search Now',
+    wanted_search_all: 'Search All Wanted',
+    wanted_last_searched: 'Last searched',
+    wanted_results: 'Results',
+    wanted_best_match: 'Best match',
+    wanted_error: 'Last error',
+    wanted_history: 'Recent Search Activity',
+    wanted_history_empty: 'No search activity yet.',
+    wanted_search_success: 'Wanted search complete',
+    wanted_search_failed: 'Wanted search failed',
+    wanted_search_running: 'Wanted search already running',
+    wanted_settings_saved: 'Wanted monitor settings saved',
     wanted_added_success: 'Added to Wanted',
     wanted_add_failed: 'Could not add wanted book',
     wanted_removed_success: 'Removed from Wanted',
@@ -616,6 +630,9 @@ const state = {
   homeBooks: [],
   wantedBooks: [],
   wantedIndex: new Set(),
+  wantedHistory: [],
+  wantedSearchPending: new Set(),
+  wantedSearchAllRunning: false,
   libraryMatchIndex: new Set(),
   homeData: null,
   pendingDownloads: new Set(),
@@ -1448,6 +1465,20 @@ async function refreshWantedData(silent = false) {
       showToast('Failed to load wanted books', 'error');
     }
     return { items: [], counts: {} };
+  }
+}
+
+async function loadWantedHistory(silent = false) {
+  try {
+    const data = await apiJson('/api/v1/wanted/history');
+    state.wantedHistory = data.items || [];
+    return data;
+  } catch (err) {
+    state.wantedHistory = [];
+    if (!silent && err.message !== 'Unauthorized') {
+      showToast('Failed to load wanted search history', 'error');
+    }
+    return { items: [] };
   }
 }
 
@@ -3301,11 +3332,17 @@ async function loadWanted() {
   const container = document.getElementById('wanted-list');
   const emptyEl = document.getElementById('wanted-empty');
   const summaryEl = document.getElementById('wanted-summary');
+  const historyEl = document.getElementById('wanted-history');
+  const searchAllBtn = document.getElementById('wanted-search-all-btn');
   if (!container || !emptyEl || !summaryEl) return;
 
-  const data = await refreshWantedData();
+  const [data, history] = await Promise.all([refreshWantedData(), loadWantedHistory(true)]);
   const items = data.items || [];
   const counts = data.counts || {};
+  if (searchAllBtn) {
+    searchAllBtn.disabled = state.wantedSearchAllRunning;
+    searchAllBtn.textContent = state.wantedSearchAllRunning ? t('wanted_status_searching') : t('wanted_search_all');
+  }
 
   summaryEl.innerHTML = [
     renderMetricCard(t('wanted_total'), counts.total ?? 0),
@@ -3321,6 +3358,9 @@ async function loadWanted() {
 
   emptyEl.classList.add('hidden');
   container.innerHTML = renderWantedGroups(items);
+  if (historyEl) {
+    historyEl.innerHTML = renderWantedHistory(history.items || []);
+  }
 }
 
 function renderWantedGroups(items) {
@@ -3351,30 +3391,41 @@ function renderWantedCard(item) {
   const status = item.status || 'wanted';
   const monitoredLabel = item.monitored ? t('wanted_toggle_monitored') : t('wanted_toggle_unmonitored');
   const mediaLabel = (item.media_type || 'ebook').toUpperCase();
+  const searching = !!state.wantedSearchPending?.has?.(String(item.id));
   const coverHtml = item.cover_url
     ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="h-48 w-full object-cover" loading="lazy">`
     : makePlaceholderHtml(item.title || '?', item.id || 0);
+  const statusKey = searching ? 'searching' : status;
+  const lastSearched = formatWantedTimestamp(item.last_search);
+  const bestMatch = item.last_match_title || '—';
+  const resultCount = Number.isFinite(item.last_result_count) ? item.last_result_count : 0;
+  const lastError = item.last_error || '';
 
   return `
     <article class="overflow-hidden rounded-[1.35rem] border border-stone-800 bg-stone-900/70">
       <div class="relative">${coverHtml}</div>
       <div class="p-4">
         <div class="mb-3 flex flex-wrap items-center gap-2">
-          <span class="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">${t(`wanted_status_${status}`)}</span>
+          <span class="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">${t(`wanted_status_${statusKey}`)}</span>
           <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-300">${mediaLabel}</span>
           <span class="rounded-full ${item.monitored ? 'bg-emerald-500/10 text-emerald-200' : 'bg-stone-800 text-stone-400'} px-3 py-1 text-xs font-medium">${monitoredLabel}</span>
-          <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-500">${t('wanted_status_missing')}</span>
-          <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-500">${t('wanted_status_searching')}</span>
           <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-500">${t('wanted_status_downloaded_future')}</span>
         </div>
         <h4 class="text-lg font-semibold text-white line-clamp-2">${escapeHtml(item.title || '')}</h4>
         <p class="mt-1 text-sm text-stone-300 line-clamp-1">${escapeHtml(item.author || '')}</p>
+        <dl class="mt-3 space-y-1 text-xs text-stone-400">
+          <div class="flex items-center justify-between gap-3"><dt>${t('wanted_last_searched')}</dt><dd class="text-stone-200">${escapeHtml(lastSearched)}</dd></div>
+          <div class="flex items-center justify-between gap-3"><dt>${t('wanted_results')}</dt><dd class="text-stone-200">${escapeHtml(String(resultCount))}</dd></div>
+          <div class="flex items-center justify-between gap-3"><dt>${t('wanted_best_match')}</dt><dd class="max-w-[60%] truncate text-stone-200" title="${escapeHtml(bestMatch)}">${escapeHtml(bestMatch)}</dd></div>
+        </dl>
+        ${lastError ? `<p class="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">${t('wanted_error')}: ${escapeHtml(lastError)}</p>` : ''}
         <div class="mt-4 flex items-center justify-between gap-2">
           <label class="inline-flex items-center gap-2 text-sm text-stone-300">
             <input data-action-change="toggleWantedMonitored" data-id="${item.id}" type="checkbox" ${item.monitored ? 'checked' : ''} class="rounded border-stone-600 bg-stone-950 text-amber-500">
             <span>${t('wanted_toggle_monitored')}</span>
           </label>
           <div class="flex items-center gap-2">
+            <button data-action="searchWantedBook" data-id="${item.id}" ${searching || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${t('wanted_search_now')}</button>
             ${status === 'wanted' ? `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>` : `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>`}
             <button data-action="removeWantedBook" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-red-500/10 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-500/20">${t('wanted_remove')}</button>
           </div>
@@ -3382,6 +3433,51 @@ function renderWantedCard(item) {
       </div>
     </article>
   `;
+}
+
+function renderWantedHistory(items) {
+  if (!items.length) {
+    return `
+      <section class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-white">${t('wanted_history')}</h3>
+        </div>
+        <p class="mt-3 text-sm text-stone-500">${t('wanted_history_empty')}</p>
+      </section>
+    `;
+  }
+  return `
+    <section class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-stone-800">
+        <h3 class="text-lg font-semibold text-white">${t('wanted_history')}</h3>
+        <span class="text-sm text-stone-500">${items.length}</span>
+      </div>
+      <div class="divide-y divide-stone-800">
+        ${items.slice(0, 12).map(item => `
+          <div class="px-5 py-3 text-sm">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="font-medium text-white">${escapeHtml(item.title || item.best_match_title || 'Wanted search')}</p>
+                <p class="text-stone-400">${escapeHtml(item.author || item.query || '')}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-stone-200">${escapeHtml(formatWantedTimestamp(item.searched_at))}</p>
+                <p class="text-xs text-stone-500">${escapeHtml(String(item.result_count || 0))} result(s)</p>
+              </div>
+            </div>
+            <p class="mt-1 text-xs ${item.success ? 'text-emerald-300' : 'text-red-300'}">${escapeHtml(item.success ? (item.best_match_title || 'No match') : (item.error || 'Search failed'))}</p>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function formatWantedTimestamp(value) {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Never';
+  return date.toLocaleString();
 }
 
 async function addWantedFromSearchResult(index) {
@@ -3448,6 +3544,68 @@ async function removeWantedBook(id, title) {
     showToast(t('wanted_removed_success'), 'success');
   } catch (err) {
     if (err.message !== 'Unauthorized') showToast(t('wanted_remove_failed'), 'error');
+  }
+}
+
+async function searchWantedBook(id) {
+  const key = String(id);
+  state.wantedSearchPending.add(key);
+  await loadWanted();
+  try {
+    await apiJson(`/api/v1/wanted/${id}/search`, { method: 'POST' });
+    await loadWanted();
+    if (state.currentTab === 'home') await loadHomeDashboard();
+    showToast(t('wanted_search_success'), 'success');
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      showToast(err.message.includes('already running') ? t('wanted_search_running') : t('wanted_search_failed'), 'error');
+    }
+  } finally {
+    state.wantedSearchPending.delete(key);
+    if (state.currentTab === 'wanted') {
+      await loadWanted();
+    }
+  }
+}
+
+async function searchAllWanted() {
+  state.wantedSearchAllRunning = true;
+  if (state.currentTab === 'wanted') await loadWanted();
+  try {
+    await apiJson('/api/v1/wanted/search', { method: 'POST' });
+    await Promise.all([loadWanted(), state.currentTab === 'home' ? loadHomeDashboard() : Promise.resolve()]);
+    showToast(t('wanted_search_success'), 'success');
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      showToast(err.message.includes('already running') ? t('wanted_search_running') : t('wanted_search_failed'), 'error');
+    }
+  } finally {
+    state.wantedSearchAllRunning = false;
+    state.wantedSearchPending.clear();
+    if (state.currentTab === 'wanted') {
+      await loadWanted();
+    }
+  }
+}
+
+async function saveWantedSettings() {
+  const payload = {
+    wanted_monitor_enabled: document.getElementById('setting-wanted_monitor_enabled')?.value === 'true',
+    wanted_search_interval: document.getElementById('setting-wanted_search_interval')?.value || '6h',
+    wanted_retry_failures: document.getElementById('setting-wanted_retry_failures')?.value === 'true',
+    wanted_max_results_keep: Number(document.getElementById('setting-wanted_max_results_keep')?.value || 20),
+  };
+  try {
+    await apiJson('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    showToast(t('wanted_settings_saved'), 'success');
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      showToast('Failed to save wanted settings', 'error');
+    }
   }
 }
 
@@ -3710,6 +3868,22 @@ async function loadSettingToggles() {
     const fileOrgEnabled = document.getElementById('setting-file_org_enabled');
     if (fileOrgEnabled && data.file_org_enabled !== undefined) {
       fileOrgEnabled.checked = !!data.file_org_enabled;
+    }
+    const wantedMonitorEnabled = document.getElementById('setting-wanted_monitor_enabled');
+    if (wantedMonitorEnabled && data.wanted_monitor_enabled !== undefined) {
+      wantedMonitorEnabled.value = data.wanted_monitor_enabled ? 'true' : 'false';
+    }
+    const wantedSearchInterval = document.getElementById('setting-wanted_search_interval');
+    if (wantedSearchInterval && data.wanted_search_interval !== undefined) {
+      wantedSearchInterval.value = data.wanted_search_interval;
+    }
+    const wantedRetryFailures = document.getElementById('setting-wanted_retry_failures');
+    if (wantedRetryFailures && data.wanted_retry_failures !== undefined) {
+      wantedRetryFailures.value = data.wanted_retry_failures ? 'true' : 'false';
+    }
+    const wantedMaxResultsKeep = document.getElementById('setting-wanted_max_results_keep');
+    if (wantedMaxResultsKeep && data.wanted_max_results_keep !== undefined) {
+      wantedMaxResultsKeep.value = data.wanted_max_results_keep;
     }
     for (const key of LIBRARY_IMPORT_FIELDS) {
       const el = document.getElementById(`setting-${key}`);
@@ -5736,11 +5910,14 @@ const CLICK_ACTIONS = {
   setSortMode: el => setSortMode(el.dataset.arg),
   testConnection: el => testConnection(el.dataset.arg),
   saveIntegration: el => saveIntegration(el.dataset.arg),
+  saveWantedSettings: () => saveWantedSettings(),
   toggleMobileNav: () => toggleMobileNav(),
   showLoginForm: () => showLoginForm(),
   showRegisterForm: () => showRegisterForm(),
   addWantedFromSearch: el => addWantedFromSearchResult(+el.dataset.idx),
   removeWantedBook: el => removeWantedBook(+el.dataset.id, el.dataset.title),
+  searchWantedBook: el => searchWantedBook(+el.dataset.id),
+  searchAllWanted: () => searchAllWanted(),
   ignoreWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'ignored' }),
   markWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'wanted' }),
   generateInviteCode: () => generateInviteCode(),

@@ -17,6 +17,10 @@ type wantedListResponse struct {
 	Counts map[string]int      `json:"counts"`
 }
 
+type wantedHistoryResponse struct {
+	Items []models.WantedSearchHistory `json:"items"`
+}
+
 type wantedCreateRequest struct {
 	Title       string `json:"title"`
 	Author      string `json:"author"`
@@ -50,10 +54,14 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 		"wanted":     0,
 		"ignored":    0,
 		"downloaded": 0,
+		"found":      0,
+		"missing":    0,
+		"searching":  0,
+		"imported":   0,
 		"monitored":  0,
 	}
 	for _, item := range items {
-		counts[item.Status]++
+		counts[strings.TrimSpace(strings.ToLower(item.Status))]++
 		if item.Monitored {
 			counts["monitored"]++
 		}
@@ -164,9 +172,60 @@ func (s *Server) handleV1WantedPatch(w http.ResponseWriter, r *http.Request) {
 
 func isValidWantedStatus(status string) bool {
 	switch status {
-	case "wanted", "downloaded", "ignored":
+	case "wanted", "searching", "found", "missing", "downloaded", "ignored", "imported":
 		return true
 	default:
 		return false
 	}
+}
+
+func (s *Server) handleV1WantedHistory(w http.ResponseWriter, r *http.Request) {
+	items, err := s.db.ListWantedSearchHistory(100)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted search history"})
+		return
+	}
+	writeJSON(w, http.StatusOK, wantedHistoryResponse{Items: items})
+}
+
+func (s *Server) handleV1WantedSearchAll(w http.ResponseWriter, r *http.Request) {
+	if s.wantedMonitor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "error": "Wanted monitor is unavailable"})
+		return
+	}
+	summary, err := s.wantedMonitor.SearchAll(r.Context(), true)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(err.Error()), "already running") {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "summary": summary, "items": summary.Updated})
+}
+
+func (s *Server) handleV1WantedSearchOne(w http.ResponseWriter, r *http.Request) {
+	if s.wantedMonitor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "error": "Wanted monitor is unavailable"})
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
+		return
+	}
+	item, err := s.wantedMonitor.SearchOne(r.Context(), id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(err.Error()), "already running") {
+			status = http.StatusConflict
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "item": item})
 }

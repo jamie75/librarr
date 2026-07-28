@@ -12,6 +12,8 @@ import (
 	"github.com/jamie75/librarr/internal/config"
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/scheduler"
 )
 
 func newWantedAPIServer(t *testing.T) (*Server, func()) {
@@ -142,5 +144,83 @@ func TestWantedValidation(t *testing.T) {
 	s.handleV1WantedPatch(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid patch status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWantedSearchEndpoints(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "wanted-search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	seedCompletedEmptyBackfill(t, database)
+
+	book, err := database.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prowlarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"title":       "The Martian EPUB",
+			"downloadUrl": "http://example.test/download",
+			"protocol":    "torrent",
+			"seeders":     9,
+			"infoHash":    "hash-1",
+		}})
+	}))
+	defer prowlarr.Close()
+
+	cfg := &config.Config{
+		LibraryRepositoryMode: "normalized",
+		ProwlarrURL:           prowlarr.URL,
+		ProwlarrAPIKey:        "test-key",
+		WantedMaxResultsKeep:  10,
+	}
+	selection, err := library.NewConfiguredLibraryService(context.Background(), cfg, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		cfg:            cfg,
+		db:             database,
+		libraryService: selection.LibraryService,
+		wantedMonitor:  scheduler.NewWantedMonitor(cfg, database, nil, prowlarr.Client()),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/search", nil)
+	req.SetPathValue("id", "1")
+	rr := httptest.NewRecorder()
+	s.handleV1WantedSearchOne(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("search one status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	refetched, err := database.GetWantedBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refetched.Status != "found" {
+		t.Fatalf("status = %q, want found", refetched.Status)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/wanted/history", nil)
+	rr = httptest.NewRecorder()
+	s.handleV1WantedHistory(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("history status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var history wantedHistoryResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 1 || history.Items[0].WantedBookID != book.ID {
+		t.Fatalf("history = %+v", history)
 	}
 }

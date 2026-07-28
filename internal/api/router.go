@@ -56,6 +56,7 @@ type Server struct {
 	wishlistClean       *scheduler.WishlistCleaner
 	seriesDetector      *scheduler.SeriesDetector
 	authorMonitor       *scheduler.AuthorMonitor
+	wantedMonitor       *scheduler.WantedMonitor
 }
 
 // NewServer creates the HTTP API server.
@@ -124,6 +125,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	wishlistClean := scheduler.NewWishlistCleaner(cfg, database)
 	seriesDet := scheduler.NewSeriesDetector(database, searchMgr, ws)
 	authorMon := scheduler.NewAuthorMonitor(cfg, database, ws)
+	wantedMon := scheduler.NewWantedMonitor(cfg, database, searchMgr, &http.Client{Timeout: 30 * time.Second})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
 	s := &Server{
@@ -149,6 +151,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		wishlistClean:  wishlistClean,
 		seriesDetector: seriesDet,
 		authorMonitor:  authorMon,
+		wantedMonitor:  wantedMon,
 	}
 
 	// Initialize OIDC handler if configured.
@@ -227,6 +230,9 @@ func (s *Server) StartScheduler(ctx context.Context) {
 	}
 	if s.wishlistClean != nil && s.cfg.WishlistCleanupEnabled {
 		go s.wishlistClean.Start(ctx)
+	}
+	if s.wantedMonitor != nil {
+		go s.wantedMonitor.Start(ctx)
 	}
 	// Scheduler.Start blocks until ctx is cancelled.
 	if s.scheduler != nil {
@@ -405,7 +411,10 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}", requireAdmin(s.handleV1LibraryImportJob))
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}/results", requireAdmin(s.handleV1LibraryImportResults))
 	s.mux.HandleFunc("GET /api/v1/wanted", s.handleV1WantedList)
+	s.mux.HandleFunc("GET /api/v1/wanted/history", s.handleV1WantedHistory)
 	s.mux.HandleFunc("POST /api/v1/wanted", requireAdmin(s.handleV1WantedCreate))
+	s.mux.HandleFunc("POST /api/v1/wanted/search", requireAdmin(s.handleV1WantedSearchAll))
+	s.mux.HandleFunc("POST /api/v1/wanted/{id}/search", requireAdmin(s.handleV1WantedSearchOne))
 	s.mux.HandleFunc("PATCH /api/v1/wanted/{id}", requireAdmin(s.handleV1WantedPatch))
 	s.mux.HandleFunc("DELETE /api/v1/wanted/{id}", requireAdmin(s.handleV1WantedDelete))
 

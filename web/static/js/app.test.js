@@ -80,10 +80,16 @@ const functionBundle = [
   extractFunctionSource('searchResultMediaType'),
   extractFunctionSource('wantedStateForResult'),
   extractFunctionSource('refreshWantedData'),
+  extractFunctionSource('loadWantedHistory'),
   extractFunctionSource('renderBookCard'),
   extractFunctionSource('renderLibraryBookCard'),
   extractFunctionSource('renderWantedGroups'),
   extractFunctionSource('renderWantedCard'),
+  extractFunctionSource('renderWantedHistory'),
+  extractFunctionSource('formatWantedTimestamp'),
+  extractFunctionSource('searchWantedBook'),
+  extractFunctionSource('searchAllWanted'),
+  extractFunctionSource('saveWantedSettings'),
   extractFunctionSource('removeWantedBook'),
   extractFunctionSource('renderBookDeletionPanel'),
   extractFunctionSource('renderBookDeleteConfirmation'),
@@ -1187,32 +1193,28 @@ test('switchTab activates wanted, renders tab, and loads wanted data', () => {
   assert.match(calls.join('|'), /tab-wanted:true/);
 });
 
-test('loadWanted calls wanted API and renders summary counts', async () => {
-  const wantedList = { innerHTML: '' };
-  const wantedEmpty = { classList: { remove: () => {}, add: () => {} } };
-  const wantedSummary = { innerHTML: '' };
+test('wanted data loaders call list and history APIs', async () => {
+  const calls = [];
   const context = createContext({
-    document: {
-      getElementById: id => {
-        if (id === 'wanted-list') return wantedList;
-        if (id === 'wanted-empty') return wantedEmpty;
-        if (id === 'wanted-summary') return wantedSummary;
-        return null;
-      },
-    },
     apiJson: async url => {
-      assert.equal(url, '/api/v1/wanted');
-      return {
-        items: [{ id: 1, title: 'The Martian', author: 'Andy Weir', status: 'wanted', monitored: true, media_type: 'ebook' }],
-        counts: { total: 1, wanted: 1, monitored: 1, ignored: 0 },
-      };
+      calls.push(url);
+      if (url === '/api/v1/wanted') {
+        return {
+          items: [{ id: 1, title: 'The Martian', author: 'Andy Weir', status: 'wanted', monitored: true, media_type: 'ebook' }],
+          counts: { total: 1, wanted: 1, monitored: 1, ignored: 0 },
+        };
+      }
+      if (url === '/api/v1/wanted/history') {
+        return { items: [{ id: 3, title: 'The Martian', author: 'Andy Weir', searched_at: '2026-07-28T12:00:00Z', result_count: 1, success: true, best_match_title: 'The Martian EPUB' }] };
+      }
+      throw new Error(`unexpected ${url}`);
     },
   });
 
-  await context.loadWanted();
+  await context.refreshWantedData();
+  await context.loadWantedHistory(true);
 
-  assert.match(wantedSummary.innerHTML, />1</);
-  assert.match(wantedList.innerHTML, /The Martian/);
+  assert.deepEqual(calls, ['/api/v1/wanted', '/api/v1/wanted/history']);
 });
 
 test('home wanted widget is clickable and survives wanted API failure', () => {
@@ -1268,6 +1270,82 @@ test('wanted page groups wanted and ignored books', () => {
   assert.match(html, /wanted_group_ignored/);
   assert.match(html, /The Martian/);
   assert.match(html, /Ignored Book/);
+});
+
+test('wanted card renders search metadata and search action', () => {
+  const context = createContext({
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false },
+  });
+  const html = context.renderWantedCard({
+    id: 8,
+    title: 'Project Hail Mary',
+    author: 'Andy Weir',
+    status: 'found',
+    monitored: true,
+    media_type: 'ebook',
+    last_search: '2026-07-28T12:00:00Z',
+    last_result_count: 4,
+    last_match_title: 'Project Hail Mary EPUB',
+  });
+
+  assert.match(html, /wanted_status_found/);
+  assert.match(html, /wanted_search_now/);
+  assert.match(html, /Project Hail Mary EPUB/);
+});
+
+test('searchAllWanted posts API and reloads wanted view', async () => {
+  const calls = [];
+  const context = createContext({
+    apiJson: async (url, options = {}) => {
+      calls.push(`${options.method || 'GET'}:${url}`);
+      if (url === '/api/v1/wanted/search') return { success: true };
+      if (url === '/api/v1/wanted') return { items: [], counts: {} };
+      if (url === '/api/v1/wanted/history') return { items: [] };
+      throw new Error(`unexpected ${url}`);
+    },
+    showToast: (message, kind) => calls.push(`${kind}:${message}`),
+    document: {
+      getElementById: () => ({ innerHTML: '', classList: { remove: () => {}, add: () => {} }, disabled: false, textContent: '' }),
+    },
+    state: { currentTab: 'wanted', wantedSearchPending: new Set(), wantedSearchAllRunning: false },
+  });
+  context.loadHomeDashboard = async () => calls.push('loadHomeDashboard');
+
+  await context.searchAllWanted();
+
+  assert.equal(calls[0], 'POST:/api/v1/wanted/search');
+  assert.match(calls.join('|'), /success:wanted_search_success/);
+});
+
+test('saveWantedSettings uses existing settings API', async () => {
+  const calls = [];
+  const fields = {
+    'setting-wanted_monitor_enabled': { value: 'true' },
+    'setting-wanted_search_interval': { value: '12h' },
+    'setting-wanted_retry_failures': { value: 'false' },
+    'setting-wanted_max_results_keep': { value: '25' },
+  };
+  const context = createContext({
+    document: {
+      getElementById: id => fields[id] || null,
+    },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method, body: JSON.parse(options.body) });
+      return { success: true };
+    },
+    showToast: (message, kind) => calls.push({ toast: message, kind }),
+  });
+
+  await context.saveWantedSettings();
+
+  assert.equal(calls[0].url, '/api/settings');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(calls[0].body, {
+    wanted_monitor_enabled: true,
+    wanted_search_interval: '12h',
+    wanted_retry_failures: false,
+    wanted_max_results_keep: 25,
+  });
 });
 
 test('remove wanted book confirms before deleting', async () => {
