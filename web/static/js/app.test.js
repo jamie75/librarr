@@ -90,6 +90,18 @@ const functionBundle = [
   extractFunctionSource('renderWantedNormalizationResult'),
   extractFunctionSource('renderWantedHistory'),
   extractFunctionSource('formatWantedTimestamp'),
+  extractFunctionSource('ensureWantedReleaseViewer'),
+  extractFunctionSource('renderWantedReleaseViewer'),
+  extractFunctionSource('renderWantedReleaseSelect'),
+  extractFunctionSource('renderWantedReleaseRow'),
+  extractFunctionSource('wantedReleaseOptions'),
+  extractFunctionSource('filteredWantedReleases'),
+  extractFunctionSource('wantedReleaseTime'),
+  extractFunctionSource('formatWantedReleaseAge'),
+  extractFunctionSource('openWantedReleases'),
+  extractFunctionSource('closeWantedReleases'),
+  extractFunctionSource('renderWantedReleaseModal'),
+  extractFunctionSource('setWantedReleaseFilter'),
   extractFunctionSource('addWantedFromSearchResult'),
   extractFunctionSource('normalizeWantedBook'),
   extractFunctionSource('searchWantedBook'),
@@ -286,6 +298,15 @@ function createContext(overrides = {}) {
       wantedNormalizationResults: new Map(),
       wantedSearchPending: new Set(),
       wantedSearchAllRunning: false,
+      wantedReleaseViewer: {
+        open: false,
+        loading: false,
+        itemId: 0,
+        title: '',
+        releases: [],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
       libraryMatchIndex: new Set(),
       searchTab: 'ebooks',
       searchResults: [],
@@ -1445,6 +1466,7 @@ test('wanted card renders search metadata and search action', () => {
 
   assert.match(html, /wanted_status_found/);
   assert.match(html, /wanted_search_now/);
+  assert.match(html, /wanted_view_releases/);
   assert.match(html, /data-action-change="toggleWantedMonitored"/);
   assert.match(html, /data-action="removeWantedBook"/);
   assert.match(html, /data-action="ignoreWantedBook"/);
@@ -1479,6 +1501,102 @@ test('wanted card remains actionable for missing and searching statuses', () => 
   assert.match(missingHTML, /data-action="removeWantedBook"/);
   assert.match(searchingHTML, /wanted_status_searching/);
   assert.match(searchingHTML, /data-action="searchWantedBook"/);
+  assert.match(searchingHTML, /wanted_searching_now/);
+});
+
+test('wanted release viewer renders sorted releases with top match highlight', () => {
+  const context = createContext({
+    state: {
+      wantedReleaseViewer: {
+        open: true,
+        loading: false,
+        title: 'The Martian',
+        releases: [
+          { title: 'Low Score EPUB', score: 50, format: 'epub', language: 'en', protocol: 'torrent', seeders: 2, size: 1000, indexer: 'Books' },
+          { title: 'High Score MOBI', score: 99, format: 'mobi', language: 'en', protocol: 'torrent', seeders: 20, size: 2000, indexer: 'Books' },
+        ],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
+    },
+  });
+  const html = context.renderWantedReleaseViewer();
+
+  assert.match(html, /wanted_releases_title/);
+  assert.match(html, /wanted_release_top_match/);
+  assert.ok(html.indexOf('High Score MOBI') < html.indexOf('Low Score EPUB'));
+  assert.match(html, /MOBI/);
+  assert.match(html, /Torrent/);
+});
+
+test('wanted release viewer supports filters and sorting', () => {
+  const context = createContext();
+  const releases = [
+    { title: 'Old EPUB', score: 70, format: 'epub', language: 'en', protocol: 'torrent', seeders: 2, size: 100, publish_date: '2026-01-01T00:00:00Z' },
+    { title: 'New MOBI', score: 60, format: 'mobi', language: 'en', protocol: 'torrent', seeders: 20, size: 500, publish_date: '2026-07-01T00:00:00Z' },
+    { title: 'PDF Usenet', score: 95, format: 'pdf', language: 'fr', protocol: 'usenet', seeders: 0, size: 1000, publish_date: '2026-06-01T00:00:00Z' },
+  ];
+
+  const filtered = context.filteredWantedReleases(releases, { format: 'mobi', language: 'en', protocol: 'torrent', minSeeders: 10, sort: 'score' });
+  assert.deepEqual(filtered.map(item => item.title), ['New MOBI']);
+
+  const sorted = context.filteredWantedReleases(releases, { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'largest' });
+  assert.deepEqual(sorted.map(item => item.title), ['PDF Usenet', 'New MOBI', 'Old EPUB']);
+});
+
+test('wanted release viewer renders empty state', () => {
+  const context = createContext({
+    state: {
+      wantedReleaseViewer: {
+        open: true,
+        loading: false,
+        title: 'Empty',
+        releases: [],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
+    },
+  });
+
+  assert.match(context.renderWantedReleaseViewer(), /wanted_releases_empty/);
+});
+
+test('openWantedReleases fetches stored releases and renders modal', async () => {
+  const calls = [];
+  const modal = {
+    innerHTML: '',
+    classList: { add: name => calls.push(`add:${name}`), remove: name => calls.push(`remove:${name}`) },
+  };
+  const context = createContext({
+    document: {
+      getElementById: id => id === 'wanted-release-viewer' ? modal : null,
+    },
+    apiJson: async url => {
+      calls.push(url);
+      if (url === '/api/v1/wanted/8/releases') {
+        return { items: [{ title: 'Release One', score: 88, format: 'epub', language: 'en', protocol: 'torrent', seeders: 9 }] };
+      }
+      throw new Error(`unexpected ${url}`);
+    },
+    state: {
+      wantedReleaseViewer: {
+        open: false,
+        loading: false,
+        itemId: 0,
+        title: '',
+        releases: [],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
+    },
+  });
+
+  await context.openWantedReleases(8, 'The Martian');
+
+  assert.match(calls.join('|'), /\/api\/v1\/wanted\/8\/releases/);
+  assert.match(modal.innerHTML, /Release One/);
+  assert.match(modal.innerHTML, /wanted_release_top_match/);
+  assert.equal(context.state.wantedReleaseViewer.loading, false);
 });
 
 test('wanted card shows clean metadata with separate preferred format badge', () => {

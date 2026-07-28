@@ -185,6 +185,7 @@ func (p *Prowlarr) doSearch(ctx context.Context, params prowlarrSearchParams) ([
 			SizeHuman:        HumanSize(item.Size),
 			Seeders:          item.Seeders,
 			Leechers:         item.Leechers,
+			Grabs:            item.Grabs,
 			Indexer:          item.Indexer,
 			DownloadURL:      item.DownloadURL,
 			MagnetURL:        item.MagnetURL,
@@ -192,6 +193,9 @@ func (p *Prowlarr) doSearch(ctx context.Context, params prowlarrSearchParams) ([
 			GUID:             item.GUID,
 			DownloadProtocol: protocol,
 			Format:           extractFormatFromTitle(item.Title),
+			Language:         firstProwlarrLanguage(item.Language, item.Languages),
+			PublishDate:      item.PublishDate,
+			Categories:       prowlarrCategories(item.Categories),
 		})
 	}
 
@@ -199,16 +203,53 @@ func (p *Prowlarr) doSearch(ctx context.Context, params prowlarrSearchParams) ([
 }
 
 type prowlarrItem struct {
-	Title       string `json:"title"`
-	Size        int64  `json:"size"`
-	Seeders     int    `json:"seeders"`
-	Leechers    int    `json:"leechers"`
-	Indexer     string `json:"indexer"`
-	DownloadURL string `json:"downloadUrl"`
-	MagnetURL   string `json:"magnetUrl"`
-	InfoHash    string `json:"infoHash"`
-	GUID        string `json:"guid"`
-	Protocol    string `json:"protocol"`
+	Title       string   `json:"title"`
+	Size        int64    `json:"size"`
+	Seeders     int      `json:"seeders"`
+	Leechers    int      `json:"leechers"`
+	Grabs       int      `json:"grabs"`
+	Indexer     string   `json:"indexer"`
+	DownloadURL string   `json:"downloadUrl"`
+	MagnetURL   string   `json:"magnetUrl"`
+	InfoHash    string   `json:"infoHash"`
+	GUID        string   `json:"guid"`
+	Protocol    string   `json:"protocol"`
+	PublishDate string   `json:"publishDate"`
+	Language    string   `json:"language"`
+	Languages   []string `json:"languages"`
+	Categories  []int    `json:"categories"`
+}
+
+func firstProwlarrLanguage(language string, languages []string) string {
+	if len(languages) > 1 {
+		return "multi"
+	}
+	if strings.TrimSpace(language) != "" {
+		return normalizeProwlarrLanguage(language)
+	}
+	for _, candidate := range languages {
+		if strings.TrimSpace(candidate) != "" {
+			return normalizeProwlarrLanguage(candidate)
+		}
+	}
+	return ""
+}
+
+func normalizeProwlarrLanguage(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "en", "eng", "english":
+		return "en"
+	default:
+		return strings.TrimSpace(language)
+	}
+}
+
+func prowlarrCategories(categories []int) []string {
+	out := make([]string, 0, len(categories))
+	for _, category := range categories {
+		out = append(out, fmt.Sprintf("%d", category))
+	}
+	return out
 }
 
 // isNZBURL checks if a URL points to an NZB download.

@@ -75,6 +75,16 @@ func TestWantedMonitorSearchOneUpdatesWantedBookAndHistory(t *testing.T) {
 	if updated.LastMatchTitle == "" || updated.LastSearch == nil {
 		t.Fatalf("updated wanted book missing search fields: %+v", updated)
 	}
+	releases, err := database.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("stored releases len = %d, want 1", len(releases))
+	}
+	if releases[0].Title != "The Martian EPUB" || releases[0].Score <= 0 || releases[0].DownloadURL == "" {
+		t.Fatalf("stored release = %+v", releases[0])
+	}
 
 	history, err := database.ListWantedSearchHistory(10)
 	if err != nil {
@@ -85,6 +95,65 @@ func TestWantedMonitorSearchOneUpdatesWantedBookAndHistory(t *testing.T) {
 	}
 	if !history[0].Success || history[0].BestMatchTitle == "" {
 		t.Fatalf("history entry = %+v", history[0])
+	}
+}
+
+func TestWantedMonitorReplacesStoredReleasesOnMultipleSearches(t *testing.T) {
+	database := newWantedMonitorDB(t)
+	defer database.Close()
+
+	book, err := database.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	call := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		title := "The Martian EPUB"
+		if call > 1 {
+			title = "The Martian MOBI"
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"title":       title,
+			"downloadUrl": "http://example.test/download",
+			"protocol":    "torrent",
+			"seeders":     15,
+			"infoHash":    title,
+			"publishDate": "2026-07-27T12:00:00Z",
+			"grabs":       3,
+			"categories":  []int{7020},
+		}})
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		ProwlarrURL:          server.URL,
+		ProwlarrAPIKey:       "prowlarr-key",
+		WantedMaxResultsKeep: 10,
+	}
+	monitor := NewWantedMonitor(cfg, database, nil, server.Client())
+	if _, err := monitor.SearchOne(context.Background(), book.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := monitor.SearchOne(context.Background(), book.ID); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := database.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 || releases[0].Title != "The Martian MOBI" {
+		t.Fatalf("releases after replacement = %+v", releases)
+	}
+	if releases[0].Grabs != 3 || len(releases[0].Categories) != 1 || releases[0].Categories[0] != "7020" {
+		t.Fatalf("metadata was not retained: %+v", releases[0])
 	}
 }
 

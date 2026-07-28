@@ -374,3 +374,54 @@ func TestWantedSearchEndpoints(t *testing.T) {
 		t.Fatalf("history = %+v", history)
 	}
 }
+
+func TestWantedReleasesEndpoint(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	book, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/wanted/1/releases", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleases(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("empty releases status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var empty wantedReleasesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Total != 0 || len(empty.Items) != 0 {
+		t.Fatalf("empty releases = %+v", empty)
+	}
+
+	if err := s.db.ReplaceWantedReleases(book.ID, []models.WantedRelease{
+		{Title: "Lower", Score: 75, Format: "epub", Protocol: "torrent"},
+		{Title: "Higher", Score: 98, Format: "mobi", Protocol: "torrent"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/wanted/1/releases", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	rr = httptest.NewRecorder()
+	s.handleV1WantedReleases(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("releases status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response wantedReleasesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Total != 2 || response.Items[0].Title != "Higher" || response.Items[0].Format != "mobi" {
+		t.Fatalf("response = %+v", response)
+	}
+}

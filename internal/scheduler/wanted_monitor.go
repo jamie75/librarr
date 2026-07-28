@@ -174,6 +174,9 @@ func (m *WantedMonitor) searchOne(ctx context.Context, item models.WantedBook) (
 		LastMatchTitle:  lastMatchTitle,
 		Query:           queryUsed,
 	}
+	if err := m.db.ReplaceWantedReleases(item.ID, wantedReleasesFromResults(item.ID, results, queryUsed, now)); err != nil {
+		return nil, err
+	}
 	updated, err := m.db.UpdateWantedSearch(item.ID, searchUpdate)
 	if err != nil {
 		return nil, err
@@ -185,6 +188,53 @@ func (m *WantedMonitor) searchOne(ctx context.Context, item models.WantedBook) (
 		slog.Warn("wanted monitor prune failed", "error", err)
 	}
 	return updated, nil
+}
+
+func wantedReleasesFromResults(wantedBookID int64, results []models.SearchResult, query string, searchedAt time.Time) []models.WantedRelease {
+	releases := make([]models.WantedRelease, 0, len(results))
+	for _, result := range results {
+		protocol := strings.TrimSpace(strings.ToLower(result.DownloadProtocol))
+		if protocol == "" {
+			protocol = strings.TrimSpace(strings.ToLower(result.Source))
+		}
+		if protocol == "" {
+			protocol = "torrent"
+		}
+		sizeHuman := result.SizeHuman
+		if sizeHuman == "" && result.Size > 0 {
+			sizeHuman = search.HumanSize(result.Size)
+		}
+		releases = append(releases, models.WantedRelease{
+			WantedBookID: wantedBookID,
+			Title:        result.Title,
+			GUID:         firstNonBlankString(result.GUID, result.InfoHash, result.SourceID),
+			Indexer:      result.Indexer,
+			Protocol:     protocol,
+			PublishDate:  result.PublishDate,
+			Size:         result.Size,
+			SizeHuman:    sizeHuman,
+			Seeders:      result.Seeders,
+			Leechers:     result.Leechers,
+			Grabs:        result.Grabs,
+			Language:     result.Language,
+			Format:       result.Format,
+			DownloadURL:  firstNonBlankString(result.DownloadURL, result.MagnetURL, result.URL),
+			Categories:   append([]string(nil), result.Categories...),
+			Score:        result.Score,
+			SearchQuery:  query,
+			SearchTime:   searchedAt,
+		})
+	}
+	return releases
+}
+
+func firstNonBlankString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (m *WantedMonitor) runSearchQueries(ctx context.Context, item models.WantedBook, queries []string) ([]models.SearchResult, string, error) {

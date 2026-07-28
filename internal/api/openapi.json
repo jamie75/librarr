@@ -690,6 +690,83 @@
           }
         }
       },
+      "WantedRelease": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "wanted_book_id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "guid": {
+            "type": "string"
+          },
+          "indexer": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "publish_date": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "size_human": {
+            "type": "string"
+          },
+          "seeders": {
+            "type": "integer"
+          },
+          "leechers": {
+            "type": "integer"
+          },
+          "grabs": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "score": {
+            "type": "number"
+          },
+          "search_query": {
+            "type": "string"
+          },
+          "search_time": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WantedReleasesResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WantedRelease"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
       "WantedSearchHistory": {
         "type": "object",
         "properties": {
@@ -2623,6 +2700,44 @@
           },
           "422": {
             "description": "Wanted metadata is ambiguous",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wanted/{id}/releases": {
+      "get": {
+        "summary": "List stored releases for a wanted book",
+        "description": "Returns releases from the most recent successful Wanted search. This endpoint is read-only and does not trigger a new search or expose internal download URLs.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored wanted releases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedReleasesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Wanted book not found",
             "content": {
               "application/json": {
                 "schema": {

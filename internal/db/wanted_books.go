@@ -2,8 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -285,6 +287,95 @@ func (d *DB) ListWantedSearchHistory(limit int) ([]models.WantedSearchHistory, e
 	return history, rows.Err()
 }
 
+func (d *DB) ReplaceWantedReleases(id int64, releases []models.WantedRelease) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec(`DELETE FROM wanted_search_releases WHERE wanted_book_id = ?`, id); err != nil {
+		return err
+	}
+	sort.SliceStable(releases, func(i, j int) bool {
+		if releases[i].Score == releases[j].Score {
+			return releases[i].Title < releases[j].Title
+		}
+		return releases[i].Score > releases[j].Score
+	})
+	for _, release := range releases {
+		categories, err := json.Marshal(release.Categories)
+		if err != nil {
+			return err
+		}
+		if release.SearchTime.IsZero() {
+			release.SearchTime = time.Now().UTC()
+		}
+		_, err = tx.Exec(`INSERT INTO wanted_search_releases (
+			wanted_book_id, title, guid, indexer, protocol, publish_date, size, size_human,
+			seeders, leechers, grabs, language, format, download_url, categories, score, search_query, search_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id,
+			strings.TrimSpace(release.Title),
+			strings.TrimSpace(release.GUID),
+			strings.TrimSpace(release.Indexer),
+			strings.TrimSpace(strings.ToLower(release.Protocol)),
+			strings.TrimSpace(release.PublishDate),
+			release.Size,
+			strings.TrimSpace(release.SizeHuman),
+			release.Seeders,
+			release.Leechers,
+			release.Grabs,
+			strings.TrimSpace(strings.ToLower(release.Language)),
+			strings.TrimSpace(strings.ToLower(release.Format)),
+			strings.TrimSpace(release.DownloadURL),
+			string(categories),
+			release.Score,
+			strings.TrimSpace(release.SearchQuery),
+			release.SearchTime.UTC().Format(time.RFC3339),
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (d *DB) ListWantedReleases(id int64) ([]models.WantedRelease, error) {
+	rows, err := d.db.Query(`SELECT id, wanted_book_id, title, guid, indexer, protocol, publish_date,
+		size, size_human, seeders, leechers, grabs, language, format, download_url, categories,
+		score, search_query, search_time
+		FROM wanted_search_releases
+		WHERE wanted_book_id = ?
+		ORDER BY score DESC, id ASC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var releases []models.WantedRelease
+	for rows.Next() {
+		release, err := scanWantedRelease(rows)
+		if err != nil {
+			return nil, err
+		}
+		releases = append(releases, *release)
+	}
+	return releases, rows.Err()
+}
+
 type wantedBookScanner interface {
 	Scan(dest ...any) error
 }
@@ -354,6 +445,38 @@ func scanWantedSearchHistory(scanner wantedBookScanner) (*models.WantedSearchHis
 		return nil, err
 	}
 	item.Success = success == 1
+	return &item, nil
+}
+
+func scanWantedRelease(scanner wantedBookScanner) (*models.WantedRelease, error) {
+	var item models.WantedRelease
+	var categories string
+	if err := scanner.Scan(
+		&item.ID,
+		&item.WantedBookID,
+		&item.Title,
+		&item.GUID,
+		&item.Indexer,
+		&item.Protocol,
+		&item.PublishDate,
+		&item.Size,
+		&item.SizeHuman,
+		&item.Seeders,
+		&item.Leechers,
+		&item.Grabs,
+		&item.Language,
+		&item.Format,
+		&item.DownloadURL,
+		&categories,
+		&item.Score,
+		&item.SearchQuery,
+		&item.SearchTime,
+	); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(categories) != "" {
+		_ = json.Unmarshal([]byte(categories), &item.Categories)
+	}
 	return &item, nil
 }
 

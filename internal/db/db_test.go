@@ -288,6 +288,55 @@ func TestWantedReleaseContextMigrationPreservesExistingRows(t *testing.T) {
 	}
 }
 
+func TestWantedReleasesStoreRetrieveAndReplace(t *testing.T) {
+	d := newTestDB(t)
+	book, err := d.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := d.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty release list = %+v", empty)
+	}
+	if err := d.ReplaceWantedReleases(book.ID, []models.WantedRelease{
+		{Title: "Lower Score", Score: 70, Format: "epub", Language: "en", Protocol: "torrent", Seeders: 3, SearchQuery: "martian", SearchTime: time.Unix(10, 0).UTC()},
+		{Title: "Higher Score", Score: 95, Format: "mobi", Language: "en", Protocol: "torrent", Seeders: 12, SearchQuery: "martian", SearchTime: time.Unix(10, 0).UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := d.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 2 || releases[0].Title != "Higher Score" || releases[1].Title != "Lower Score" {
+		t.Fatalf("releases = %+v", releases)
+	}
+	if releases[0].Format != "mobi" || releases[0].Language != "en" || releases[0].Seeders != 12 {
+		t.Fatalf("release fields = %+v", releases[0])
+	}
+	if err := d.ReplaceWantedReleases(book.ID, []models.WantedRelease{
+		{Title: "Replacement", Score: 88, Format: "pdf", Protocol: "usenet", SearchQuery: "martian pdf", SearchTime: time.Unix(20, 0).UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	releases, err = d.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 || releases[0].Title != "Replacement" || releases[0].Protocol != "usenet" {
+		t.Fatalf("replaced releases = %+v", releases)
+	}
+}
+
 func TestSchemaFoundation_FailedMigrationIsNotRecorded(t *testing.T) {
 	d := newTestDB(t)
 	err := d.applySchemaMigration(schemaMigration{

@@ -23,6 +23,11 @@ type wantedHistoryResponse struct {
 	Items []models.WantedSearchHistory `json:"items"`
 }
 
+type wantedReleasesResponse struct {
+	Items []models.WantedRelease `json:"items"`
+	Total int                    `json:"total"`
+}
+
 type wantedCreateRequest struct {
 	Title              string `json:"title"`
 	Author             string `json:"author"`
@@ -323,6 +328,28 @@ func (s *Server) handleV1WantedHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, wantedHistoryResponse{Items: items})
+}
+
+func (s *Server) handleV1WantedReleases(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
+		return
+	}
+	if _, err := s.db.GetWantedBook(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted book not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted book"})
+		return
+	}
+	items, err := s.db.ListWantedReleases(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted releases"})
+		return
+	}
+	writeJSON(w, http.StatusOK, wantedReleasesResponse{Items: items, Total: len(items)})
 }
 
 func (s *Server) handleV1WantedSearchAll(w http.ResponseWriter, r *http.Request) {

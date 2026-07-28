@@ -21,6 +21,7 @@ var versionedMigrations = []schemaMigration{
 	{version: 5, name: "librarr_2_wanted_books", run: migrateLibrarr2WantedBooks},
 	{version: 6, name: "librarr_2_wanted_monitoring", run: migrateLibrarr2WantedMonitoring},
 	{version: 7, name: "librarr_2_wanted_release_context", run: migrateLibrarr2WantedReleaseContext},
+	{version: 8, name: "librarr_2_wanted_search_releases", run: migrateLibrarr2WantedSearchReleases},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -440,6 +441,41 @@ func migrateLibrarr2WantedReleaseContext(tx *sql.Tx) error {
 			continue
 		}
 		if _, err := tx.Exec(column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateLibrarr2WantedSearchReleases(tx *sql.Tx) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS wanted_search_releases (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			wanted_book_id INTEGER NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			guid TEXT NOT NULL DEFAULT '',
+			indexer TEXT NOT NULL DEFAULT '',
+			protocol TEXT NOT NULL DEFAULT '',
+			publish_date TEXT NOT NULL DEFAULT '',
+			size INTEGER NOT NULL DEFAULT 0,
+			size_human TEXT NOT NULL DEFAULT '',
+			seeders INTEGER NOT NULL DEFAULT 0,
+			leechers INTEGER NOT NULL DEFAULT 0,
+			grabs INTEGER NOT NULL DEFAULT 0,
+			language TEXT NOT NULL DEFAULT '',
+			format TEXT NOT NULL DEFAULT '',
+			download_url TEXT NOT NULL DEFAULT '',
+			categories TEXT NOT NULL DEFAULT '[]',
+			score REAL NOT NULL DEFAULT 0,
+			search_query TEXT NOT NULL DEFAULT '',
+			search_time DATETIME NOT NULL DEFAULT (datetime('now')),
+			FOREIGN KEY (wanted_book_id) REFERENCES wanted_books(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wanted_search_releases_book_score ON wanted_search_releases(wanted_book_id, score DESC, id ASC)`,
+		`CREATE INDEX IF NOT EXISTS idx_wanted_search_releases_search_time ON wanted_search_releases(search_time DESC)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
 	}

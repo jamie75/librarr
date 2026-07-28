@@ -86,7 +86,16 @@ const I18N = {
     wanted_toggle_unmonitored: 'Unmonitored',
     wanted_remove: 'Remove',
     wanted_search_now: 'Search Now',
+    wanted_searching_now: 'Searching...',
     wanted_search_all: 'Search All Wanted',
+    wanted_view_releases: 'View Releases',
+    wanted_releases_title: 'Releases',
+    wanted_releases_empty: 'No releases stored for the latest search.',
+    wanted_releases_failed: 'Could not load wanted releases',
+    wanted_release_filters: 'Release filters',
+    wanted_release_min_seeders: 'Minimum seeders',
+    wanted_release_sort: 'Sort',
+    wanted_release_top_match: 'Top match',
     wanted_last_searched: 'Last searched',
     wanted_results: 'Results',
     wanted_best_match: 'Best match',
@@ -642,6 +651,15 @@ const state = {
   wantedNormalizationResults: new Map(),
   wantedSearchPending: new Set(),
   wantedSearchAllRunning: false,
+  wantedReleaseViewer: {
+    open: false,
+    loading: false,
+    itemId: 0,
+    title: '',
+    releases: [],
+    error: '',
+    filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+  },
   libraryMatchIndex: new Set(),
   homeData: null,
   pendingDownloads: new Set(),
@@ -3422,6 +3440,7 @@ function renderWantedCard(item) {
   const bestMatch = item.last_match_title || '—';
   const resultCount = Number.isFinite(item.last_result_count) ? item.last_result_count : 0;
   const lastError = item.last_error || '';
+  const searchButtonLabel = searching ? t('wanted_searching_now') : t('wanted_search_now');
 
   return `
     <article class="overflow-hidden rounded-[1.35rem] border border-stone-800 bg-stone-900/70">
@@ -3450,7 +3469,8 @@ function renderWantedCard(item) {
           </label>`}
           <div class="flex items-center gap-2">
             ${completed ? '' : `
-            <button data-action="searchWantedBook" data-id="${item.id}" ${searching || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${t('wanted_search_now')}</button>
+            <button data-action="searchWantedBook" data-id="${item.id}" ${searching || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${searching ? '<span class="inline-block animate-spin">⟳</span> ' : ''}${searchButtonLabel}</button>
+            ${resultCount > 0 ? `<button data-action="openWantedReleases" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_view_releases')}</button>` : ''}
             ${showNormalize ? `<button data-action="normalizeWantedBook" data-id="${item.id}" class="rounded-xl bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-100 hover:bg-indigo-500/20">${t('wanted_normalize')}</button>` : ''}
             ${status === 'ignored' ? `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>` : `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>`}
             `}
@@ -3460,6 +3480,206 @@ function renderWantedCard(item) {
       </div>
     </article>
   `;
+}
+
+function ensureWantedReleaseViewer() {
+  let modal = document.getElementById('wanted-release-viewer');
+  if (modal || !document.createElement || !document.body) return modal;
+  modal = document.createElement('div');
+  modal.id = 'wanted-release-viewer';
+  modal.className = 'fixed inset-0 z-50 hidden items-stretch justify-end bg-black/70 backdrop-blur-sm';
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function renderWantedReleaseViewer() {
+  const viewer = state.wantedReleaseViewer || {};
+  const releases = filteredWantedReleases(viewer.releases || [], viewer.filters || {});
+  const loading = !!viewer.loading;
+  const error = viewer.error || '';
+  const title = viewer.title || t('wanted_releases_title');
+  const allReleases = viewer.releases || [];
+  const formatOptions = wantedReleaseOptions(allReleases, 'format');
+  const languageOptions = wantedReleaseOptions(allReleases, 'language');
+  const protocolOptions = wantedReleaseOptions(allReleases, 'protocol');
+  return `
+    <div class="h-full w-full max-w-5xl overflow-y-auto bg-[#171412] text-stone-100 shadow-2xl">
+      <div class="sticky top-0 z-10 flex items-center justify-between border-b border-stone-800 bg-[#171412]/95 px-5 py-4 backdrop-blur">
+        <div>
+          <p class="text-xs uppercase tracking-[0.35em] text-amber-300">${t('wanted_releases_title')}</p>
+          <h2 class="mt-1 text-2xl font-semibold text-white">${escapeHtml(title)}</h2>
+        </div>
+        <button data-action="closeWantedReleases" class="rounded-2xl p-2 text-stone-400 hover:bg-stone-800 hover:text-white" aria-label="Close">✕</button>
+      </div>
+      <div class="space-y-5 p-5">
+        <section class="rounded-[1.25rem] border border-stone-800 bg-stone-950/40 p-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold text-white">${t('wanted_release_filters')}</h3>
+            <span class="text-xs text-stone-500">${releases.length} / ${allReleases.length}</span>
+          </div>
+          <div class="grid gap-3 md:grid-cols-5">
+            ${renderWantedReleaseSelect('format', viewer.filters?.format || 'all', formatOptions, 'Format')}
+            ${renderWantedReleaseSelect('language', viewer.filters?.language || 'all', languageOptions, 'Language')}
+            ${renderWantedReleaseSelect('protocol', viewer.filters?.protocol || 'all', protocolOptions, 'Protocol')}
+            <label class="text-xs text-stone-400">${t('wanted_release_min_seeders')}
+              <input data-action-change="setWantedReleaseFilter" data-field="minSeeders" type="number" min="0" value="${escapeHtml(String(viewer.filters?.minSeeders || 0))}" class="mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-white">
+            </label>
+            <label class="text-xs text-stone-400">${t('wanted_release_sort')}
+              <select data-action-change="setWantedReleaseFilter" data-field="sort" class="mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-white">
+                ${['score', 'newest', 'oldest', 'largest', 'smallest', 'seeders'].map(value => `<option value="${value}" ${(viewer.filters?.sort || 'score') === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+        </section>
+        ${loading ? `<div class="rounded-[1.25rem] border border-stone-800 bg-stone-950/40 p-6 text-sm text-stone-300"><span class="inline-block animate-spin">⟳</span> ${t('loading')}</div>` : ''}
+        ${error ? `<div class="rounded-[1.25rem] border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-100">${escapeHtml(error)}</div>` : ''}
+        ${!loading && !error && releases.length === 0 ? `<div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-950/40 p-6 text-sm text-stone-400">${t('wanted_releases_empty')}</div>` : ''}
+        ${!loading && !error && releases.length > 0 ? `<div class="space-y-3">${releases.map((release, index) => renderWantedReleaseRow(release, index)).join('')}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderWantedReleaseSelect(field, value, options, label) {
+  return `
+    <label class="text-xs text-stone-400">${escapeHtml(label)}
+      <select data-action-change="setWantedReleaseFilter" data-field="${escapeHtml(field)}" class="mt-1 w-full rounded-xl border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-white">
+        <option value="all">All</option>
+        ${options.map(option => `<option value="${escapeHtml(option)}" ${value === option ? 'selected' : ''}>${escapeHtml(option.toUpperCase())}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function renderWantedReleaseRow(release, index) {
+  const format = String(release.format || '').toUpperCase();
+  const language = String(release.language || '').toUpperCase();
+  const protocol = String(release.protocol || '').toLowerCase();
+  const badges = [
+    format,
+    language,
+    protocol === 'nzb' || protocol === 'usenet' ? 'Usenet' : protocol ? 'Torrent' : '',
+  ].filter(Boolean);
+  return `
+    <article class="rounded-[1.25rem] border ${index === 0 ? 'border-amber-500/50 bg-amber-500/10' : 'border-stone-800 bg-stone-950/40'} p-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            ${index === 0 ? `<span class="rounded-full bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100">${t('wanted_release_top_match')}</span>` : ''}
+            ${badges.map(badge => `<span class="rounded-full bg-stone-800 px-2.5 py-1 text-xs font-medium text-stone-200">${escapeHtml(badge)}</span>`).join('')}
+          </div>
+          <h4 class="mt-2 text-base font-semibold text-white">${escapeHtml(release.title || '')}</h4>
+          <p class="mt-1 text-xs text-stone-400">${escapeHtml(release.indexer || '—')} · ${escapeHtml(formatWantedReleaseAge(release.publish_date))}</p>
+        </div>
+        <div class="text-right">
+          <p class="text-lg font-semibold text-amber-200">${escapeHtml(String(Math.round(Number(release.score || 0))))}</p>
+          <p class="text-xs text-stone-500">score</p>
+        </div>
+      </div>
+      <dl class="mt-4 grid gap-2 text-xs text-stone-400 sm:grid-cols-5">
+        <div><dt>Size</dt><dd class="text-stone-200">${escapeHtml(release.size_human || formatSize(release.size || 0))}</dd></div>
+        <div><dt>Seeders</dt><dd class="text-stone-200">${escapeHtml(String(release.seeders ?? 0))}</dd></div>
+        <div><dt>Leechers</dt><dd class="text-stone-200">${escapeHtml(String(release.leechers ?? 0))}</dd></div>
+        <div><dt>Grabs</dt><dd class="text-stone-200">${escapeHtml(String(release.grabs ?? 0))}</dd></div>
+        <div><dt>Protocol</dt><dd class="text-stone-200">${escapeHtml(protocol || '—')}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function wantedReleaseOptions(releases, field) {
+  return [...new Set((releases || []).map(release => String(release[field] || '').toLowerCase()).filter(Boolean))].sort();
+}
+
+function filteredWantedReleases(releases, filters = {}) {
+  const minSeeders = Number(filters.minSeeders || 0);
+  const filtered = (releases || []).filter(release => {
+    if (filters.format && filters.format !== 'all' && String(release.format || '').toLowerCase() !== filters.format) return false;
+    if (filters.language && filters.language !== 'all' && String(release.language || '').toLowerCase() !== filters.language) return false;
+    if (filters.protocol && filters.protocol !== 'all' && String(release.protocol || '').toLowerCase() !== filters.protocol) return false;
+    if (Number(release.seeders || 0) < minSeeders) return false;
+    return true;
+  });
+  const sortMode = filters.sort || 'score';
+  filtered.sort((a, b) => {
+    if (sortMode === 'newest') return wantedReleaseTime(b) - wantedReleaseTime(a);
+    if (sortMode === 'oldest') return wantedReleaseTime(a) - wantedReleaseTime(b);
+    if (sortMode === 'largest') return Number(b.size || 0) - Number(a.size || 0);
+    if (sortMode === 'smallest') return Number(a.size || 0) - Number(b.size || 0);
+    if (sortMode === 'seeders') return Number(b.seeders || 0) - Number(a.seeders || 0);
+    return Number(b.score || 0) - Number(a.score || 0);
+  });
+  return filtered;
+}
+
+function wantedReleaseTime(release) {
+  const date = new Date(release.publish_date || release.search_time || 0);
+  const ms = date.getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function formatWantedReleaseAge(value) {
+  if (!value) return 'Unknown age';
+  const published = new Date(value);
+  if (Number.isNaN(published.getTime())) return 'Unknown age';
+  const days = Math.max(0, Math.floor((Date.now() - published.getTime()) / 86400000));
+  if (days === 0) return 'Today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+async function openWantedReleases(id, title) {
+  state.wantedReleaseViewer = {
+    open: true,
+    loading: true,
+    itemId: id,
+    title: title || '',
+    releases: [],
+    error: '',
+    filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+  };
+  renderWantedReleaseModal();
+  try {
+    const data = await apiJson(`/api/v1/wanted/${id}/releases`);
+    state.wantedReleaseViewer.releases = data.items || [];
+    state.wantedReleaseViewer.error = '';
+  } catch (err) {
+    state.wantedReleaseViewer.error = err.message || t('wanted_releases_failed');
+  } finally {
+    state.wantedReleaseViewer.loading = false;
+    renderWantedReleaseModal();
+  }
+}
+
+function closeWantedReleases() {
+  state.wantedReleaseViewer.open = false;
+  const modal = document.getElementById('wanted-release-viewer');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+function renderWantedReleaseModal() {
+  const modal = ensureWantedReleaseViewer();
+  if (!modal) return;
+  if (!state.wantedReleaseViewer?.open) {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    return;
+  }
+  modal.innerHTML = renderWantedReleaseViewer();
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function setWantedReleaseFilter(field, value) {
+  if (!state.wantedReleaseViewer) return;
+  if (field === 'minSeeders') {
+    state.wantedReleaseViewer.filters.minSeeders = Math.max(0, Number(value || 0));
+  } else {
+    state.wantedReleaseViewer.filters[field] = value || 'all';
+  }
+  renderWantedReleaseModal();
 }
 
 function likelyMalformedWantedItem(item) {
@@ -5854,6 +6074,7 @@ document.addEventListener('keydown', (e) => {
 
   // Escape → close modals, clear search
   if (e.key === 'Escape') {
+    closeWantedReleases();
     closeBookDetails();
   }
 });
@@ -5988,6 +6209,8 @@ const CLICK_ACTIONS = {
   addWantedFromSearch: el => addWantedFromSearchResult(+el.dataset.idx),
   removeWantedBook: el => removeWantedBook(+el.dataset.id, el.dataset.title),
   searchWantedBook: el => searchWantedBook(+el.dataset.id),
+  openWantedReleases: el => openWantedReleases(+el.dataset.id, el.dataset.title),
+  closeWantedReleases: () => closeWantedReleases(),
   normalizeWantedBook: el => normalizeWantedBook(+el.dataset.id),
   searchAllWanted: () => searchAllWanted(),
   ignoreWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'ignored' }),
@@ -6064,6 +6287,7 @@ const CHANGE_ACTIONS = {
     renderLibraryScanWorkspace();
   },
   toggleWantedMonitored: el => toggleWantedMonitored(+el.dataset.id, el.checked),
+  setWantedReleaseFilter: el => setWantedReleaseFilter(el.dataset.field, el.value),
 };
 
 document.addEventListener('change', e => {
