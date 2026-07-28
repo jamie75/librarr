@@ -1118,9 +1118,12 @@ function closeMobileNav() {
 
 // TAB NAVIGATION
 // ============================================================
-function switchTab(tab) {
+function switchTab(tab, options = {}) {
   closeMobileNav();
   state.currentTab = tab;
+  if (!options.fromRoute) {
+    syncTabRoute(tab);
+  }
 
   // Update nav
   document.querySelectorAll('.nav-tab').forEach(el => {
@@ -1193,6 +1196,9 @@ function setupLibrarr2Shell() {
       <button data-action="switchTab" data-arg="search" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="search">
         <span data-i18n="nav_discover">Discover</span>
       </button>
+      <button data-action="switchTab" data-arg="wanted" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="wanted">
+        <span data-i18n="nav_wanted">Wanted</span>
+      </button>
       <button data-action="switchTab" data-arg="settings" class="nav-tab px-4 py-2.5 text-sm font-medium border-b-2 border-transparent whitespace-nowrap" data-tab="settings">
         <span data-i18n="nav_settings">Settings</span>
       </button>
@@ -1250,6 +1256,26 @@ function setupLibrarr2Shell() {
   if (libraryResults) {
     libraryResults.className = 'grid gap-5 sm:grid-cols-2 xl:grid-cols-3';
   }
+}
+
+function routeTabFromLocation() {
+  const hash = String(window.location?.hash || '').replace(/^#/, '').trim().toLowerCase();
+  if (!hash) return 'home';
+  if (['home', 'library', 'search', 'wanted', 'settings'].includes(hash)) return hash;
+  if (hash.startsWith('settings-')) return 'settings';
+  return 'home';
+}
+
+function syncTabRoute(tab) {
+  if (!window.location) return;
+  if (tab === 'settings') {
+    const currentHash = String(window.location.hash || '').replace(/^#/, '');
+    if (!currentHash.startsWith('settings')) {
+      window.location.hash = 'settings';
+    }
+    return;
+  }
+  window.location.hash = tab;
 }
 
 // ============================================================
@@ -2325,7 +2351,7 @@ async function loadHomeDashboard() {
 
 function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, downloads, activity, activitySummary, attention, stats, wanted, bookCount, isAdmin }) {
 	if (showOnboarding) {
-		return renderOnboardingChecklist(isAdmin);
+		return renderOnboardingChecklist(isAdmin, wanted);
 	}
 
 	const summary = activitySummary || {};
@@ -2363,17 +2389,7 @@ function buildHomeDashboardMarkup({ showOnboarding, recentBooks, formatCounts, d
 				</div>
 			</div>
 		</section>
-		<section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
-			<div class="flex items-center justify-between gap-4 mb-4">
-				<h3 class="text-lg font-semibold text-white">${t('dashboard_wanted')}</h3>
-				<button data-action="switchTab" data-arg="wanted" class="text-sm text-amber-300 hover:text-amber-200">${t('nav_wanted')}</button>
-			</div>
-			<div class="grid grid-cols-3 gap-3">
-				${renderMetricCard(t('wanted_total'), wanted?.counts?.total ?? 0)}
-				${renderMetricCard(t('wanted_monitored'), wanted?.counts?.monitored ?? 0)}
-				${renderMetricCard(t('wanted_ignored'), wanted?.counts?.ignored ?? 0)}
-			</div>
-		</section>
+		${renderWantedDashboardPanel(wanted)}
 		<section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
 			<h3 class="text-lg font-semibold text-white mb-4">${t('dashboard_quick_actions')}</h3>
 			<div class="grid gap-2">
@@ -2597,7 +2613,25 @@ function updateHomeHero(isOnboarding, bookCount = 0) {
   `;
 }
 
-function renderOnboardingChecklist(isAdmin = isAdminUser()) {
+function renderWantedDashboardPanel(wanted = {}) {
+	return `
+		<section class="dashboard-panel lg:col-span-4 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+			<button data-action="switchTab" data-arg="wanted" class="block w-full text-left">
+				<div class="flex items-center justify-between gap-4 mb-4">
+					<h3 class="text-lg font-semibold text-white">${t('dashboard_wanted')}</h3>
+					<span class="text-sm text-amber-300">${t('nav_wanted')}</span>
+				</div>
+				<div class="grid grid-cols-3 gap-3">
+					${renderMetricCard(t('wanted_total'), wanted?.counts?.total ?? 0)}
+					${renderMetricCard(t('wanted_monitored'), wanted?.counts?.monitored ?? 0)}
+					${renderMetricCard(t('wanted_ignored'), wanted?.counts?.ignored ?? 0)}
+				</div>
+			</button>
+		</section>
+	`;
+}
+
+function renderOnboardingChecklist(isAdmin = isAdminUser(), wanted = {}) {
 	const checklistItems = [
 		{ done: Boolean(state.currentUser), label: t('home_step_admin_done') },
 		{ done: Boolean(state.libraryImport?.completed), label: t('home_step_configure_folders') },
@@ -2607,28 +2641,29 @@ function renderOnboardingChecklist(isAdmin = isAdminUser()) {
 	];
 
 	return `
-    <section class="dashboard-panel lg:col-span-12 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
-      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div class="max-w-2xl">
-          <h3 class="text-xl font-semibold text-white mb-2">${t('home_onboarding_title')}</h3>
-          <p class="text-stone-400 leading-7">${t('home_import_hint')}</p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          ${isAdmin ? `<button data-action="openImportSettings" class="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-stone-950 hover:bg-amber-400 transition-colors">${t('home_import_library')}</button>` : ''}
-          ${isAdmin ? `<button data-action="openImportSettings" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('home_scan_library')}</button>` : ''}
-          <button data-action="switchTab" data-arg="search" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('home_discover')}</button>
-          <a href="/opds" target="_blank" rel="noreferrer" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('dashboard_open_opds')}</a>
-        </div>
-      </div>
-      <div class="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-        ${checklistItems.map(item => `
-          <div class="flex items-center gap-3 rounded-2xl border ${item.done ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : 'border-stone-800 bg-stone-900/60 text-stone-200'} px-4 py-3">
-            <span class="text-base">${item.done ? '✅' : '⬜'}</span>
-            <span class="text-sm font-medium">${escapeHtml(item.label)}</span>
-          </div>
-        `).join('')}
-      </div>
-    </section>
+		<section class="dashboard-panel lg:col-span-8 rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 p-5">
+			<div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+				<div class="max-w-2xl">
+					<h3 class="text-xl font-semibold text-white mb-2">${t('home_onboarding_title')}</h3>
+					<p class="text-stone-400 leading-7">${t('home_import_hint')}</p>
+				</div>
+				<div class="flex flex-wrap gap-2">
+					${isAdmin ? `<button data-action="openImportSettings" class="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-stone-950 hover:bg-amber-400 transition-colors">${t('home_import_library')}</button>` : ''}
+					${isAdmin ? `<button data-action="openImportSettings" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('home_scan_library')}</button>` : ''}
+					<button data-action="switchTab" data-arg="search" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('home_discover')}</button>
+					<a href="/opds" target="_blank" rel="noreferrer" class="rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-semibold text-stone-100 hover:bg-stone-700 transition-colors">${t('dashboard_open_opds')}</a>
+				</div>
+			</div>
+			<div class="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+				${checklistItems.map(item => `
+					<div class="flex items-center gap-3 rounded-2xl border ${item.done ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : 'border-stone-800 bg-stone-900/60 text-stone-200'} px-4 py-3">
+						<span class="text-base">${item.done ? '✅' : '⬜'}</span>
+						<span class="text-sm font-medium">${escapeHtml(item.label)}</span>
+					</div>
+				`).join('')}
+			</div>
+		</section>
+		${renderWantedDashboardPanel(wanted)}
   `;
 }
 
@@ -5611,13 +5646,24 @@ async function init() {
     // Apply language on load
     applyLanguage();
     document.getElementById('search-empty').classList.remove('hidden');
-    switchTab('home');
+    switchTab(routeTabFromLocation(), { fromRoute: true });
   } catch (err) {
     if (err.message === 'Unauthorized') {
       // Login modal already shown by api()
     }
   }
 }
+
+window.addEventListener('hashchange', () => {
+  const tab = routeTabFromLocation();
+  if (tab === state.currentTab) {
+    if (tab === 'settings' && window.location.hash) {
+      scrollToSettingsSection(window.location.hash.slice(1));
+    }
+    return;
+  }
+  switchTab(tab, { fromRoute: true });
+});
 
 // Start
 init();
