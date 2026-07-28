@@ -192,6 +192,8 @@ const I18N = {
     search_empty_hint: 'Try searching by title, author, or ISBN',
     no_results: 'No results found',
     no_results_hint: 'Try different keywords or check your spelling',
+    no_results_filtered: 'No results match the current filters',
+    no_results_filtered_hint: 'Prowlarr returned results, but Librarr filtered them out based on the active search filters.',
     download: 'Download',
     download_added: 'Added',
     download_failed_state: 'Failed',
@@ -439,6 +441,8 @@ const I18N = {
     search_empty_hint: 'Попробуйте искать по названию, автору или ISBN',
     no_results: 'Ничего не найдено',
     no_results_hint: 'Попробуйте другие ключевые слова или проверьте написание',
+    no_results_filtered: 'Нет результатов, соответствующих текущим фильтрам',
+    no_results_filtered_hint: 'Prowlarr вернул результаты, но Librarr отфильтровал их по активным фильтрам поиска.',
     download: 'Скачать',
     download_added: 'Добавлено',
     download_failed_state: 'Ошибка',
@@ -642,6 +646,7 @@ const state = {
   searchTab: 'ebooks',
   libraryTab: 'ebooks',
   searchResults: [],
+  searchDiagnostics: null,
   libraryBooks: [],
   homeBooks: [],
   wantedBooks: [],
@@ -1202,6 +1207,7 @@ function switchSearchTab(tab) {
   document.getElementById('search-no-results').classList.add('hidden');
   document.getElementById('search-empty').classList.remove('hidden');
   state.searchResults = [];
+  state.searchDiagnostics = null;
 
   // Update placeholder
   const placeholders = { ebooks: t('search_placeholder'), audiobooks: t('search_placeholder_ab'), manga: t('search_placeholder_manga') };
@@ -1358,6 +1364,7 @@ async function doSearch(query) {
   // Show skeleton
   showSearchSkeleton();
   state.searchResults = [];
+  state.searchDiagnostics = null;
   document.getElementById('search-results').innerHTML = '';
   document.getElementById('search-empty').classList.add('hidden');
   document.getElementById('search-no-results').classList.add('hidden');
@@ -1385,6 +1392,7 @@ async function doSearch(query) {
 async function doJsonSearch(endpoint, query, gen, signal) {
   const data = await apiJson(`${endpoint}?q=${encodeURIComponent(query)}`, { signal });
   if (gen !== searchGeneration) return;
+  state.searchDiagnostics = data.diagnostics || null;
   await updateSearchResults(data.results || [], false);
 }
 
@@ -1410,6 +1418,7 @@ async function doStreamingSearch(endpoint, query, gen, signal) {
       const evt = parseSSEFrame(frame);
       if (!evt || gen !== searchGeneration) continue;
       if (evt.event === 'results' || evt.event === 'complete') {
+        state.searchDiagnostics = evt.data.diagnostics || state.searchDiagnostics;
         await updateSearchResults(evt.data.results || [], evt.event !== 'complete');
         completed = evt.event === 'complete';
       }
@@ -1420,7 +1429,7 @@ async function doStreamingSearch(endpoint, query, gen, signal) {
     document.getElementById('search-spinner').classList.add('hidden');
     if (state.searchResults.length === 0) {
       hideSearchSkeleton();
-      document.getElementById('search-no-results').classList.remove('hidden');
+      showSearchNoResults();
     }
   }
 }
@@ -1451,7 +1460,7 @@ async function updateSearchResults(results, searching) {
       return;
     }
     hideSearchSkeleton();
-    document.getElementById('search-no-results').classList.toggle('hidden', searching);
+    if (!searching) showSearchNoResults();
     return;
   }
 
@@ -1461,6 +1470,21 @@ async function updateSearchResults(results, searching) {
   document.getElementById('search-result-count').textContent = t('n_results', {n: state.searchResults.length});
   await refreshDiscoverIndexes();
   renderSearchResults();
+}
+
+function showSearchNoResults() {
+  const el = document.getElementById('search-no-results');
+  if (!el) return;
+  const title = el.querySelector('[data-i18n="no_results"]');
+  const hint = el.querySelector('[data-i18n="no_results_hint"]');
+  const diagnostics = state.searchDiagnostics || {};
+  const upstream = Number(diagnostics.upstream_results || 0);
+  const returned = Number(diagnostics.returned_results || 0);
+  const filtered = Number(diagnostics.filtered_results || 0);
+  const wasFilteredEmpty = upstream > 0 && returned === 0 && filtered > 0;
+  if (title) title.textContent = wasFilteredEmpty ? t('no_results_filtered') : t('no_results');
+  if (hint) hint.textContent = wasFilteredEmpty ? t('no_results_filtered_hint') : t('no_results_hint');
+  el.classList.remove('hidden');
 }
 
 function normalizeWantedKeyPart(value) {

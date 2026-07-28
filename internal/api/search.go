@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/jamie75/librarr/internal/models"
@@ -34,15 +35,23 @@ func (s *Server) handleSearchTab(w http.ResponseWriter, r *http.Request, tab, ac
 		s.db.LogActivity(username, "search", query, fmt.Sprintf(activityFormat, query))
 	}
 	author := truncateSearchQuery(r.URL.Query().Get("author"))
-	results, elapsed := s.searchMgr.SearchWithAuthor(r.Context(), tab, query, author)
+	results, elapsed, diagnostics := s.searchMgr.DiscoverSearchWithAuthor(r.Context(), tab, query, author)
 	if results == nil {
 		results = []models.SearchResult{}
 	}
+	slog.Info("discover search processed",
+		"tab", tab,
+		"query", query,
+		"upstream_results", diagnostics.UpstreamResults,
+		"filtered_results", diagnostics.FilteredResults,
+		"returned_results", diagnostics.ReturnedResults,
+	)
 
 	resp := map[string]interface{}{
 		"results":        results,
 		"search_time_ms": elapsed,
 		"sources":        s.searchMgr.SourceMeta(),
+		"diagnostics":    diagnostics,
 	}
 
 	// Fetch metadata for the query from Open Library.
@@ -117,7 +126,7 @@ func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, t
 		if len(update.Results) > 0 {
 			allResults = append(allResults, update.Results...)
 		}
-		results := s.searchMgr.ProcessResults(allResults, query, author)
+		results, diagnostics := s.searchMgr.ProcessDiscoverResults(allResults, query, author)
 		if results == nil {
 			results = []models.SearchResult{}
 		}
@@ -128,6 +137,7 @@ func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, t
 			"results":        results,
 			"search_time_ms": update.ElapsedMilli,
 			"sources":        s.searchMgr.SourceMeta(),
+			"diagnostics":    diagnostics,
 		}
 		if update.Err != nil {
 			payload["error"] = update.Err.Error()
@@ -137,12 +147,20 @@ func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, t
 		}
 	}
 
-	finalResults := s.searchMgr.ProcessResults(allResults, query, author)
+	finalResults, diagnostics := s.searchMgr.ProcessDiscoverResults(allResults, query, author)
 	if finalResults == nil {
 		finalResults = []models.SearchResult{}
 	}
+	slog.Info("discover streaming search processed",
+		"tab", tab,
+		"query", query,
+		"upstream_results", diagnostics.UpstreamResults,
+		"filtered_results", diagnostics.FilteredResults,
+		"returned_results", diagnostics.ReturnedResults,
+	)
 	emit("complete", map[string]interface{}{
-		"results": finalResults,
-		"sources": s.searchMgr.SourceMeta(),
+		"results":     finalResults,
+		"sources":     s.searchMgr.SourceMeta(),
+		"diagnostics": diagnostics,
 	})
 }

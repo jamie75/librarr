@@ -970,6 +970,20 @@
                       "items": {
                         "type": "object"
                       }
+                    },
+                    "diagnostics": {
+                      "type": "object",
+                      "properties": {
+                        "upstream_results": {
+                          "type": "integer"
+                        },
+                        "filtered_results": {
+                          "type": "integer"
+                        },
+                        "returned_results": {
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 }

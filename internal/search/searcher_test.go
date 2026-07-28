@@ -88,6 +88,84 @@ func TestSearchStreamEmitsSourceUpdates(t *testing.T) {
 	}
 }
 
+func TestProcessDiscoverResultsAllowsAuthorOnlyQuery(t *testing.T) {
+	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+	results := tomBowerResults()
+
+	processed, stats := mgr.ProcessDiscoverResults(results, "Tom Bower", "")
+
+	if len(processed) != 4 {
+		t.Fatalf("Discover author query returned %d results, want 4", len(processed))
+	}
+	if stats.UpstreamResults != 4 || stats.FilteredResults != 0 || stats.ReturnedResults != 4 {
+		t.Fatalf("diagnostics = %+v, want upstream 4 filtered 0 returned 4", stats)
+	}
+	seen := map[string]bool{}
+	for _, result := range processed {
+		seen[result.Title] = true
+	}
+	for _, title := range []string{
+		"Rebel Prince",
+		"Sweet Revenge",
+		"Oil, Money and Power",
+		"The Fall of Sayed",
+	} {
+		if !seen[title] {
+			t.Fatalf("Discover results missing %q: %#v", title, processed)
+		}
+	}
+}
+
+func TestProcessDiscoverResultsReportsAllFiltered(t *testing.T) {
+	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+
+	processed, stats := mgr.ProcessDiscoverResults([]models.SearchResult{
+		{Source: "prowlarr", Title: "Tom Bower keygen exe", Author: "Tom Bower"},
+	}, "Tom Bower", "")
+
+	if len(processed) != 0 {
+		t.Fatalf("processed results = %d, want 0", len(processed))
+	}
+	if stats.UpstreamResults != 1 || stats.FilteredResults != 1 || stats.ReturnedResults != 0 {
+		t.Fatalf("diagnostics = %+v, want upstream 1 filtered 1 returned 0", stats)
+	}
+}
+
+func TestProcessDiscoverResultsReportsZeroUpstream(t *testing.T) {
+	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+
+	processed, stats := mgr.ProcessDiscoverResults(nil, "Tom Bower", "")
+
+	if len(processed) != 0 {
+		t.Fatalf("processed results = %d, want 0", len(processed))
+	}
+	if stats.UpstreamResults != 0 || stats.FilteredResults != 0 || stats.ReturnedResults != 0 {
+		t.Fatalf("diagnostics = %+v, want all zero", stats)
+	}
+}
+
+func TestProcessResultsKeepsWantedCanonicalMatchingStrict(t *testing.T) {
+	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+
+	processed := mgr.ProcessResults(tomBowerResults(), "Rebel Prince", "Tom Bower")
+
+	if len(processed) != 1 {
+		t.Fatalf("Wanted canonical processing returned %d results, want 1: %#v", len(processed), processed)
+	}
+	if processed[0].Title != "Rebel Prince" {
+		t.Fatalf("Wanted canonical processing returned %q, want Rebel Prince", processed[0].Title)
+	}
+}
+
+func tomBowerResults() []models.SearchResult {
+	return []models.SearchResult{
+		{Source: "prowlarr", Title: "Rebel Prince", Author: "Tom Bower", Format: "epub", Seeders: 12},
+		{Source: "prowlarr", Title: "Sweet Revenge", Author: "Tom Bower", Format: "epub", Seeders: 10},
+		{Source: "prowlarr", Title: "Oil, Money and Power", Author: "Tom Bower", Format: "epub", Seeders: 8},
+		{Source: "prowlarr", Title: "The Fall of Sayed", Author: "Tom Bower", Format: "epub", Seeders: 6},
+	}
+}
+
 func TestIsForeignTitle(t *testing.T) {
 	tests := []struct {
 		title    string

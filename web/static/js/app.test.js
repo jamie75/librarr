@@ -83,6 +83,7 @@ const functionBundle = [
   extractFunctionSource('refreshWantedData'),
   extractFunctionSource('loadWantedHistory'),
   extractFunctionSource('renderBookCard'),
+  extractFunctionSource('showSearchNoResults'),
   extractFunctionSource('renderLibraryBookCard'),
   extractFunctionSource('renderWantedGroups'),
   extractFunctionSource('renderWantedCard'),
@@ -90,6 +91,7 @@ const functionBundle = [
   extractFunctionSource('renderWantedNormalizationResult'),
   extractFunctionSource('renderWantedHistory'),
   extractFunctionSource('formatWantedTimestamp'),
+  extractFunctionSource('doJsonSearch'),
   extractFunctionSource('ensureWantedReleaseViewer'),
   extractFunctionSource('renderWantedReleaseViewer'),
   extractFunctionSource('renderWantedReleaseSelect'),
@@ -523,6 +525,87 @@ test('discover card shows in-library badge when result already exists in library
   const html = context.renderBookCard({ title: 'The Martian', author: 'Andy Weir', source: 'prowlarr' }, 0);
 
   assert.match(html, /wanted_in_library/);
+});
+
+test('Discover JSON search passes multiple author-query results to the UI', async () => {
+  const calls = [];
+  const results = [
+    { title: 'Rebel Prince by Tom Bower', author: 'Tom Bower' },
+    { title: 'Sweet Revenge by Tom Bower', author: 'Tom Bower' },
+    { title: 'Oil, Money and Power by Tom Bower', author: 'Tom Bower' },
+    { title: 'The Fall of Sayed by Tom Bower', author: 'Tom Bower' },
+  ];
+  const diagnostics = { upstream_results: 14, filtered_results: 10, returned_results: 4 };
+  const context = createContext({
+    state: { searchDiagnostics: null },
+    searchGeneration: 7,
+    apiJson: async url => {
+      calls.push(url);
+      return { results, diagnostics };
+    },
+    updateSearchResults: async (items, searching) => calls.push({ items, searching }),
+  });
+
+  await context.doJsonSearch('/api/search', 'Tom Bower', 7, undefined);
+
+  assert.equal(calls[0], '/api/search?q=Tom%20Bower');
+  assert.equal(calls[1].items.length, 4);
+  assert.equal(calls[1].items[0].title, 'Rebel Prince by Tom Bower');
+  assert.deepEqual(context.state.searchDiagnostics, diagnostics);
+});
+
+test('Discover empty state uses normal copy when upstream returned no results', () => {
+  const title = { textContent: '' };
+  const hint = { textContent: '' };
+  const hidden = new Set(['hidden']);
+  const empty = {
+    querySelector: selector => {
+      if (selector === '[data-i18n="no_results"]') return title;
+      if (selector === '[data-i18n="no_results_hint"]') return hint;
+      return null;
+    },
+    classList: {
+      remove: name => hidden.delete(name),
+      contains: name => hidden.has(name),
+    },
+  };
+  const context = createContext({
+    state: { searchDiagnostics: { upstream_results: 0, returned_results: 0, filtered_results: 0 } },
+    document: { getElementById: id => (id === 'search-no-results' ? empty : null) },
+  });
+
+  context.showSearchNoResults();
+
+  assert.equal(title.textContent, 'no_results');
+  assert.equal(hint.textContent, 'no_results_hint');
+  assert.equal(empty.classList.contains('hidden'), false);
+});
+
+test('Discover empty state distinguishes upstream results filtered out', () => {
+  const title = { textContent: '' };
+  const hint = { textContent: '' };
+  const hidden = new Set(['hidden']);
+  const empty = {
+    querySelector: selector => {
+      if (selector === '[data-i18n="no_results"]') return title;
+      if (selector === '[data-i18n="no_results_hint"]') return hint;
+      return null;
+    },
+    classList: {
+      remove: name => hidden.delete(name),
+      contains: name => hidden.has(name),
+    },
+  };
+  const context = createContext({
+    state: { searchDiagnostics: { upstream_results: 14, returned_results: 0, filtered_results: 14 } },
+    document: { getElementById: id => (id === 'search-no-results' ? empty : null) },
+  });
+
+  context.showSearchNoResults();
+
+  assert.equal(title.textContent, 'no_results_filtered');
+  assert.equal(hint.textContent, 'no_results_filtered_hint');
+  assert.equal(empty.classList.contains('hidden'), false);
 });
 
 test('home dashboard renders recent shelf with whole-card details action and covers', () => {

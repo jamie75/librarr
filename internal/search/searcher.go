@@ -48,6 +48,14 @@ type SourceSearchUpdate struct {
 	ElapsedMilli int64
 }
 
+// ResultProcessingStats reports how many upstream results survived local
+// post-processing. It is diagnostic data for Discover responses and logs.
+type ResultProcessingStats struct {
+	UpstreamResults int `json:"upstream_results"`
+	FilteredResults int `json:"filtered_results"`
+	ReturnedResults int `json:"returned_results"`
+}
+
 // NewManager creates a search manager with the given sources.
 func NewManager(cfg *config.Config, sources []Searcher, health *HealthTracker) *Manager {
 	return &Manager{
@@ -80,6 +88,20 @@ func (m *Manager) Search(ctx context.Context, tab, query string) ([]models.Searc
 
 // SearchWithAuthor runs a query and scores results using the provided author hint.
 func (m *Manager) SearchWithAuthor(ctx context.Context, tab, query, author string) ([]models.SearchResult, int64) {
+	results, elapsed := m.searchRaw(ctx, tab, query)
+	results = m.processResults(results, query, author)
+	return results, elapsed
+}
+
+// DiscoverSearchWithAuthor runs a free-form Discover query. Unlike Wanted
+// monitor matching, Discover must allow broad title, author, and ISBN searches.
+func (m *Manager) DiscoverSearchWithAuthor(ctx context.Context, tab, query, author string) ([]models.SearchResult, int64, ResultProcessingStats) {
+	results, elapsed := m.searchRaw(ctx, tab, query)
+	results, stats := m.ProcessDiscoverResults(results, query, author)
+	return results, elapsed, stats
+}
+
+func (m *Manager) searchRaw(ctx context.Context, tab, query string) ([]models.SearchResult, int64) {
 	start := time.Now()
 	var (
 		mu      sync.Mutex
@@ -130,8 +152,6 @@ func (m *Manager) SearchWithAuthor(ctx context.Context, tab, query, author strin
 	}
 
 	wg.Wait()
-
-	results = m.processResults(results, query, author)
 
 	elapsed := time.Since(start).Milliseconds()
 	return results, elapsed
@@ -215,15 +235,35 @@ func (m *Manager) SearchStream(ctx context.Context, tab, query, author string) <
 	return updates
 }
 
-// ProcessResults applies the same post-processing used by normal searches.
+// ProcessResults applies canonical-title post-processing used by Wanted and
+// automation paths that are searching for one known book.
 func (m *Manager) ProcessResults(results []models.SearchResult, query, author string) []models.SearchResult {
 	return m.processResults(results, query, author)
+}
+
+// ProcessDiscoverResults applies shared safety, language, size, duplicate, and
+// scoring behavior without canonical-title filtering. That keeps free-form
+// Discover searches separate from Wanted identity matching.
+func (m *Manager) ProcessDiscoverResults(results []models.SearchResult, query, author string) ([]models.SearchResult, ResultProcessingStats) {
+	stats := ResultProcessingStats{UpstreamResults: len(results)}
+	results = FilterDiscoverResults(results, m.ForeignLangFilterEnabled())
+	results = FilterAndSortResults(results, query, m.cfg.MinTorrentSizeBytes, m.cfg.MaxTorrentSizeBytes)
+	stats.ReturnedResults = len(results)
+	stats.FilteredResults = stats.UpstreamResults - stats.ReturnedResults
+	results = ScoreResults(results, query, author)
+	sortByScoreDesc(results)
+	return results, stats
 }
 
 func (m *Manager) processResults(results []models.SearchResult, query, author string) []models.SearchResult {
 	results = FilterResults(results, query, m.ForeignLangFilterEnabled())
 	results = FilterAndSortResults(results, query, m.cfg.MinTorrentSizeBytes, m.cfg.MaxTorrentSizeBytes)
 	results = ScoreResults(results, query, author)
+	sortByScoreDesc(results)
+	return results
+}
+
+func sortByScoreDesc(results []models.SearchResult) {
 	for i := 0; i < len(results); i++ {
 		for j := i + 1; j < len(results); j++ {
 			if results[j].Score > results[i].Score {
@@ -231,7 +271,6 @@ func (m *Manager) processResults(results []models.SearchResult, query, author st
 			}
 		}
 	}
-	return results
 }
 
 // GetSources returns all registered sources.
@@ -280,6 +319,20 @@ func FilterResults(results []models.SearchResult, query string, foreignLangFilte
 			continue
 		}
 		if !titleRelevant(r.Title, query) {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
+}
+
+// FilterDiscoverResults applies language filtering without requiring title
+// relevance. Discover accepts broad free-form searches, including author-only
+// queries where valid release titles may not contain the query text.
+func FilterDiscoverResults(results []models.SearchResult, foreignLangFilter bool) []models.SearchResult {
+	var filtered []models.SearchResult
+	for _, r := range results {
+		if foreignLangFilter && isForeignTitle(r.Title) && !isMultilangSource(r.Source) {
 			continue
 		}
 		filtered = append(filtered, r)
