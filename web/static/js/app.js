@@ -70,8 +70,10 @@ const I18N = {
     wanted_title: 'Wanted Books',
     wanted_empty: 'No wanted books yet',
     wanted_empty_hint: 'Add books from Discover to keep track of what you want next.',
+    wanted_group_active: 'Active',
     wanted_group_wanted: 'Wanted',
     wanted_group_ignored: 'Ignored',
+    wanted_group_completed: 'Completed',
     wanted_status_wanted: 'Wanted',
     wanted_status_found: 'Found',
     wanted_status_downloaded: 'Downloaded',
@@ -3364,6 +3366,10 @@ async function loadWanted() {
     renderMetricCard(t('wanted_ignored'), counts.ignored ?? 0),
   ].join('');
 
+  if (historyEl) {
+    historyEl.innerHTML = renderWantedHistory(history.items || []);
+  }
+
   if (items.length === 0) {
     emptyEl.classList.remove('hidden');
     container.innerHTML = '';
@@ -3372,19 +3378,17 @@ async function loadWanted() {
 
   emptyEl.classList.add('hidden');
   container.innerHTML = renderWantedGroups(items);
-  if (historyEl) {
-    historyEl.innerHTML = renderWantedHistory(history.items || []);
-  }
 }
 
 function renderWantedGroups(items) {
   const groups = [
-    ['wanted', t('wanted_group_wanted')],
-    ['ignored', t('wanted_group_ignored')],
+    ['active', t('wanted_group_active'), item => ['wanted', 'searching', 'found', 'missing'].includes(item.status || 'wanted')],
+    ['ignored', t('wanted_group_ignored'), item => (item.status || 'wanted') === 'ignored'],
+    ['completed', t('wanted_group_completed'), item => ['downloaded', 'imported'].includes(item.status || '')],
   ];
   return groups
-    .map(([status, label]) => {
-      const groupItems = items.filter(item => (item.status || 'wanted') === status);
+    .map(([status, label, matcher]) => {
+      const groupItems = items.filter(item => matcher(item));
       if (groupItems.length === 0) return '';
       return `
         <section class="rounded-[1.5rem] border border-stone-800 bg-[#1b1715]/95 overflow-hidden">
@@ -3403,6 +3407,7 @@ function renderWantedGroups(items) {
 
 function renderWantedCard(item) {
   const status = item.status || 'wanted';
+  const completed = ['downloaded', 'imported'].includes(status);
   const monitoredLabel = item.monitored ? t('wanted_toggle_monitored') : t('wanted_toggle_unmonitored');
   const mediaLabel = (item.media_type || 'ebook').toUpperCase();
   const preferredFormat = String(item.preferred_format || '').trim().toUpperCase();
@@ -3427,7 +3432,6 @@ function renderWantedCard(item) {
           <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-300">${mediaLabel}</span>
           ${preferredFormat ? `<span class="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-medium text-indigo-200" title="${t('wanted_preferred_format')}">${escapeHtml(preferredFormat)}</span>` : ''}
           <span class="rounded-full ${item.monitored ? 'bg-emerald-500/10 text-emerald-200' : 'bg-stone-800 text-stone-400'} px-3 py-1 text-xs font-medium">${monitoredLabel}</span>
-          <span class="rounded-full bg-stone-800 px-3 py-1 text-xs font-medium text-stone-500">${t('wanted_status_downloaded_future')}</span>
         </div>
         <h4 class="text-lg font-semibold text-white line-clamp-2">${escapeHtml(item.title || '')}</h4>
         <p class="mt-1 text-sm text-stone-300 line-clamp-1">${escapeHtml(item.author || '')}</p>
@@ -3439,14 +3443,17 @@ function renderWantedCard(item) {
         ${lastError ? `<p class="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">${t('wanted_error')}: ${escapeHtml(lastError)}</p>` : ''}
         ${normalizeResult ? renderWantedNormalizationResult(normalizeResult) : ''}
         <div class="mt-4 flex items-center justify-between gap-2">
+          ${completed ? '<span class="text-sm text-stone-500"></span>' : `
           <label class="inline-flex items-center gap-2 text-sm text-stone-300">
             <input data-action-change="toggleWantedMonitored" data-id="${item.id}" type="checkbox" ${item.monitored ? 'checked' : ''} class="rounded border-stone-600 bg-stone-950 text-amber-500">
             <span>${t('wanted_toggle_monitored')}</span>
-          </label>
+          </label>`}
           <div class="flex items-center gap-2">
+            ${completed ? '' : `
             <button data-action="searchWantedBook" data-id="${item.id}" ${searching || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${t('wanted_search_now')}</button>
             ${showNormalize ? `<button data-action="normalizeWantedBook" data-id="${item.id}" class="rounded-xl bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-100 hover:bg-indigo-500/20">${t('wanted_normalize')}</button>` : ''}
-            ${status === 'wanted' ? `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>` : `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>`}
+            ${status === 'ignored' ? `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>` : `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>`}
+            `}
             <button data-action="removeWantedBook" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-red-500/10 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-500/20">${t('wanted_remove')}</button>
           </div>
         </div>

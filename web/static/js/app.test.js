@@ -12,8 +12,8 @@ const indexHTML = fs.readFileSync(htmlPath, 'utf8');
 const appCSS = fs.readFileSync(cssPath, 'utf8');
 
 function extractFunctionSource(name) {
-  const asyncStart = appSource.indexOf(`async function ${name}`);
-  const plainStart = appSource.indexOf(`function ${name}`);
+  const asyncStart = appSource.indexOf(`async function ${name}(`);
+  const plainStart = appSource.indexOf(`function ${name}(`);
   const start = asyncStart !== -1 ? asyncStart : plainStart;
   if (start === -1) {
     throw new Error(`function ${name} not found`);
@@ -307,7 +307,6 @@ function createContext(overrides = {}) {
     startDownloadPolling: () => {},
     loadHomeDashboard: async () => {},
     loadLibrary: async () => {},
-    loadWanted: async () => {},
     loadSettings: async () => {},
     refreshDownloads: async () => {},
     getDownloadKey: result => result.title,
@@ -1296,6 +1295,74 @@ test('wanted data loaders call list and history APIs', async () => {
   assert.deepEqual(calls, ['/api/v1/wanted', '/api/v1/wanted/history']);
 });
 
+test('loadWanted keeps found cards visible and renders history separately below cards', async () => {
+  const elements = {
+    'wanted-list': { innerHTML: '' },
+    'wanted-empty': { classList: { add: () => {}, remove: () => {} } },
+    'wanted-summary': { innerHTML: '' },
+    'wanted-history': { innerHTML: '' },
+    'wanted-search-all-btn': { disabled: false, textContent: '' },
+  };
+  const context = createContext({
+    document: {
+      getElementById: id => elements[id] || null,
+    },
+    apiJson: async url => {
+      if (url === '/api/v1/wanted') {
+        return {
+          items: [{ id: 1, title: 'Found Book', author: 'Writer', status: 'found', monitored: true, media_type: 'ebook', last_match_title: 'Found Book EPUB' }],
+          counts: { total: 1, monitored: 1, ignored: 0 },
+        };
+      }
+      if (url === '/api/v1/wanted/history') {
+        return { items: [{ id: 2, title: 'Found Book', author: 'Writer', searched_at: '2026-07-28T12:00:00Z', result_count: 1, success: true, best_match_title: 'Found Book EPUB' }] };
+      }
+      throw new Error(`unexpected ${url}`);
+    },
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+  });
+
+  await context.loadWanted();
+
+  assert.match(elements['wanted-list'].innerHTML, /Found Book/);
+  assert.match(elements['wanted-list'].innerHTML, /wanted_status_found/);
+  assert.match(elements['wanted-list'].innerHTML, /data-action="searchWantedBook"/);
+  assert.match(elements['wanted-history'].innerHTML, /wanted_history/);
+  assert.match(elements['wanted-history'].innerHTML, /Found Book EPUB/);
+});
+
+test('empty history does not hide wanted cards', async () => {
+  const elements = {
+    'wanted-list': { innerHTML: '' },
+    'wanted-empty': { classList: { add: () => {}, remove: () => {} } },
+    'wanted-summary': { innerHTML: '' },
+    'wanted-history': { innerHTML: '' },
+    'wanted-search-all-btn': { disabled: false, textContent: '' },
+  };
+  const context = createContext({
+    document: {
+      getElementById: id => elements[id] || null,
+    },
+    apiJson: async url => {
+      if (url === '/api/v1/wanted') {
+        return {
+          items: [{ id: 1, title: 'Missing Book', author: 'Writer', status: 'missing', monitored: true, media_type: 'ebook' }],
+          counts: { total: 1, monitored: 1, ignored: 0 },
+        };
+      }
+      if (url === '/api/v1/wanted/history') return { items: [] };
+      throw new Error(`unexpected ${url}`);
+    },
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+  });
+
+  await context.loadWanted();
+
+  assert.match(elements['wanted-list'].innerHTML, /Missing Book/);
+  assert.match(elements['wanted-list'].innerHTML, /wanted_status_missing/);
+  assert.match(elements['wanted-history'].innerHTML, /wanted_history_empty/);
+});
+
 test('home wanted widget is clickable and survives wanted API failure', () => {
   const context = createContext();
   const markup = context.buildHomeDashboardMarkup({
@@ -1338,17 +1405,26 @@ test('loadHomeDashboard keeps Home usable when wanted API fails', async () => {
   assert.match(container.innerHTML, /dashboard_wanted/);
 });
 
-test('wanted page groups wanted and ignored books', () => {
+test('wanted page groups active, ignored, and completed books', () => {
   const context = createContext();
   const html = context.renderWantedGroups([
     { id: 1, title: 'The Martian', author: 'Andy Weir', status: 'wanted', monitored: true, media_type: 'ebook' },
     { id: 2, title: 'Ignored Book', author: 'Writer', status: 'ignored', monitored: false, media_type: 'ebook' },
+    { id: 3, title: 'Found Book', author: 'Writer', status: 'found', monitored: true, media_type: 'ebook' },
+    { id: 4, title: 'Missing Book', author: 'Writer', status: 'missing', monitored: true, media_type: 'ebook' },
+    { id: 5, title: 'Searching Book', author: 'Writer', status: 'searching', monitored: true, media_type: 'ebook' },
+    { id: 6, title: 'Imported Book', author: 'Writer', status: 'imported', monitored: true, media_type: 'ebook' },
   ]);
 
-  assert.match(html, /wanted_group_wanted/);
+  assert.match(html, /wanted_group_active/);
   assert.match(html, /wanted_group_ignored/);
+  assert.match(html, /wanted_group_completed/);
   assert.match(html, /The Martian/);
   assert.match(html, /Ignored Book/);
+  assert.match(html, /Found Book/);
+  assert.match(html, /Missing Book/);
+  assert.match(html, /Searching Book/);
+  assert.match(html, /Imported Book/);
 });
 
 test('wanted card renders search metadata and search action', () => {
@@ -1369,7 +1445,40 @@ test('wanted card renders search metadata and search action', () => {
 
   assert.match(html, /wanted_status_found/);
   assert.match(html, /wanted_search_now/);
+  assert.match(html, /data-action-change="toggleWantedMonitored"/);
+  assert.match(html, /data-action="removeWantedBook"/);
+  assert.match(html, /data-action="ignoreWantedBook"/);
   assert.match(html, /Project Hail Mary EPUB/);
+  assert.doesNotMatch(html, /wanted_status_downloaded_future/);
+});
+
+test('wanted card remains actionable for missing and searching statuses', () => {
+  const context = createContext({
+    state: { wantedSearchPending: new Set(['10']), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+  });
+  const missingHTML = context.renderWantedCard({
+    id: 9,
+    title: 'Missing Book',
+    author: 'Writer',
+    status: 'missing',
+    monitored: true,
+    media_type: 'ebook',
+  });
+  const searchingHTML = context.renderWantedCard({
+    id: 10,
+    title: 'Searching Book',
+    author: 'Writer',
+    status: 'wanted',
+    monitored: true,
+    media_type: 'ebook',
+  });
+
+  assert.match(missingHTML, /wanted_status_missing/);
+  assert.match(missingHTML, /data-action="searchWantedBook"/);
+  assert.match(missingHTML, /data-action-change="toggleWantedMonitored"/);
+  assert.match(missingHTML, /data-action="removeWantedBook"/);
+  assert.match(searchingHTML, /wanted_status_searching/);
+  assert.match(searchingHTML, /data-action="searchWantedBook"/);
 });
 
 test('wanted card shows clean metadata with separate preferred format badge', () => {
@@ -1479,7 +1588,9 @@ test('searchAllWanted posts API and reloads wanted view', async () => {
 
   await context.searchAllWanted();
 
-  assert.equal(calls[0], 'POST:/api/v1/wanted/search');
+  assert.match(calls.join('|'), /POST:\/api\/v1\/wanted\/search/);
+  assert.ok(calls.filter(call => call === 'GET:/api/v1/wanted').length >= 2);
+  assert.ok(calls.filter(call => call === 'GET:/api/v1/wanted/history').length >= 2);
   assert.match(calls.join('|'), /success:wanted_search_success/);
 });
 
