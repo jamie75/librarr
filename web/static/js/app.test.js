@@ -77,6 +77,7 @@ const functionBundle = [
   extractFunctionSource('makePlaceholderHtml'),
   extractFunctionSource('normalizeWantedKeyPart'),
   extractFunctionSource('wantedIdentityKey'),
+  extractFunctionSource('wantedSourceKey'),
   extractFunctionSource('searchResultMediaType'),
   extractFunctionSource('wantedStateForResult'),
   extractFunctionSource('refreshWantedData'),
@@ -85,8 +86,12 @@ const functionBundle = [
   extractFunctionSource('renderLibraryBookCard'),
   extractFunctionSource('renderWantedGroups'),
   extractFunctionSource('renderWantedCard'),
+  extractFunctionSource('likelyMalformedWantedItem'),
+  extractFunctionSource('renderWantedNormalizationResult'),
   extractFunctionSource('renderWantedHistory'),
   extractFunctionSource('formatWantedTimestamp'),
+  extractFunctionSource('addWantedFromSearchResult'),
+  extractFunctionSource('normalizeWantedBook'),
   extractFunctionSource('searchWantedBook'),
   extractFunctionSource('searchAllWanted'),
   extractFunctionSource('saveWantedSettings'),
@@ -277,6 +282,10 @@ function createContext(overrides = {}) {
       libraryBooks: [],
       wantedBooks: [],
       wantedIndex: new Set(),
+      wantedSourceIndex: new Set(),
+      wantedNormalizationResults: new Map(),
+      wantedSearchPending: new Set(),
+      wantedSearchAllRunning: false,
       libraryMatchIndex: new Set(),
       searchTab: 'ebooks',
       searchResults: [],
@@ -406,6 +415,76 @@ test('discover card shows wanted badge for existing wanted result', () => {
 
   assert.doesNotMatch(html, /data-action="addWantedFromSearch"/);
   assert.match(html, /wanted_added/);
+});
+
+test('discover card shows wanted badge for normalized release source match', () => {
+  const releaseTitle = 'Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]';
+  const context = createContext({
+    state: {
+      wantedIndex: new Set(),
+      wantedSourceIndex: new Set([contextWantedSourceKey('release-guid', releaseTitle)]),
+      libraryMatchIndex: new Set(),
+      pendingDownloads: new Set(),
+      trackedDownloadJobs: new Map(),
+      downloadOutcomes: new Map(),
+      searchTab: 'ebooks',
+    },
+  });
+
+  const html = context.renderBookCard({ title: releaseTitle, guid: 'release-guid', source: 'prowlarr' }, 0);
+
+  assert.doesNotMatch(html, /data-action="addWantedFromSearch"/);
+  assert.match(html, /wanted_added/);
+});
+
+function contextWantedSourceKey(sourceID, releaseTitle) {
+  return [
+    String(sourceID || '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(),
+    String(releaseTitle || '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(),
+  ].join('|');
+}
+
+test('Add to Wanted sends release context for backend normalization', async () => {
+  const calls = [];
+  const releaseTitle = 'Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]';
+  const context = createContext({
+    state: {
+      renderedResults: [{
+        title: releaseTitle,
+        source: 'torrent',
+        indexer: 'Books',
+        format: 'mobi',
+        guid: 'release-guid',
+        media_type: 'ebook',
+      }],
+      wantedBooks: [],
+      wantedIndex: new Set(),
+      wantedSourceIndex: new Set(),
+      searchResults: [],
+      currentTab: 'search',
+      searchTab: 'ebooks',
+    },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+      if (url === '/api/v1/wanted' && options.method === 'POST') {
+        return { item: { id: 9, title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles', author: 'Tom Bower' } };
+      }
+      throw new Error(`unexpected ${url}`);
+    },
+    showToast: (message, kind) => calls.push({ url: `${kind}:${message}` }),
+  });
+  context.refreshWantedData = async () => ({});
+  context.renderSearchResults = () => calls.push({ url: 'renderSearchResults' });
+  context.loadHomeDashboard = async () => {};
+
+  await context.addWantedFromSearchResult(0);
+
+  const createCall = calls.find(call => call.method === 'POST');
+  assert.equal(createCall.url, '/api/v1/wanted');
+  assert.equal(createCall.body.origin_release_title, releaseTitle);
+  assert.equal(createCall.body.preferred_format, 'mobi');
+  assert.equal(createCall.body.origin_indexer, 'Books');
+  assert.equal(createCall.body.source_id, 'release-guid');
 });
 
 test('discover card shows in-library badge when result already exists in library', () => {
@@ -1291,6 +1370,93 @@ test('wanted card renders search metadata and search action', () => {
   assert.match(html, /wanted_status_found/);
   assert.match(html, /wanted_search_now/);
   assert.match(html, /Project Hail Mary EPUB/);
+});
+
+test('wanted card shows clean metadata with separate preferred format badge', () => {
+  const context = createContext({
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+  });
+  const html = context.renderWantedCard({
+    id: 12,
+    title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles',
+    author: 'Tom Bower',
+    origin_release_title: 'Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]',
+    preferred_format: 'mobi',
+    status: 'wanted',
+    monitored: true,
+    media_type: 'ebook',
+  });
+
+  assert.match(html, /Rebel Prince: The Power/);
+  assert.match(html, /Tom Bower/);
+  assert.match(html, /MOBI/);
+  assert.doesNotMatch(html, /\[ENG \/ MOBI\]/);
+});
+
+test('malformed wanted card shows normalize action and renders result', () => {
+  const result = {
+    normalization: {
+      changed_fields: ['title', 'author'],
+      normalized: { title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles', author: 'Tom Bower' },
+    },
+  };
+  const context = createContext({
+    state: {
+      wantedSearchPending: new Set(),
+      wantedSearchAllRunning: false,
+      wantedNormalizationResults: new Map([['13', result]]),
+    },
+  });
+  const html = context.renderWantedCard({
+    id: 13,
+    title: 'Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]',
+    author: '',
+    source: 'torrent',
+    origin_source: 'prowlarr',
+    origin_release_title: 'Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]',
+    status: 'wanted',
+    monitored: true,
+    media_type: 'ebook',
+  });
+
+  assert.match(html, /data-action="normalizeWantedBook"/);
+  assert.match(html, /wanted_normalization_result/);
+  assert.match(html, /Rebel Prince: The Power/);
+});
+
+test('normalizeWantedBook posts repair endpoint and refreshes card', async () => {
+  const calls = [];
+  const context = createContext({
+    state: {
+      searchResults: [],
+      currentTab: 'wanted',
+      wantedNormalizationResults: new Map(),
+    },
+    apiJson: async (url, options = {}) => {
+      calls.push(`${options.method || 'GET'}:${url}`);
+      if (url === '/api/v1/wanted/13/normalize') {
+        return {
+          success: true,
+          normalization: {
+            applied: true,
+            changed_fields: ['title', 'author'],
+            normalized: { title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles', author: 'Tom Bower' },
+          },
+        };
+      }
+      return { items: [], counts: {} };
+    },
+    showToast: (message, kind) => calls.push(`${kind}:${message}`),
+  });
+  context.loadWanted = async () => calls.push('loadWanted');
+  context.loadHomeDashboard = async () => calls.push('loadHomeDashboard');
+
+  await context.normalizeWantedBook(13);
+
+  assert.equal(calls[0], 'POST:/api/v1/wanted/13/normalize');
+  assert.equal(context.state.wantedNormalizationResults.get('13').applied, true);
+  assert.match(calls.join('|'), /loadWanted/);
+  assert.match(calls.join('|'), /success:wanted_normalize_success/);
 });
 
 test('searchAllWanted posts API and reloads wanted view', async () => {

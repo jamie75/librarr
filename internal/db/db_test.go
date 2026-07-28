@@ -234,6 +234,60 @@ func TestSchemaFoundation_MigrationVersionsRecordedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestWantedReleaseContextMigrationPreservesExistingRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "wanted-old.db")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at DATETIME NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range versionedMigrations {
+		if migration.version >= 7 {
+			continue
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, datetime('now'))`, migration.version, migration.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLibrarr2WantedBooks(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLibrarr2WantedMonitoring(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO wanted_books (title, author, media_type, monitored, status) VALUES ('Existing Wanted', '', 'ebook', 1, 'wanted')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if !columnExists(t, d, "wanted_books", "origin_release_title") || !columnExists(t, d, "wanted_books", "preferred_format") {
+		t.Fatalf("release context columns were not added")
+	}
+	items, err := d.ListWantedBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Title != "Existing Wanted" {
+		t.Fatalf("items after migration = %+v", items)
+	}
+}
+
 func TestSchemaFoundation_FailedMigrationIsNotRecorded(t *testing.T) {
 	d := newTestDB(t)
 	err := d.applySchemaMigration(schemaMigration{

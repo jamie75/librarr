@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/library"
 	"github.com/jamie75/librarr/internal/models"
+	wantedmeta "github.com/jamie75/librarr/internal/wanted"
 )
 
 type wantedListResponse struct {
@@ -22,19 +24,27 @@ type wantedHistoryResponse struct {
 }
 
 type wantedCreateRequest struct {
-	Title       string `json:"title"`
-	Author      string `json:"author"`
-	ISBN        string `json:"isbn"`
-	ASIN        string `json:"asin"`
-	Series      string `json:"series"`
-	Publisher   string `json:"publisher"`
-	Language    string `json:"language"`
-	CoverURL    string `json:"cover_url"`
-	Description string `json:"description"`
-	Source      string `json:"source"`
-	MediaType   string `json:"media_type"`
-	Monitored   *bool  `json:"monitored"`
-	Status      string `json:"status"`
+	Title              string `json:"title"`
+	Author             string `json:"author"`
+	ISBN               string `json:"isbn"`
+	ASIN               string `json:"asin"`
+	Series             string `json:"series"`
+	Publisher          string `json:"publisher"`
+	Language           string `json:"language"`
+	CoverURL           string `json:"cover_url"`
+	Description        string `json:"description"`
+	Source             string `json:"source"`
+	MediaType          string `json:"media_type"`
+	Format             string `json:"format"`
+	PreferredFormat    string `json:"preferred_format"`
+	OriginSource       string `json:"origin_source"`
+	OriginReleaseTitle string `json:"origin_release_title"`
+	OriginIndexer      string `json:"origin_indexer"`
+	Indexer            string `json:"indexer"`
+	SourceID           string `json:"source_id"`
+	GUID               string `json:"guid"`
+	Monitored          *bool  `json:"monitored"`
+	Status             string `json:"status"`
 }
 
 type wantedPatchRequest struct {
@@ -93,21 +103,43 @@ func (s *Server) handleV1WantedCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.db.CreateWantedBook(models.WantedBook{
-		Title:       req.Title,
-		Author:      req.Author,
-		ISBN:        req.ISBN,
-		ASIN:        req.ASIN,
-		Series:      req.Series,
-		Publisher:   req.Publisher,
-		Language:    req.Language,
-		CoverURL:    req.CoverURL,
-		Description: req.Description,
-		Source:      req.Source,
-		MediaType:   req.MediaType,
-		Monitored:   monitored,
-		Status:      status,
-	})
+	book := models.WantedBook{
+		Title:              req.Title,
+		Author:             req.Author,
+		ISBN:               req.ISBN,
+		ASIN:               req.ASIN,
+		Series:             req.Series,
+		Publisher:          req.Publisher,
+		Language:           req.Language,
+		CoverURL:           req.CoverURL,
+		Description:        req.Description,
+		Source:             req.Source,
+		MediaType:          req.MediaType,
+		PreferredFormat:    wantedFirstNonBlank(req.PreferredFormat, req.Format),
+		OriginSource:       wantedFirstNonBlank(req.OriginSource, req.Source),
+		OriginReleaseTitle: req.OriginReleaseTitle,
+		OriginIndexer:      wantedFirstNonBlank(req.OriginIndexer, req.Indexer),
+		SourceID:           wantedFirstNonBlank(req.SourceID, req.GUID),
+		Monitored:          monitored,
+		Status:             status,
+	}
+	if strings.TrimSpace(book.OriginReleaseTitle) == "" && looksWantedReleaseSource(book.Source, book.OriginSource) {
+		book.OriginReleaseTitle = book.Title
+	}
+	normalization := wantedmeta.NormalizeBook(book)
+	if strings.TrimSpace(normalization.Normalized.Title) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Title is required"})
+		return
+	}
+	if conflicts, err := s.wantedCanonicalConflict(0, normalization.Normalized); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to validate wanted book"})
+		return
+	} else if conflicts {
+		writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Wanted book already exists"})
+		return
+	}
+
+	item, err := s.db.CreateWantedBook(normalization.Normalized)
 	if err != nil {
 		if errors.Is(err, db.ErrWantedBookExists) {
 			writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Wanted book already exists"})
@@ -168,6 +200,111 @@ func (s *Server) handleV1WantedPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "item": item})
+}
+
+func (s *Server) handleV1WantedNormalize(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
+		return
+	}
+	current, err := s.db.GetWantedBook(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted book not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted book"})
+		return
+	}
+	if !wantedmeta.LooksMalformed(*current) {
+		result := wantedmeta.NormalizeBook(*current)
+		result.Warnings = append(result.Warnings, "metadata is ambiguous; no changes were applied")
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"success": false, "normalization": result, "error": "Wanted metadata is ambiguous"})
+		return
+	}
+	result := wantedmeta.NormalizeBook(*current)
+	if len(result.ChangedFields) == 0 {
+		result.Applied = false
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "normalization": result, "item": current})
+		return
+	}
+	if conflicts, err := s.wantedCanonicalConflict(id, result.Normalized); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to validate wanted metadata", "normalization": result})
+		return
+	} else if conflicts {
+		writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Normalized wanted book already exists", "normalization": result})
+		return
+	}
+	updated, err := s.db.UpdateWantedBookMetadata(id, result.Normalized)
+	if err != nil {
+		if errors.Is(err, db.ErrWantedBookExists) {
+			writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Normalized wanted book already exists", "normalization": result})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to normalize wanted metadata"})
+		return
+	}
+	result.Normalized = *updated
+	result.Applied = true
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "normalization": result, "item": updated})
+}
+
+func looksWantedReleaseSource(values ...string) bool {
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if strings.Contains(value, "torrent") || strings.Contains(value, "prowlarr") || strings.Contains(value, "release") {
+			return true
+		}
+	}
+	return false
+}
+
+func wantedFirstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *Server) wantedCanonicalConflict(ignoreID int64, candidate models.WantedBook) (bool, error) {
+	items, err := s.db.ListWantedBooks()
+	if err != nil {
+		return false, err
+	}
+	candidateISBN := strings.ToLower(strings.TrimSpace(candidate.ISBN))
+	candidateASIN := strings.ToLower(strings.TrimSpace(candidate.ASIN))
+	candidateTitle := library.TitleMatchKey(candidate.Title)
+	candidateAuthor := library.ContributorMatchKey(candidate.Author)
+	candidateMedia := strings.ToLower(strings.TrimSpace(candidate.MediaType))
+	if candidateMedia == "" {
+		candidateMedia = "ebook"
+	}
+	for _, item := range items {
+		if item.ID == ignoreID {
+			continue
+		}
+		itemMedia := strings.ToLower(strings.TrimSpace(item.MediaType))
+		if itemMedia == "" {
+			itemMedia = "ebook"
+		}
+		if itemMedia != candidateMedia {
+			continue
+		}
+		if candidateISBN != "" && strings.EqualFold(strings.TrimSpace(item.ISBN), candidateISBN) {
+			return true, nil
+		}
+		if candidateASIN != "" && strings.EqualFold(strings.TrimSpace(item.ASIN), candidateASIN) {
+			return true, nil
+		}
+		if candidateTitle != "" && candidateTitle == library.TitleMatchKey(item.Title) &&
+			candidateAuthor != "" && candidateAuthor == library.ContributorMatchKey(item.Author) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func isValidWantedStatus(status string) bool {

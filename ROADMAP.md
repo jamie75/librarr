@@ -31,6 +31,7 @@ The current codebase already provides a useful foundation, including:
 - scan review with filters, search, duplicate details, and manual review
 - explicit import from scan review results
 - metadata editor with live import-location preview
+- Wanted Books with canonical release normalization and local-only monitor searches
 - staged connection diagnostics for Prowlarr and qBittorrent
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
@@ -137,6 +138,17 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Keep secrets, headers, cookies, and sensitive URLs out of logs and responses.
 - [x] Present diagnostics in Settings with clear success/failure rows.
 - [ ] Extend diagnostics to Audiobookshelf, Kavita, Komga, SABnzbd, and Transmission.
+
+### 2.0.9 Wanted Books monitor
+
+- [x] Add local Wanted records with monitored/unmonitored state.
+- [x] Add manual and scheduled Prowlarr searches for monitored Wanted books.
+- [x] Store search history, result counts, best match, and errors.
+- [x] Store canonical Wanted title/author/language/media type separately from
+  release context such as raw torrent title, indexer, source, and preferred
+  format.
+- [x] Add explicit per-card normalization for malformed early dogfood Wanted rows.
+- [ ] Download or import matched Wanted releases.
 
 ### 2.0 exit criteria
 

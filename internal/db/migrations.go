@@ -20,6 +20,7 @@ var versionedMigrations = []schemaMigration{
 	{version: 4, name: "librarr_2_metadata_provenance", run: migrateLibrarr2MetadataProvenance},
 	{version: 5, name: "librarr_2_wanted_books", run: migrateLibrarr2WantedBooks},
 	{version: 6, name: "librarr_2_wanted_monitoring", run: migrateLibrarr2WantedMonitoring},
+	{version: 7, name: "librarr_2_wanted_release_context", run: migrateLibrarr2WantedReleaseContext},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -413,6 +414,32 @@ func migrateLibrarr2WantedMonitoring(tx *sql.Tx) error {
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateLibrarr2WantedReleaseContext(tx *sql.Tx) error {
+	columns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "preferred_format", definition: `ALTER TABLE wanted_books ADD COLUMN preferred_format TEXT NOT NULL DEFAULT ''`},
+		{name: "origin_source", definition: `ALTER TABLE wanted_books ADD COLUMN origin_source TEXT NOT NULL DEFAULT ''`},
+		{name: "origin_release_title", definition: `ALTER TABLE wanted_books ADD COLUMN origin_release_title TEXT NOT NULL DEFAULT ''`},
+		{name: "origin_indexer", definition: `ALTER TABLE wanted_books ADD COLUMN origin_indexer TEXT NOT NULL DEFAULT ''`},
+		{name: "source_id", definition: `ALTER TABLE wanted_books ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := columnExistsInTx(tx, "wanted_books", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := tx.Exec(column.definition); err != nil {
 			return err
 		}
 	}

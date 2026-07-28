@@ -415,6 +415,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("POST /api/v1/wanted", requireAdmin(s.handleV1WantedCreate))
 	s.mux.HandleFunc("POST /api/v1/wanted/search", requireAdmin(s.handleV1WantedSearchAll))
 	s.mux.HandleFunc("POST /api/v1/wanted/{id}/search", requireAdmin(s.handleV1WantedSearchOne))
+	s.mux.HandleFunc("POST /api/v1/wanted/{id}/normalize", requireAdmin(s.handleV1WantedNormalize))
 	s.mux.HandleFunc("PATCH /api/v1/wanted/{id}", requireAdmin(s.handleV1WantedPatch))
 	s.mux.HandleFunc("DELETE /api/v1/wanted/{id}", requireAdmin(s.handleV1WantedDelete))
 

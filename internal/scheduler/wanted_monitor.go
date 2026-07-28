@@ -13,6 +13,7 @@ import (
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/models"
 	"github.com/jamie75/librarr/internal/search"
+	wantedmeta "github.com/jamie75/librarr/internal/wanted"
 )
 
 type WantedMonitor struct {
@@ -238,16 +239,16 @@ func wantedSearchQueries(item models.WantedBook) []string {
 	if isbn := normalizeSearchIdentifier(item.ISBN); isbn != "" {
 		queries = append(queries, isbn)
 	}
-	if asin := normalizeSearchIdentifier(item.ASIN); asin != "" {
-		queries = append(queries, asin)
-	}
-	title := strings.TrimSpace(item.Title)
-	author := strings.TrimSpace(item.Author)
+	title := wantedmeta.CleanSearchPhrase(item.Title)
+	author := wantedmeta.CleanSearchPhrase(item.Author)
 	if title != "" && author != "" {
 		queries = append(queries, title+" "+author)
 	}
 	if title != "" {
 		queries = append(queries, title)
+	}
+	if asin := normalizeSearchIdentifier(item.ASIN); asin != "" {
+		queries = append(queries, asin)
 	}
 	return uniqueSearchQueries(queries)
 }

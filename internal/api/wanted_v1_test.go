@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/jamie75/librarr/internal/config"
@@ -124,6 +125,155 @@ func TestWantedDuplicateRejected(t *testing.T) {
 	s.handleV1WantedCreate(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("duplicate status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWantedCreateNormalizesProwlarrReleaseContext(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	raw := "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]"
+	body := bytes.NewBufferString(`{
+		"title":"` + raw + `",
+		"source":"torrent",
+		"origin_source":"prowlarr",
+		"origin_release_title":"` + raw + `",
+		"indexer":"Books",
+		"media_type":"ebook"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", body)
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		Item models.WantedBook `json:"item"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Item.Title != "Rebel Prince: The Power, Passion and Defiance of Prince Charles" {
+		t.Fatalf("title = %q", created.Item.Title)
+	}
+	if created.Item.Author != "Tom Bower" || created.Item.Language != "en" || created.Item.PreferredFormat != "mobi" {
+		t.Fatalf("normalized item = %+v", created.Item)
+	}
+	if created.Item.OriginReleaseTitle != raw || created.Item.OriginIndexer != "Books" {
+		t.Fatalf("release context = %+v", created.Item)
+	}
+}
+
+func TestWantedDuplicateRejectedAfterCanonicalNormalization(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	raw := "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{"title":"`+raw+`","source":"torrent","origin_source":"prowlarr","origin_release_title":"`+raw+`","media_type":"ebook"}`))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{"title":"Rebel Prince: The Power, Passion and Defiance of Prince Charles","author":"Tom Bower","media_type":"ebook"}`))
+	rr = httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("duplicate status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWantedDuplicateRejectedAcrossTitlePunctuation(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{"title":"Men in Black: How the Supreme Court is Destroying America","author":"Mark R Levin","media_type":"ebook"}`))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{"title":"Men in Black- How the Supreme Court is Destroying America","author":"Mark R. Levin","media_type":"ebook"}`))
+	rr = httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("punctuation duplicate status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWantedNormalizeRepairsMalformedExistingRow(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	raw := "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]"
+	book, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:              raw,
+		Source:             "torrent",
+		OriginSource:       "prowlarr",
+		OriginReleaseTitle: raw,
+		MediaType:          "ebook",
+		Monitored:          true,
+		Status:             "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/normalize", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedNormalize(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("normalize status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response struct {
+		Success       bool `json:"success"`
+		Normalization struct {
+			Applied       bool     `json:"applied"`
+			ChangedFields []string `json:"changed_fields"`
+			Confidence    string   `json:"confidence"`
+		} `json:"normalization"`
+		Item models.WantedBook `json:"item"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Success || !response.Normalization.Applied {
+		t.Fatalf("response = %+v", response)
+	}
+	if response.Item.Title != "Rebel Prince: The Power, Passion and Defiance of Prince Charles" || response.Item.Author != "Tom Bower" {
+		t.Fatalf("item = %+v", response.Item)
+	}
+}
+
+func TestWantedNormalizeAmbiguousRowIsNotRewritten(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	book, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:     "A Plain Wanted Row",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/normalize", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedNormalize(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("normalize status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	refetched, err := s.db.GetWantedBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refetched.Title != "A Plain Wanted Row" || refetched.Author != "" {
+		t.Fatalf("row was rewritten: %+v", refetched)
 	}
 }
 

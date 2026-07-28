@@ -562,6 +562,134 @@
           }
         }
       },
+      "WantedBook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "isbn": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "preferred_format": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "origin_source": {
+            "type": "string"
+          },
+          "origin_release_title": {
+            "type": "string"
+          },
+          "origin_indexer": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "monitored": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "WantedCreateRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "isbn": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "preferred_format": {
+            "type": "string"
+          },
+          "origin_source": {
+            "type": "string"
+          },
+          "origin_release_title": {
+            "type": "string"
+          },
+          "origin_indexer": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "monitored": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "WantedListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WantedBook"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "WantedNormalizationResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/WantedBook"
+          },
+          "normalization": {
+            "type": "object"
+          }
+        }
+      },
       "WantedSearchHistory": {
         "type": "object",
         "properties": {
@@ -649,7 +777,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/WantedListResponse"
                 }
               }
             }
@@ -1111,7 +1239,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/WantedCreateRequest"
                 }
               }
             }
@@ -2454,6 +2582,54 @@
           },
           "404": {
             "description": "Cover not found"
+          }
+        }
+      }
+    },
+    "/api/v1/wanted/{id}/normalize": {
+      "post": {
+        "summary": "Normalize malformed wanted release metadata",
+        "description": "Repairs one release-based Wanted row by moving parseable release title data into canonical title, author, language, and preferred format fields while preserving the original release title as context. Ambiguous rows are not changed automatically.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Normalization result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedNormalizationResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Normalized identity already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Wanted metadata is ambiguous",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

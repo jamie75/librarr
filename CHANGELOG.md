@@ -21,6 +21,8 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Admin book details actions for removing catalog records or deleting managed
   files with explicit confirmation.
 - Embedded EPUB cover extraction with local cover caching.
+- Wanted Books with canonical book metadata, local-only Prowlarr monitor searches,
+  search history, and explicit normalization for malformed release-based rows.
 - Expanded local user management.
 - Rich staged diagnostics for Prowlarr and qBittorrent.
 - Remote qBittorrent torrent upload and remote-to-local path mapping fixes.
@@ -43,6 +45,9 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Settings now includes an admin-only nested ebook path repair with dry-run
   preview, collision/missing/unsafe statuses, safe moves, catalog path updates,
   and empty-directory cleanup.
+- Wanted rows created from release results now preserve raw release titles as
+  origin context instead of storing them as canonical book titles. Automatic
+  downloading remains unimplemented.
 
 ### Known limitations
 

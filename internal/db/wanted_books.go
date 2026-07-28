@@ -24,6 +24,11 @@ func normalizeWantedBook(in models.WantedBook) models.WantedBook {
 	in.Description = strings.TrimSpace(in.Description)
 	in.Source = strings.TrimSpace(in.Source)
 	in.MediaType = strings.TrimSpace(strings.ToLower(in.MediaType))
+	in.PreferredFormat = strings.TrimSpace(strings.ToLower(in.PreferredFormat))
+	in.OriginSource = strings.TrimSpace(in.OriginSource)
+	in.OriginReleaseTitle = strings.TrimSpace(in.OriginReleaseTitle)
+	in.OriginIndexer = strings.TrimSpace(in.OriginIndexer)
+	in.SourceID = strings.TrimSpace(in.SourceID)
 	in.Status = strings.TrimSpace(strings.ToLower(in.Status))
 	if in.MediaType == "" {
 		in.MediaType = "ebook"
@@ -55,9 +60,9 @@ func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error
 	}
 
 	result, err := d.db.Exec(`INSERT INTO wanted_books (
-		title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		book.Title, book.Author, book.ISBN, book.ASIN, book.Series, book.Publisher, book.Language, book.CoverURL, book.Description, book.Source, book.MediaType, wantedBoolToInt(book.Monitored), book.Status,
+		title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		book.Title, book.Author, book.ISBN, book.ASIN, book.Series, book.Publisher, book.Language, book.CoverURL, book.Description, book.Source, book.MediaType, book.PreferredFormat, book.OriginSource, book.OriginReleaseTitle, book.OriginIndexer, book.SourceID, wantedBoolToInt(book.Monitored), book.Status,
 	)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -73,13 +78,13 @@ func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error
 }
 
 func (d *DB) GetWantedBook(id int64) (*models.WantedBook, error) {
-	row := d.db.QueryRow(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	row := d.db.QueryRow(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
 		FROM wanted_books WHERE id = ?`, id)
 	return scanWantedBook(row)
 }
 
 func (d *DB) ListWantedBooks() ([]models.WantedBook, error) {
-	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
 		FROM wanted_books ORDER BY monitored DESC, COALESCE(last_search, added_at) DESC, id DESC`)
 	if err != nil {
 		return nil, err
@@ -98,7 +103,7 @@ func (d *DB) ListWantedBooks() ([]models.WantedBook, error) {
 }
 
 func (d *DB) ListMonitoredWantedBooks() ([]models.WantedBook, error) {
-	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
 		FROM wanted_books
 		WHERE monitored = 1 AND status != 'ignored'
 		ORDER BY COALESCE(last_search, added_at) ASC, id ASC`)
@@ -116,6 +121,32 @@ func (d *DB) ListMonitoredWantedBooks() ([]models.WantedBook, error) {
 		items = append(items, *item)
 	}
 	return items, rows.Err()
+}
+
+func (d *DB) UpdateWantedBookMetadata(id int64, book models.WantedBook) (*models.WantedBook, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	book = normalizeWantedBook(book)
+	if book.Title == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+	_, err := d.db.Exec(`UPDATE wanted_books
+		SET title = ?, author = ?, isbn = ?, asin = ?, series = ?, publisher = ?, language = ?,
+		    cover_url = ?, description = ?, source = ?, media_type = ?, preferred_format = ?,
+		    origin_source = ?, origin_release_title = ?, origin_indexer = ?, source_id = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		book.Title, book.Author, book.ISBN, book.ASIN, book.Series, book.Publisher, book.Language,
+		book.CoverURL, book.Description, book.Source, book.MediaType, book.PreferredFormat,
+		book.OriginSource, book.OriginReleaseTitle, book.OriginIndexer, book.SourceID, id,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return nil, ErrWantedBookExists
+		}
+		return nil, err
+	}
+	return d.GetWantedBook(id)
 }
 
 func (d *DB) UpdateWantedBook(id int64, monitored *bool, status *string) (*models.WantedBook, error) {
@@ -276,6 +307,11 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 		&item.Description,
 		&item.Source,
 		&item.MediaType,
+		&item.PreferredFormat,
+		&item.OriginSource,
+		&item.OriginReleaseTitle,
+		&item.OriginIndexer,
+		&item.SourceID,
 		&monitored,
 		&item.Status,
 		&lastSearch,

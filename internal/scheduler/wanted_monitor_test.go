@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,79 @@ func TestWantedMonitorSearchOneUpdatesWantedBookAndHistory(t *testing.T) {
 	}
 	if !history[0].Success || history[0].BestMatchTitle == "" {
 		t.Fatalf("history entry = %+v", history[0])
+	}
+}
+
+func TestWantedSearchQueriesUseCanonicalMetadata(t *testing.T) {
+	item := models.WantedBook{
+		Title:              "Rebel Prince: The Power, Passion and Defiance of Prince Charles",
+		Author:             "Tom Bower",
+		ISBN:               "9780000000000",
+		ASIN:               "B000TEST",
+		OriginReleaseTitle: "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]",
+	}
+	queries := wantedSearchQueries(item)
+	want := []string{
+		"9780000000000",
+		"Rebel Prince The Power Passion and Defiance of Prince Charles Tom Bower",
+		"Rebel Prince The Power Passion and Defiance of Prince Charles",
+		"B000TEST",
+	}
+	if strings.Join(queries, "|") != strings.Join(want, "|") {
+		t.Fatalf("queries = %#v, want %#v", queries, want)
+	}
+	for _, query := range queries {
+		if strings.Contains(query, "[ENG / MOBI]") || strings.Contains(query, " by Tom Bower ") {
+			t.Fatalf("query used raw release title: %q", query)
+		}
+	}
+}
+
+func TestWantedMonitorStillFindsOriginalReleaseResult(t *testing.T) {
+	database := newWantedMonitorDB(t)
+	defer database.Close()
+
+	book, err := database.CreateWantedBook(models.WantedBook{
+		Title:              "Rebel Prince: The Power, Passion and Defiance of Prince Charles",
+		Author:             "Tom Bower",
+		MediaType:          "ebook",
+		PreferredFormat:    "mobi",
+		OriginReleaseTitle: "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]",
+		Monitored:          true,
+		Status:             "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("query"))
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"title":       "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]",
+			"downloadUrl": "http://example.test/download",
+			"protocol":    "torrent",
+			"seeders":     7,
+			"infoHash":    "rebel-prince",
+		}})
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		ProwlarrURL:          server.URL,
+		ProwlarrAPIKey:       "prowlarr-key",
+		WantedMaxResultsKeep: 10,
+	}
+	monitor := NewWantedMonitor(cfg, database, nil, server.Client())
+	updated, err := monitor.SearchOne(context.Background(), book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "found" || updated.LastResultCount != 1 {
+		t.Fatalf("updated = %+v", updated)
+	}
+	if len(queries) == 0 || strings.Contains(queries[0], "[ENG / MOBI]") {
+		t.Fatalf("queries = %#v", queries)
 	}
 }
 

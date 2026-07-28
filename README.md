@@ -51,6 +51,7 @@ Librarr 2.0 currently has:
 - logical book cards that group available formats such as EPUB and MOBI
 - safe library removal with separate catalog-only and delete-files actions
 - embedded EPUB cover extraction with local cover caching
+- Wanted Books with monitored local-only Prowlarr searches and search history
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
 - normalized `/api/v1` read endpoints
@@ -367,6 +368,21 @@ Check API key
 Each step reports status, elapsed time where useful, detail text, and an
 actionable suggestion. Future diagnostics should extend the same engine to
 Audiobookshelf, Kavita, Komga, SABnzbd, and Transmission.
+
+## Wanted Books
+
+Wanted Books are stored as canonical book metadata: title, author, identifiers,
+language, media type, monitored state, and status. When a Wanted item starts
+from a Prowlarr/torrent release, Librarr preserves the raw release title,
+indexer, source, and preferred format separately as origin context instead of
+using the release name as the book title.
+
+The Wanted monitor can search Prowlarr using clean title/author or identifier
+queries and record search history. It does not download, send releases to
+qBittorrent, or import files yet.
+
+Early dogfood rows created from raw release names can be repaired explicitly
+from the Wanted card with **Normalize Metadata**.
 
 ## Architecture Overview
 
