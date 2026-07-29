@@ -167,6 +167,113 @@ func TestWantedCreateNormalizesProwlarrReleaseContext(t *testing.T) {
 	}
 }
 
+func TestWantedCreateFromProwlarrReleaseSeedsOriginRelease(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	raw := "American Marxism by Mark R Levin [ENG / EPUB PDF]"
+	body := bytes.NewBufferString(`{
+		"title":"` + raw + `",
+		"source":"prowlarr",
+		"origin_source":"prowlarr",
+		"origin_release_title":"` + raw + `",
+		"origin_indexer":"MyAnonamouse",
+		"indexer":"MyAnonamouse",
+		"media_type":"ebook",
+		"download_protocol":"torrent",
+		"download_url":"https://prowlarr.example/download/123?apikey=secret",
+		"guid":"mam-guid",
+		"source_id":"mam-guid",
+		"format":"epub",
+		"language":"en",
+		"size":123456,
+		"size_human":"120 KB",
+		"seeders":32,
+		"leechers":1,
+		"grabs":4,
+		"publish_date":"2026-01-02T00:00:00Z",
+		"categories":["7000","7020"],
+		"score":97
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", body)
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		Item models.WantedBook `json:"item"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Item.Title != "American Marxism" || created.Item.Author != "Mark R. Levin" {
+		t.Fatalf("canonical item = %+v", created.Item)
+	}
+	if created.Item.Status != "found" || created.Item.LastResultCount != 1 || created.Item.LastMatchTitle != raw || created.Item.LastSearch != nil {
+		t.Fatalf("origin found status = %+v", created.Item)
+	}
+	if created.Item.Language != "en" || created.Item.PreferredFormat != "epub" || created.Item.OriginReleaseTitle != raw || created.Item.OriginIndexer != "MyAnonamouse" || created.Item.SourceID != "mam-guid" {
+		t.Fatalf("origin context = %+v", created.Item)
+	}
+
+	releases, err := s.db.ListWantedReleases(created.Item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("release count = %d, want 1", len(releases))
+	}
+	if releases[0].Title != raw || releases[0].Indexer != "MyAnonamouse" || releases[0].DownloadURL == "" || releases[0].Seeders != 32 || releases[0].Format != "epub" {
+		t.Fatalf("seeded release = %+v", releases[0])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/wanted/1/releases", nil)
+	req.SetPathValue("id", strconv.FormatInt(created.Item.ID, 10))
+	rr = httptest.NewRecorder()
+	s.handleV1WantedReleases(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("releases status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var releaseResponse wantedReleasesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &releaseResponse); err != nil {
+		t.Fatal(err)
+	}
+	if releaseResponse.Total != 1 || !releaseResponse.Items[0].DownloadAvailable || releaseResponse.Items[0].DownloadURL != "" {
+		t.Fatalf("release response = %+v", releaseResponse)
+	}
+}
+
+func TestWantedCreateUncertainReleaseParsingDoesNotInventAuthor(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{
+		"title":"Unparseable Release Name [ENG / EPUB]",
+		"source":"prowlarr",
+		"origin_source":"prowlarr",
+		"origin_release_title":"Unparseable Release Name [ENG / EPUB]",
+		"media_type":"ebook"
+	}`))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		Item models.WantedBook `json:"item"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Item.Author != "" {
+		t.Fatalf("invented author for uncertain release: %+v", created.Item)
+	}
+	if created.Item.Title != "Unparseable Release Name" {
+		t.Fatalf("title cleanup = %q", created.Item.Title)
+	}
+}
+
 func TestWantedDuplicateRejectedAfterCanonicalNormalization(t *testing.T) {
 	s, cleanup := newWantedAPIServer(t)
 	defer cleanup()
@@ -203,80 +310,6 @@ func TestWantedDuplicateRejectedAcrossTitlePunctuation(t *testing.T) {
 	s.handleV1WantedCreate(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("punctuation duplicate status = %d body=%s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestWantedNormalizeRepairsMalformedExistingRow(t *testing.T) {
-	s, cleanup := newWantedAPIServer(t)
-	defer cleanup()
-
-	raw := "Rebel Prince, the Power, Passion and Defiance of Prince Charles by Tom Bower [ENG / MOBI]"
-	book, err := s.db.CreateWantedBook(models.WantedBook{
-		Title:              raw,
-		Source:             "torrent",
-		OriginSource:       "prowlarr",
-		OriginReleaseTitle: raw,
-		MediaType:          "ebook",
-		Monitored:          true,
-		Status:             "wanted",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/normalize", nil)
-	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
-	rr := httptest.NewRecorder()
-	s.handleV1WantedNormalize(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("normalize status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	var response struct {
-		Success       bool `json:"success"`
-		Normalization struct {
-			Applied       bool     `json:"applied"`
-			ChangedFields []string `json:"changed_fields"`
-			Confidence    string   `json:"confidence"`
-		} `json:"normalization"`
-		Item models.WantedBook `json:"item"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.Success || !response.Normalization.Applied {
-		t.Fatalf("response = %+v", response)
-	}
-	if response.Item.Title != "Rebel Prince: The Power, Passion and Defiance of Prince Charles" || response.Item.Author != "Tom Bower" {
-		t.Fatalf("item = %+v", response.Item)
-	}
-}
-
-func TestWantedNormalizeAmbiguousRowIsNotRewritten(t *testing.T) {
-	s, cleanup := newWantedAPIServer(t)
-	defer cleanup()
-
-	book, err := s.db.CreateWantedBook(models.WantedBook{
-		Title:     "A Plain Wanted Row",
-		MediaType: "ebook",
-		Monitored: true,
-		Status:    "wanted",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/normalize", nil)
-	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
-	rr := httptest.NewRecorder()
-	s.handleV1WantedNormalize(rr, req)
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("normalize status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	refetched, err := s.db.GetWantedBook(book.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if refetched.Title != "A Plain Wanted Row" || refetched.Author != "" {
-		t.Fatalf("row was rewritten: %+v", refetched)
 	}
 }
 
@@ -502,6 +535,56 @@ func TestWantedReleaseDownloadSubmitsStoredRelease(t *testing.T) {
 	}
 	if updated.Status != "downloading" || updated.SelectedReleaseID != release.ID || updated.SelectedReleaseTitle != release.Title || updated.DownloadClient != "qbittorrent" || updated.DownloadHash != "abc" {
 		t.Fatalf("updated item = %+v", updated)
+	}
+}
+
+func TestWantedReleaseDownloadWorksWithSeededDiscoverRelease(t *testing.T) {
+	client := &recordingTorrentClient{}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+
+	raw := "American Marxism by Mark R Levin [ENG / EPUB PDF]"
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/wanted", bytes.NewBufferString(`{
+		"title":"`+raw+`",
+		"source":"prowlarr",
+		"origin_source":"prowlarr",
+		"origin_release_title":"`+raw+`",
+		"origin_indexer":"MyAnonamouse",
+		"media_type":"ebook",
+		"download_url":"magnet:?xt=urn:btih:abc",
+		"download_protocol":"torrent",
+		"format":"epub",
+		"language":"en"
+	}`))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedCreate(rr, create)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		Item models.WantedBook `json:"item"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := s.db.ListWantedReleases(created.Item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("seeded releases = %+v", releases)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/1/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(created.Item.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(releases[0].ID, 10))
+	rr = httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if client.url != "magnet:?xt=urn:btih:abc" {
+		t.Fatalf("torrent URL = %q", client.url)
 	}
 }
 

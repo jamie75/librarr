@@ -147,7 +147,7 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Store canonical Wanted title/author/language/media type separately from
   release context such as raw torrent title, indexer, source, and preferred
   format.
-- [x] Add explicit per-card normalization for malformed early dogfood Wanted rows.
+- [x] Seed Discover-origin Prowlarr releases as immediately viewable Wanted releases.
 - [x] Add manual selected-release handoff to the existing torrent client path.
 - [ ] Add automatic grabbing, completion-state propagation, and import-state linkage.
 

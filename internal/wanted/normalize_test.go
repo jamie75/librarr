@@ -100,7 +100,7 @@ func TestNormalizeBookTitleByAuthorPattern(t *testing.T) {
 	if result.Normalized.Title != "Men in Black: How the Supreme Court is Destroying America" {
 		t.Fatalf("title = %q", result.Normalized.Title)
 	}
-	if result.Normalized.Author != "Mark R Levin" {
+	if result.Normalized.Author != "Mark R. Levin" {
 		t.Fatalf("author = %q", result.Normalized.Author)
 	}
 }

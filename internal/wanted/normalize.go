@@ -33,7 +33,7 @@ type parsedRelease struct {
 }
 
 var (
-	bracketTokenRe     = regexp.MustCompile(`(?i)\s*[\[\(]\s*([a-z]{2,3}(?:g|lish)?|epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3)(?:\s*/\s*([a-z]{2,3}(?:g|lish)?|epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3))*\s*[\]\)]\s*`)
+	bracketTokenRe     = regexp.MustCompile(`(?i)\s*[\[\(]\s*(?:eng|english|en|epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3)(?:\s*(?:/|\s)\s*(?:eng|english|en|epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3))*\s*[\]\)]\s*`)
 	formatTokenRe      = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3)(?:$|[^a-z0-9])`)
 	languageTokenRe    = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(eng|english|en)(?:$|[^a-z0-9])`)
 	fileExtensionRe    = regexp.MustCompile(`(?i)\.(epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3)$`)
@@ -98,20 +98,6 @@ func NormalizeBook(book models.WantedBook) NormalizationResult {
 		Confidence:    confidence,
 		Warnings:      uniqueStrings(warnings),
 	}
-}
-
-func LooksMalformed(book models.WantedBook) bool {
-	if strings.TrimSpace(book.Author) != "" {
-		return false
-	}
-	if strings.TrimSpace(book.OriginReleaseTitle) != "" {
-		return true
-	}
-	source := strings.ToLower(strings.TrimSpace(book.Source + " " + book.OriginSource))
-	if strings.Contains(source, "torrent") || strings.Contains(source, "prowlarr") || strings.Contains(source, "release") {
-		return looksLikeReleaseTitle(book.Title)
-	}
-	return looksLikeReleaseTitle(book.Title)
 }
 
 func CleanSearchPhrase(value string) string {
@@ -264,7 +250,16 @@ func upperFirst(value string) string {
 }
 
 func normalizePersonName(value string) string {
-	return strings.Join(strings.Fields(strings.Trim(value, " .,")), " ")
+	parts := strings.Fields(strings.Trim(value, " .,"))
+	for i, part := range parts {
+		trimmed := strings.Trim(part, " .,")
+		if len([]rune(trimmed)) == 1 && i > 0 && i < len(parts)-1 {
+			parts[i] = trimmed + "."
+		} else {
+			parts[i] = trimmed
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func trimBook(in models.WantedBook) models.WantedBook {

@@ -87,8 +87,6 @@ const functionBundle = [
   extractFunctionSource('renderLibraryBookCard'),
   extractFunctionSource('renderWantedGroups'),
   extractFunctionSource('renderWantedCard'),
-  extractFunctionSource('likelyMalformedWantedItem'),
-  extractFunctionSource('renderWantedNormalizationResult'),
   extractFunctionSource('renderWantedHistory'),
   extractFunctionSource('formatWantedTimestamp'),
   extractFunctionSource('doJsonSearch'),
@@ -106,7 +104,6 @@ const functionBundle = [
   extractFunctionSource('setWantedReleaseFilter'),
   extractFunctionSource('downloadWantedRelease'),
   extractFunctionSource('addWantedFromSearchResult'),
-  extractFunctionSource('normalizeWantedBook'),
   extractFunctionSource('searchWantedBook'),
   extractFunctionSource('searchAllWanted'),
   extractFunctionSource('saveWantedSettings'),
@@ -298,7 +295,6 @@ function createContext(overrides = {}) {
       wantedBooks: [],
       wantedIndex: new Set(),
       wantedSourceIndex: new Set(),
-      wantedNormalizationResults: new Map(),
       wantedSearchPending: new Set(),
       wantedSearchAllRunning: false,
       wantedReleaseDownloads: new Set(),
@@ -478,7 +474,19 @@ test('Add to Wanted sends release context for backend normalization', async () =
         source: 'torrent',
         indexer: 'Books',
         format: 'mobi',
+        language: 'en',
         guid: 'release-guid',
+        download_url: 'https://prowlarr.example/api/v1/search?apikey=secret',
+        magnet_url: 'magnet:?xt=urn:btih:abc',
+        download_protocol: 'torrent',
+        size: 1024,
+        size_human: '1 KB',
+        seeders: 32,
+        leechers: 1,
+        grabs: 5,
+        publish_date: '2026-01-02T00:00:00Z',
+        categories: ['7000', '7020'],
+        score: 97,
         media_type: 'ebook',
       }],
       wantedBooks: [],
@@ -509,6 +517,10 @@ test('Add to Wanted sends release context for backend normalization', async () =
   assert.equal(createCall.body.preferred_format, 'mobi');
   assert.equal(createCall.body.origin_indexer, 'Books');
   assert.equal(createCall.body.source_id, 'release-guid');
+  assert.equal(createCall.body.download_url, 'https://prowlarr.example/api/v1/search?apikey=secret');
+  assert.equal(createCall.body.download_protocol, 'torrent');
+  assert.equal(createCall.body.seeders, 32);
+  assert.deepEqual(createCall.body.categories, ['7000', '7020']);
 });
 
 test('discover card shows in-library badge when result already exists in library', () => {
@@ -1453,7 +1465,7 @@ test('loadWanted keeps found cards visible and renders history separately below 
       }
       throw new Error(`unexpected ${url}`);
     },
-    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false },
   });
 
   await context.loadWanted();
@@ -1487,7 +1499,7 @@ test('empty history does not hide wanted cards', async () => {
       if (url === '/api/v1/wanted/history') return { items: [] };
       throw new Error(`unexpected ${url}`);
     },
-    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false },
   });
 
   await context.loadWanted();
@@ -1589,7 +1601,7 @@ test('wanted card renders search metadata and search action', () => {
 
 test('wanted card remains actionable for missing and searching statuses', () => {
   const context = createContext({
-    state: { wantedSearchPending: new Set(['10']), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+    state: { wantedSearchPending: new Set(['10']), wantedSearchAllRunning: false },
   });
   const missingHTML = context.renderWantedCard({
     id: 9,
@@ -1825,7 +1837,7 @@ test('downloadWantedRelease keeps viewer open on API failure', async () => {
 
 test('wanted card shows clean metadata with separate preferred format badge', () => {
   const context = createContext({
-    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false, wantedNormalizationResults: new Map() },
+    state: { wantedSearchPending: new Set(), wantedSearchAllRunning: false },
   });
   const html = context.renderWantedCard({
     id: 12,
@@ -1844,18 +1856,11 @@ test('wanted card shows clean metadata with separate preferred format badge', ()
   assert.doesNotMatch(html, /\[ENG \/ MOBI\]/);
 });
 
-test('malformed wanted card shows normalize action and renders result', () => {
-  const result = {
-    normalization: {
-      changed_fields: ['title', 'author'],
-      normalized: { title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles', author: 'Tom Bower' },
-    },
-  };
+test('malformed wanted card no longer exposes temporary normalize action', () => {
   const context = createContext({
     state: {
       wantedSearchPending: new Set(),
       wantedSearchAllRunning: false,
-      wantedNormalizationResults: new Map([['13', result]]),
     },
   });
   const html = context.renderWantedCard({
@@ -1870,44 +1875,8 @@ test('malformed wanted card shows normalize action and renders result', () => {
     media_type: 'ebook',
   });
 
-  assert.match(html, /data-action="normalizeWantedBook"/);
-  assert.match(html, /wanted_normalization_result/);
-  assert.match(html, /Rebel Prince: The Power/);
-});
-
-test('normalizeWantedBook posts repair endpoint and refreshes card', async () => {
-  const calls = [];
-  const context = createContext({
-    state: {
-      searchResults: [],
-      currentTab: 'wanted',
-      wantedNormalizationResults: new Map(),
-    },
-    apiJson: async (url, options = {}) => {
-      calls.push(`${options.method || 'GET'}:${url}`);
-      if (url === '/api/v1/wanted/13/normalize') {
-        return {
-          success: true,
-          normalization: {
-            applied: true,
-            changed_fields: ['title', 'author'],
-            normalized: { title: 'Rebel Prince: The Power, Passion and Defiance of Prince Charles', author: 'Tom Bower' },
-          },
-        };
-      }
-      return { items: [], counts: {} };
-    },
-    showToast: (message, kind) => calls.push(`${kind}:${message}`),
-  });
-  context.loadWanted = async () => calls.push('loadWanted');
-  context.loadHomeDashboard = async () => calls.push('loadHomeDashboard');
-
-  await context.normalizeWantedBook(13);
-
-  assert.equal(calls[0], 'POST:/api/v1/wanted/13/normalize');
-  assert.equal(context.state.wantedNormalizationResults.get('13').applied, true);
-  assert.match(calls.join('|'), /loadWanted/);
-  assert.match(calls.join('|'), /success:wanted_normalize_success/);
+  assert.doesNotMatch(html, /data-action="normalizeWantedBook"/);
+  assert.doesNotMatch(html, /wanted_normalization_result/);
 });
 
 test('searchAllWanted posts API and reloads wanted view', async () => {

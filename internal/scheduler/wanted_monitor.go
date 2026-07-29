@@ -144,8 +144,14 @@ func (m *WantedMonitor) searchOne(ctx context.Context, item models.WantedBook) (
 	queries := wantedSearchQueries(item)
 	results, queryUsed, err := m.runSearchQueries(ctx, item, queries)
 	if err != nil {
-		searchUpdate.Status = "wanted"
+		searchUpdate.Status = strings.TrimSpace(strings.ToLower(item.Status))
+		if searchUpdate.Status == "" || searchUpdate.Status == "searching" {
+			searchUpdate.Status = "wanted"
+		}
+		searchUpdate.LastResultCount = item.LastResultCount
 		searchUpdate.LastError = sanitizeWantedError(err)
+		searchUpdate.BestMatchScore = item.BestMatchScore
+		searchUpdate.LastMatchTitle = item.LastMatchTitle
 		searchUpdate.Query = queryUsed
 		updated, updateErr := m.db.UpdateWantedSearch(item.ID, searchUpdate)
 		if updateErr != nil {
@@ -159,23 +165,34 @@ func (m *WantedMonitor) searchOne(ctx context.Context, item models.WantedBook) (
 	status := "missing"
 	lastMatchTitle := ""
 	bestScore := 0.0
+	resultCount := len(results)
 	if len(results) > 0 {
 		status = "found"
 		lastMatchTitle = results[0].Title
 		bestScore = results[0].Score
+	} else if item.LastResultCount > 0 || item.LastMatchTitle != "" {
+		status = strings.TrimSpace(strings.ToLower(item.Status))
+		if status == "" || status == "searching" || status == "wanted" {
+			status = "found"
+		}
+		resultCount = item.LastResultCount
+		lastMatchTitle = item.LastMatchTitle
+		bestScore = item.BestMatchScore
 	}
 	searchUpdate = db.WantedSearchUpdate{
 		Status:          status,
 		LastSearch:      now,
-		LastResultCount: len(results),
+		LastResultCount: resultCount,
 		LastSuccess:     true,
 		LastError:       "",
 		BestMatchScore:  bestScore,
 		LastMatchTitle:  lastMatchTitle,
 		Query:           queryUsed,
 	}
-	if err := m.db.ReplaceWantedReleases(item.ID, wantedReleasesFromResults(item.ID, results, queryUsed, now)); err != nil {
-		return nil, err
+	if len(results) > 0 {
+		if err := m.db.ReplaceWantedReleases(item.ID, wantedReleasesFromResults(item.ID, results, queryUsed, now)); err != nil {
+			return nil, err
+		}
 	}
 	updated, err := m.db.UpdateWantedSearch(item.ID, searchUpdate)
 	if err != nil {

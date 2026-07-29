@@ -157,6 +157,67 @@ func TestWantedMonitorReplacesStoredReleasesOnMultipleSearches(t *testing.T) {
 	}
 }
 
+func TestWantedMonitorFailedSearchKeepsStoredOriginRelease(t *testing.T) {
+	database := newWantedMonitorDB(t)
+	defer database.Close()
+
+	book, err := database.CreateWantedBook(models.WantedBook{
+		Title:           "American Marxism",
+		Author:          "Mark R. Levin",
+		MediaType:       "ebook",
+		PreferredFormat: "epub",
+		Monitored:       true,
+		Status:          "found",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ReplaceWantedReleases(book.ID, []models.WantedRelease{{
+		Title:       "American Marxism by Mark R Levin [ENG / EPUB PDF]",
+		Indexer:     "MyAnonamouse",
+		Protocol:    "torrent",
+		Format:      "epub",
+		Language:    "en",
+		DownloadURL: "https://prowlarr.example/download/123",
+		Score:       100,
+		SearchTime:  time.Now().UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.MarkWantedOriginFound(book.ID, "American Marxism by Mark R Levin [ENG / EPUB PDF]", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "prowlarr down", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		ProwlarrURL:          server.URL,
+		ProwlarrAPIKey:       "prowlarr-key",
+		WantedMaxResultsKeep: 10,
+	}
+	monitor := NewWantedMonitor(cfg, database, nil, server.Client())
+	if _, err := monitor.SearchOne(context.Background(), book.ID); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := database.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 || releases[0].Title != "American Marxism by Mark R Levin [ENG / EPUB PDF]" || releases[0].DownloadURL == "" {
+		t.Fatalf("origin release was not preserved after failed search: %+v", releases)
+	}
+	updated, err := database.GetWantedBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "found" || updated.LastResultCount != 1 || updated.LastMatchTitle == "" {
+		t.Fatalf("origin found state was not preserved after empty/failed search: %+v", updated)
+	}
+}
+
 func TestWantedSearchQueriesUseCanonicalMetadata(t *testing.T) {
 	item := models.WantedBook{
 		Title:              "Rebel Prince: The Power, Passion and Defiance of Prince Charles",

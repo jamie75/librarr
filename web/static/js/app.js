@@ -115,10 +115,6 @@ const I18N = {
     wanted_search_success: 'Wanted search complete',
     wanted_search_failed: 'Wanted search failed',
     wanted_search_running: 'Wanted search already running',
-    wanted_normalize: 'Normalize Metadata',
-    wanted_normalize_success: 'Wanted metadata normalized',
-    wanted_normalize_failed: 'Could not normalize wanted metadata',
-    wanted_normalization_result: 'Metadata normalization',
     wanted_preferred_format: 'Preferred format',
     wanted_settings_saved: 'Wanted monitor settings saved',
     wanted_added_success: 'Added to Wanted',
@@ -663,7 +659,6 @@ const state = {
   wantedIndex: new Set(),
   wantedSourceIndex: new Set(),
   wantedHistory: [],
-  wantedNormalizationResults: new Map(),
   wantedSearchPending: new Set(),
   wantedSearchAllRunning: false,
   wantedReleaseDownloads: new Set(),
@@ -3466,8 +3461,6 @@ function renderWantedCard(item) {
   const mediaLabel = (item.media_type || 'ebook').toUpperCase();
   const preferredFormat = String(item.preferred_format || '').trim().toUpperCase();
   const searching = !!state.wantedSearchPending?.has?.(String(item.id));
-  const normalizeResult = state.wantedNormalizationResults?.get?.(String(item.id));
-  const showNormalize = likelyMalformedWantedItem(item);
   const coverHtml = item.cover_url
     ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="h-48 w-full object-cover" loading="lazy">`
     : makePlaceholderHtml(item.title || '?', item.id || 0);
@@ -3500,7 +3493,6 @@ function renderWantedCard(item) {
           ${downloading ? `<div class="flex items-center justify-between gap-3"><dt>${t('wanted_download_started')}</dt><dd class="text-stone-200">${escapeHtml(downloadStarted)}</dd></div>` : ''}
         </dl>
         ${lastError ? `<p class="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">${t('wanted_error')}: ${escapeHtml(lastError)}</p>` : ''}
-        ${normalizeResult ? renderWantedNormalizationResult(normalizeResult) : ''}
         <div class="mt-4 flex items-center justify-between gap-2">
           ${completed ? '<span class="text-sm text-stone-500"></span>' : `
           <label class="inline-flex items-center gap-2 text-sm text-stone-300">
@@ -3511,7 +3503,6 @@ function renderWantedCard(item) {
             ${completed ? '' : `
             <button data-action="searchWantedBook" data-id="${item.id}" ${searching || downloading || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${searching ? '<span class="inline-block animate-spin">⟳</span> ' : ''}${searchButtonLabel}</button>
             ${resultCount > 0 ? `<button data-action="openWantedReleases" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_view_releases')}</button>` : ''}
-            ${showNormalize ? `<button data-action="normalizeWantedBook" data-id="${item.id}" class="rounded-xl bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-100 hover:bg-indigo-500/20">${t('wanted_normalize')}</button>` : ''}
             ${status === 'ignored' ? `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>` : `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>`}
             `}
             <button data-action="removeWantedBook" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-red-500/10 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-500/20">${t('wanted_remove')}</button>
@@ -3768,27 +3759,6 @@ async function downloadWantedRelease(releaseId, details = {}) {
   }
 }
 
-function likelyMalformedWantedItem(item) {
-  if (!item || String(item.author || '').trim()) return false;
-  const title = String(item.title || '');
-  const origin = String(item.origin_release_title || '');
-  const haystack = `${title} ${origin}`.toLowerCase();
-  return /\b(epub|mobi|azw3|pdf|cbz|cbr|m4b|mp3|eng|en)\b/.test(haystack) || haystack.includes(' by ');
-}
-
-function renderWantedNormalizationResult(result) {
-  const normalization = result.normalization || result;
-  const fields = normalization.changed_fields || [];
-  const normalized = normalization.normalized || {};
-  return `
-    <div class="mt-3 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
-      <p class="font-medium">${t('wanted_normalization_result')}</p>
-      <p class="mt-1">${escapeHtml(normalized.title || '')}${normalized.author ? ` · ${escapeHtml(normalized.author)}` : ''}</p>
-      <p class="mt-1 text-indigo-200/80">${escapeHtml(fields.length ? fields.join(', ') : 'No fields changed')}</p>
-    </div>
-  `;
-}
-
 function renderWantedHistory(items) {
   if (!items.length) {
     return `
@@ -3851,9 +3821,22 @@ async function addWantedFromSearchResult(index) {
         origin_source: result.source || '',
         origin_release_title: result.title || '',
         origin_indexer: result.indexer || '',
-        source_id: result.source_id || result.guid || result.info_hash || result.download_url || result.magnet_url || '',
+        source_id: result.source_id || result.guid || result.info_hash || '',
         indexer: result.indexer || '',
         guid: result.guid || '',
+        download_url: result.download_url || '',
+        magnet_url: result.magnet_url || '',
+        url: result.url || '',
+        info_hash: result.info_hash || '',
+        download_protocol: result.download_protocol || result.source || '',
+        size: result.size || 0,
+        size_human: result.size_human || '',
+        seeders: result.seeders || 0,
+        leechers: result.leechers || 0,
+        grabs: result.grabs || 0,
+        publish_date: result.publish_date || '',
+        categories: result.categories || [],
+        score: result.score || 100,
         monitored: true,
         status: 'wanted',
       }),
@@ -3868,22 +3851,6 @@ async function addWantedFromSearchResult(index) {
   } catch (err) {
     if (err.message === 'Unauthorized') return;
     showToast(err.message.includes('409') ? t('wanted_duplicate') : t('wanted_add_failed'), 'error');
-  }
-}
-
-async function normalizeWantedBook(id) {
-  try {
-    const response = await apiJson(`/api/v1/wanted/${id}/normalize`, { method: 'POST' });
-    state.wantedNormalizationResults.set(String(id), response.normalization || response);
-    await loadWanted();
-    if (state.searchResults.length > 0) {
-      await refreshDiscoverIndexes();
-      renderSearchResults();
-    }
-    await loadHomeDashboard();
-    showToast(t('wanted_normalize_success'), 'success');
-  } catch (err) {
-    if (err.message !== 'Unauthorized') showToast(err.message || t('wanted_normalize_failed'), 'error');
   }
 }
 
@@ -6304,7 +6271,6 @@ const CLICK_ACTIONS = {
     size: el.dataset.size,
     seeders: el.dataset.seeders,
   }),
-  normalizeWantedBook: el => normalizeWantedBook(+el.dataset.id),
   searchAllWanted: () => searchAllWanted(),
   ignoreWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'ignored' }),
   markWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'wanted' }),

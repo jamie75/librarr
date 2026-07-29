@@ -47,27 +47,40 @@ type wantedReleaseDownloadResponse struct {
 }
 
 type wantedCreateRequest struct {
-	Title              string `json:"title"`
-	Author             string `json:"author"`
-	ISBN               string `json:"isbn"`
-	ASIN               string `json:"asin"`
-	Series             string `json:"series"`
-	Publisher          string `json:"publisher"`
-	Language           string `json:"language"`
-	CoverURL           string `json:"cover_url"`
-	Description        string `json:"description"`
-	Source             string `json:"source"`
-	MediaType          string `json:"media_type"`
-	Format             string `json:"format"`
-	PreferredFormat    string `json:"preferred_format"`
-	OriginSource       string `json:"origin_source"`
-	OriginReleaseTitle string `json:"origin_release_title"`
-	OriginIndexer      string `json:"origin_indexer"`
-	Indexer            string `json:"indexer"`
-	SourceID           string `json:"source_id"`
-	GUID               string `json:"guid"`
-	Monitored          *bool  `json:"monitored"`
-	Status             string `json:"status"`
+	Title              string   `json:"title"`
+	Author             string   `json:"author"`
+	ISBN               string   `json:"isbn"`
+	ASIN               string   `json:"asin"`
+	Series             string   `json:"series"`
+	Publisher          string   `json:"publisher"`
+	Language           string   `json:"language"`
+	CoverURL           string   `json:"cover_url"`
+	Description        string   `json:"description"`
+	Source             string   `json:"source"`
+	MediaType          string   `json:"media_type"`
+	Format             string   `json:"format"`
+	PreferredFormat    string   `json:"preferred_format"`
+	OriginSource       string   `json:"origin_source"`
+	OriginReleaseTitle string   `json:"origin_release_title"`
+	OriginIndexer      string   `json:"origin_indexer"`
+	Indexer            string   `json:"indexer"`
+	SourceID           string   `json:"source_id"`
+	GUID               string   `json:"guid"`
+	DownloadURL        string   `json:"download_url"`
+	MagnetURL          string   `json:"magnet_url"`
+	URL                string   `json:"url"`
+	InfoHash           string   `json:"info_hash"`
+	DownloadProtocol   string   `json:"download_protocol"`
+	Size               int64    `json:"size"`
+	SizeHuman          string   `json:"size_human"`
+	Seeders            int      `json:"seeders"`
+	Leechers           int      `json:"leechers"`
+	Grabs              int      `json:"grabs"`
+	PublishDate        string   `json:"publish_date"`
+	Categories         []string `json:"categories"`
+	Score              float64  `json:"score"`
+	Monitored          *bool    `json:"monitored"`
+	Status             string   `json:"status"`
 }
 
 type wantedPatchRequest struct {
@@ -172,8 +185,68 @@ func (s *Server) handleV1WantedCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to create wanted book"})
 		return
 	}
+	item, err = s.seedWantedOriginRelease(item, req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to store origin release"})
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "item": item})
+}
+
+func (s *Server) seedWantedOriginRelease(item *models.WantedBook, req wantedCreateRequest) (*models.WantedBook, error) {
+	if item == nil {
+		return item, nil
+	}
+	release := wantedReleaseFromCreateRequest(item.ID, req)
+	if strings.TrimSpace(release.Title) == "" || !wantedReleaseDownloadAvailable(release) {
+		return item, nil
+	}
+	if release.Score <= 0 {
+		release.Score = 100
+	}
+	if release.SearchTime.IsZero() {
+		release.SearchTime = time.Now().UTC()
+	}
+	if err := s.db.ReplaceWantedReleases(item.ID, []models.WantedRelease{release}); err != nil {
+		return nil, err
+	}
+	return s.db.MarkWantedOriginFound(item.ID, release.Title, release.Score)
+}
+
+func wantedReleaseFromCreateRequest(wantedBookID int64, req wantedCreateRequest) models.WantedRelease {
+	protocol := strings.TrimSpace(strings.ToLower(req.DownloadProtocol))
+	if protocol == "" {
+		protocol = strings.TrimSpace(strings.ToLower(req.Source))
+	}
+	if protocol == "prowlarr" {
+		protocol = "torrent"
+	}
+	if protocol == "" {
+		protocol = "torrent"
+	}
+	format := strings.TrimSpace(strings.ToLower(wantedFirstNonBlank(req.PreferredFormat, req.Format)))
+	language := strings.TrimSpace(strings.ToLower(req.Language))
+	return models.WantedRelease{
+		WantedBookID: wantedBookID,
+		Title:        wantedFirstNonBlank(req.OriginReleaseTitle, req.Title),
+		GUID:         wantedFirstNonBlank(req.GUID, req.InfoHash, req.SourceID),
+		Indexer:      wantedFirstNonBlank(req.OriginIndexer, req.Indexer),
+		Protocol:     protocol,
+		PublishDate:  strings.TrimSpace(req.PublishDate),
+		Size:         req.Size,
+		SizeHuman:    strings.TrimSpace(req.SizeHuman),
+		Seeders:      req.Seeders,
+		Leechers:     req.Leechers,
+		Grabs:        req.Grabs,
+		Language:     language,
+		Format:       format,
+		DownloadURL:  wantedFirstNonBlank(req.DownloadURL, req.MagnetURL, req.URL),
+		Categories:   append([]string(nil), req.Categories...),
+		Score:        req.Score,
+		SearchQuery:  strings.TrimSpace(req.Title),
+		SearchTime:   time.Now().UTC(),
+	}
 }
 
 func (s *Server) handleV1WantedDelete(w http.ResponseWriter, r *http.Request) {
@@ -224,54 +297,6 @@ func (s *Server) handleV1WantedPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "item": item})
-}
-
-func (s *Server) handleV1WantedNormalize(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
-		return
-	}
-	current, err := s.db.GetWantedBook(id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted book not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted book"})
-		return
-	}
-	if !wantedmeta.LooksMalformed(*current) {
-		result := wantedmeta.NormalizeBook(*current)
-		result.Warnings = append(result.Warnings, "metadata is ambiguous; no changes were applied")
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"success": false, "normalization": result, "error": "Wanted metadata is ambiguous"})
-		return
-	}
-	result := wantedmeta.NormalizeBook(*current)
-	if len(result.ChangedFields) == 0 {
-		result.Applied = false
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "normalization": result, "item": current})
-		return
-	}
-	if conflicts, err := s.wantedCanonicalConflict(id, result.Normalized); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to validate wanted metadata", "normalization": result})
-		return
-	} else if conflicts {
-		writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Normalized wanted book already exists", "normalization": result})
-		return
-	}
-	updated, err := s.db.UpdateWantedBookMetadata(id, result.Normalized)
-	if err != nil {
-		if errors.Is(err, db.ErrWantedBookExists) {
-			writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Normalized wanted book already exists", "normalization": result})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to normalize wanted metadata"})
-		return
-	}
-	result.Normalized = *updated
-	result.Applied = true
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "normalization": result, "item": updated})
 }
 
 func looksWantedReleaseSource(values ...string) bool {

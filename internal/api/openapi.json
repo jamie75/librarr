@@ -673,6 +673,49 @@
           "source_id": {
             "type": "string"
           },
+          "download_url": {
+            "type": "string",
+            "description": "Origin release acquisition URL used only to seed a server-side wanted_search_releases snapshot. This is not exposed by the read-only release API."
+          },
+          "magnet_url": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "info_hash": {
+            "type": "string"
+          },
+          "download_protocol": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "size_human": {
+            "type": "string"
+          },
+          "seeders": {
+            "type": "integer"
+          },
+          "leechers": {
+            "type": "integer"
+          },
+          "grabs": {
+            "type": "integer"
+          },
+          "publish_date": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "score": {
+            "type": "number"
+          },
           "monitored": {
             "type": "boolean"
           },
@@ -695,20 +738,6 @@
             "additionalProperties": {
               "type": "integer"
             }
-          }
-        }
-      },
-      "WantedNormalizationResponse": {
-        "type": "object",
-        "properties": {
-          "success": {
-            "type": "boolean"
-          },
-          "item": {
-            "$ref": "#/components/schemas/WantedBook"
-          },
-          "normalization": {
-            "type": "object"
           }
         }
       },
@@ -2751,54 +2780,6 @@
           },
           "404": {
             "description": "Cover not found"
-          }
-        }
-      }
-    },
-    "/api/v1/wanted/{id}/normalize": {
-      "post": {
-        "summary": "Normalize malformed wanted release metadata",
-        "description": "Repairs one release-based Wanted row by moving parseable release title data into canonical title, author, language, and preferred format fields while preserving the original release title as context. Ambiguous rows are not changed automatically.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Normalization result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WantedNormalizationResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Normalized identity already exists",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Wanted metadata is ambiguous",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
           }
         }
       }

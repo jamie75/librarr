@@ -224,6 +224,29 @@ func (d *DB) UpdateWantedSearch(id int64, update WantedSearchUpdate) (*models.Wa
 	return d.GetWantedBook(id)
 }
 
+func (d *DB) MarkWantedOriginFound(id int64, matchTitle string, score float64) (*models.WantedBook, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`UPDATE wanted_books
+		SET status = 'found',
+		    last_result_count = 1,
+		    last_success = 1,
+		    last_error = '',
+		    best_match_score = ?,
+		    last_match_title = ?,
+		    updated_at = datetime('now')
+		WHERE id = ?`,
+		score,
+		strings.TrimSpace(matchTitle),
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return d.GetWantedBook(id)
+}
+
 func (d *DB) MarkWantedDownloading(id, releaseID int64, releaseTitle, client, downloadHash string, startedAt time.Time) (*models.WantedBook, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

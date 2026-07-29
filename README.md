@@ -379,18 +379,20 @@ using the release name as the book title.
 
 The Wanted monitor can search Prowlarr using clean title/author or identifier
 queries, record search history, and persist the latest matched releases for
-inspection. A user can manually choose one stored torrent/magnet release and
-send it through Librarr's existing torrent client handoff. The browser sends
-only the Wanted id and release id; Prowlarr download URLs stay server-side and
-reuse the same qBittorrent authentication, save path, category, and safe
-`.torrent` upload behavior as Discover downloads.
+inspection. Adding a Prowlarr result from Discover also seeds that exact origin
+release immediately, so **View Releases** and manual download are available
+without another search. A user can manually choose one stored torrent/magnet
+release and send it through Librarr's existing torrent client handoff. The
+browser sends only the Wanted id and release id; Prowlarr download URLs stay
+server-side and reuse the same qBittorrent authentication, save path, category,
+and safe `.torrent` upload behavior as Discover downloads.
 
 Manual Wanted downloads move the item to `downloading` after qBittorrent accepts
 the handoff. Automatic grabbing, quality profiles, and automatic Wanted
 `downloaded`/`imported` state propagation are intentionally still future work.
 
-Early dogfood rows created from raw release names can be repaired explicitly
-from the Wanted card with **Normalize Metadata**.
+Early dogfood rows created before create-time normalization should be removed
+and re-added after deployment rather than repaired in place.
 
 ## Architecture Overview
 
