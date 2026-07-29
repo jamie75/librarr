@@ -982,6 +982,24 @@
                         },
                         "returned_results": {
                           "type": "integer"
+                        },
+                        "upstream_by_source": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "filtered_by_source": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "returned_by_source": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
                         }
                       }
                     }

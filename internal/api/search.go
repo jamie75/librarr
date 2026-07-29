@@ -45,6 +45,9 @@ func (s *Server) handleSearchTab(w http.ResponseWriter, r *http.Request, tab, ac
 		"upstream_results", diagnostics.UpstreamResults,
 		"filtered_results", diagnostics.FilteredResults,
 		"returned_results", diagnostics.ReturnedResults,
+		"upstream_by_source", diagnostics.UpstreamBySource,
+		"filtered_by_source", diagnostics.FilteredBySource,
+		"returned_by_source", diagnostics.ReturnedBySource,
 	)
 
 	resp := map[string]interface{}{
@@ -157,6 +160,9 @@ func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, t
 		"upstream_results", diagnostics.UpstreamResults,
 		"filtered_results", diagnostics.FilteredResults,
 		"returned_results", diagnostics.ReturnedResults,
+		"upstream_by_source", diagnostics.UpstreamBySource,
+		"filtered_by_source", diagnostics.FilteredBySource,
+		"returned_by_source", diagnostics.ReturnedBySource,
 	)
 	emit("complete", map[string]interface{}{
 		"results":     finalResults,

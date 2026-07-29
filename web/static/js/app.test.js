@@ -554,6 +554,34 @@ test('Discover JSON search passes multiple author-query results to the UI', asyn
   assert.deepEqual(context.state.searchDiagnostics, diagnostics);
 });
 
+test('Discover renders mixed source cards with Prowlarr indexer labels and Add to Wanted', () => {
+  const context = createContext({
+    state: {
+      wantedIndex: new Set(),
+      libraryMatchIndex: new Set(),
+      pendingDownloads: new Set(),
+      trackedDownloadJobs: new Map(),
+      downloadOutcomes: new Map(),
+      searchTab: 'ebooks',
+    },
+    SOURCE_COLORS: {
+      torrent: { bg: '#2563eb', text: 'white', label: 'Prowlarr' },
+      annas: { bg: '#7c3aed', text: 'white', label: "Anna's Archive" },
+      gutenberg: { bg: '#059669', text: 'white', label: 'Gutenberg' },
+    },
+  });
+
+  const prowlarr = context.renderBookCard({ source: 'torrent', indexer: 'MyAnonamouse', title: 'Sweet Revenge', author: 'Tom Bower', format: 'epub', seeders: 10 }, 0);
+  const annas = context.renderBookCard({ source: 'annas', title: 'Rebel Prince', author: 'Tom Bower', format: 'epub' }, 1);
+  const gutenberg = context.renderBookCard({ source: 'gutenberg', title: 'The Phantom Herd', author: 'B. M. Bower', format: 'epub' }, 2);
+
+  assert.match(prowlarr, /Prowlarr/);
+  assert.match(prowlarr, /MyAnonamouse/);
+  assert.match(prowlarr, /wanted_add/);
+  assert.match(annas, /Anna&#39;s Archive|Anna's Archive/);
+  assert.match(gutenberg, /Gutenberg/);
+});
+
 test('Discover empty state uses normal copy when upstream returned no results', () => {
   const title = { textContent: '' };
   const hint = { textContent: '' };

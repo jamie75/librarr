@@ -89,7 +89,7 @@ func TestSearchStreamEmitsSourceUpdates(t *testing.T) {
 }
 
 func TestProcessDiscoverResultsAllowsAuthorOnlyQuery(t *testing.T) {
-	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+	mgr := NewManager(defaultSearchConfig(), nil, NewHealthTracker(3, 300))
 	results := tomBowerResults()
 
 	processed, stats := mgr.ProcessDiscoverResults(results, "Tom Bower", "")
@@ -116,8 +116,62 @@ func TestProcessDiscoverResultsAllowsAuthorOnlyQuery(t *testing.T) {
 	}
 }
 
+func TestProcessDiscoverResultsPreservesMixedSources(t *testing.T) {
+	mgr := NewManager(defaultSearchConfig(), nil, NewHealthTracker(3, 300))
+	var results []models.SearchResult
+	for i, title := range []string{
+		"Sweet Revenge",
+		"Oil: Money, Politics, and Power in the 21st Century",
+		"The Fall of Fayed",
+		"Revenge: Meghan, Harry and the war between the Windsors",
+		"Rebel Prince",
+		"The House of Beckham",
+		"Boris Johnson",
+		"Nazi Gold",
+		"Dangerous Hero",
+		"Broken Vows",
+		"No Angel",
+		"Klaus Barbie",
+		"Branson",
+		"Maxwell, The Outsider",
+	} {
+		results = append(results, models.SearchResult{
+			Source:      "torrent",
+			Indexer:     "MyAnonamouse",
+			Title:       title,
+			Author:      "Tom Bower",
+			Format:      "epub",
+			Seeders:     5 + i,
+			Size:        int64(1_000_000 + i),
+			GUID:        "mam-guid-" + title,
+			Categories:  []string{"7000", "7020"},
+			DownloadURL: "https://prowlarr/download/" + title,
+		})
+	}
+	results = append(results,
+		models.SearchResult{Source: "annas", Title: "Rebel Prince: The Power, Passion and Defiance of Prince Charles", Author: "Tom Bower", Format: "epub", SizeHuman: "39.9MB"},
+		models.SearchResult{Source: "annas", Title: "Dangerous Hero", Author: "Tom Bower", Format: "epub", SizeHuman: "33.1MB"},
+		models.SearchResult{Source: "gutenberg", Title: "The Phantom Herd", Author: "B. M. Bower", Format: "epub"},
+	)
+
+	processed, stats := mgr.ProcessDiscoverResults(results, "Tom Bower", "")
+
+	if len(processed) != 17 {
+		t.Fatalf("processed results = %d, want 17", len(processed))
+	}
+	if stats.UpstreamResults != 17 || stats.ReturnedResults != 17 || stats.FilteredResults != 0 {
+		t.Fatalf("diagnostics = %+v, want all 17 returned", stats)
+	}
+	if stats.UpstreamBySource["prowlarr"] != 14 || stats.ReturnedBySource["prowlarr"] != 14 {
+		t.Fatalf("prowlarr diagnostics = upstream %#v returned %#v", stats.UpstreamBySource, stats.ReturnedBySource)
+	}
+	if stats.ReturnedBySource["annas"] != 2 || stats.ReturnedBySource["gutenberg"] != 1 {
+		t.Fatalf("returned source diagnostics = %#v", stats.ReturnedBySource)
+	}
+}
+
 func TestProcessDiscoverResultsReportsAllFiltered(t *testing.T) {
-	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+	mgr := NewManager(defaultSearchConfig(), nil, NewHealthTracker(3, 300))
 
 	processed, stats := mgr.ProcessDiscoverResults([]models.SearchResult{
 		{Source: "prowlarr", Title: "Tom Bower keygen exe", Author: "Tom Bower"},
@@ -132,7 +186,7 @@ func TestProcessDiscoverResultsReportsAllFiltered(t *testing.T) {
 }
 
 func TestProcessDiscoverResultsReportsZeroUpstream(t *testing.T) {
-	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+	mgr := NewManager(defaultSearchConfig(), nil, NewHealthTracker(3, 300))
 
 	processed, stats := mgr.ProcessDiscoverResults(nil, "Tom Bower", "")
 
@@ -145,7 +199,7 @@ func TestProcessDiscoverResultsReportsZeroUpstream(t *testing.T) {
 }
 
 func TestProcessResultsKeepsWantedCanonicalMatchingStrict(t *testing.T) {
-	mgr := NewManager(&config.Config{}, nil, NewHealthTracker(3, 300))
+	mgr := NewManager(defaultSearchConfig(), nil, NewHealthTracker(3, 300))
 
 	processed := mgr.ProcessResults(tomBowerResults(), "Rebel Prince", "Tom Bower")
 
@@ -157,12 +211,19 @@ func TestProcessResultsKeepsWantedCanonicalMatchingStrict(t *testing.T) {
 	}
 }
 
+func defaultSearchConfig() *config.Config {
+	return &config.Config{
+		MinTorrentSizeBytes: 10000,
+		MaxTorrentSizeBytes: 2000000000,
+	}
+}
+
 func tomBowerResults() []models.SearchResult {
 	return []models.SearchResult{
-		{Source: "prowlarr", Title: "Rebel Prince", Author: "Tom Bower", Format: "epub", Seeders: 12},
-		{Source: "prowlarr", Title: "Sweet Revenge", Author: "Tom Bower", Format: "epub", Seeders: 10},
-		{Source: "prowlarr", Title: "Oil, Money and Power", Author: "Tom Bower", Format: "epub", Seeders: 8},
-		{Source: "prowlarr", Title: "The Fall of Sayed", Author: "Tom Bower", Format: "epub", Seeders: 6},
+		{Source: "torrent", Indexer: "MyAnonamouse", Title: "Rebel Prince", Author: "Tom Bower", Format: "epub", Seeders: 12, Size: 38_300_000, GUID: "mam-rebel"},
+		{Source: "torrent", Indexer: "MyAnonamouse", Title: "Sweet Revenge", Author: "Tom Bower", Format: "epub", Seeders: 10, Size: 6_000_000, GUID: "mam-sweet"},
+		{Source: "torrent", Indexer: "MyAnonamouse", Title: "Oil, Money and Power", Author: "Tom Bower", Format: "epub", Seeders: 8, Size: 15_000_000, GUID: "mam-oil"},
+		{Source: "torrent", Indexer: "MyAnonamouse", Title: "The Fall of Sayed", Author: "Tom Bower", Format: "epub", Seeders: 6, Size: 4_500_000, GUID: "mam-fayed"},
 	}
 }
 

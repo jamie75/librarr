@@ -51,9 +51,12 @@ type SourceSearchUpdate struct {
 // ResultProcessingStats reports how many upstream results survived local
 // post-processing. It is diagnostic data for Discover responses and logs.
 type ResultProcessingStats struct {
-	UpstreamResults int `json:"upstream_results"`
-	FilteredResults int `json:"filtered_results"`
-	ReturnedResults int `json:"returned_results"`
+	UpstreamResults  int            `json:"upstream_results"`
+	FilteredResults  int            `json:"filtered_results"`
+	ReturnedResults  int            `json:"returned_results"`
+	UpstreamBySource map[string]int `json:"upstream_by_source,omitempty"`
+	FilteredBySource map[string]int `json:"filtered_by_source,omitempty"`
+	ReturnedBySource map[string]int `json:"returned_by_source,omitempty"`
 }
 
 // NewManager creates a search manager with the given sources.
@@ -245,11 +248,16 @@ func (m *Manager) ProcessResults(results []models.SearchResult, query, author st
 // scoring behavior without canonical-title filtering. That keeps free-form
 // Discover searches separate from Wanted identity matching.
 func (m *Manager) ProcessDiscoverResults(results []models.SearchResult, query, author string) ([]models.SearchResult, ResultProcessingStats) {
-	stats := ResultProcessingStats{UpstreamResults: len(results)}
+	stats := ResultProcessingStats{
+		UpstreamResults:  len(results),
+		UpstreamBySource: countResultsBySource(results),
+	}
 	results = FilterDiscoverResults(results, m.ForeignLangFilterEnabled())
 	results = FilterAndSortResults(results, query, m.cfg.MinTorrentSizeBytes, m.cfg.MaxTorrentSizeBytes)
 	stats.ReturnedResults = len(results)
 	stats.FilteredResults = stats.UpstreamResults - stats.ReturnedResults
+	stats.ReturnedBySource = countResultsBySource(results)
+	stats.FilteredBySource = subtractSourceCounts(stats.UpstreamBySource, stats.ReturnedBySource)
 	results = ScoreResults(results, query, author)
 	sortByScoreDesc(results)
 	return results, stats
@@ -271,6 +279,40 @@ func sortByScoreDesc(results []models.SearchResult) {
 			}
 		}
 	}
+}
+
+func countResultsBySource(results []models.SearchResult) map[string]int {
+	counts := make(map[string]int)
+	for _, result := range results {
+		counts[diagnosticSourceName(result)]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+func subtractSourceCounts(before, after map[string]int) map[string]int {
+	out := make(map[string]int)
+	for source, count := range before {
+		if delta := count - after[source]; delta > 0 {
+			out[source] = delta
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func diagnosticSourceName(result models.SearchResult) string {
+	if result.Source == "torrent" && strings.TrimSpace(result.Indexer) != "" {
+		return "prowlarr"
+	}
+	if strings.TrimSpace(result.Source) != "" {
+		return result.Source
+	}
+	return "unknown"
 }
 
 // GetSources returns all registered sources.
