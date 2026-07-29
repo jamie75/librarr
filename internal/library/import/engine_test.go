@@ -163,6 +163,20 @@ func TestNormalizedImportEngineReportsRollbackError(t *testing.T) {
 	}
 }
 
+func TestNormalizedImportEngineReportsRollbackFallbackError(t *testing.T) {
+	engine := NewNormalizedImportEngine(&callOrderPlanner{}, rollbackWithoutErrorExecutor{})
+	_, err := engine.Import(context.Background(), ImportRequest{
+		Source:   library.ImportSource{Name: "manual", MediaType: library.MediaTypeEbook},
+		RootPath: "/tmp/book.epub",
+	})
+	if err == nil {
+		t.Fatal("expected rollback fallback error")
+	}
+	if err.Error() != "import transaction rolled back" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 type rollbackExecutor struct{}
 
 func (rollbackExecutor) Execute(context.Context, ExecutionContext, []ImportPlan) (ExecutionSummary, error) {
@@ -170,6 +184,12 @@ func (rollbackExecutor) Execute(context.Context, ExecutionContext, []ImportPlan)
 		Status: ExecutionStatusRolledBack,
 		Error:  &ExecutionError{Stage: "file_attach", Message: "boom"},
 	}}}, nil
+}
+
+type rollbackWithoutErrorExecutor struct{}
+
+func (rollbackWithoutErrorExecutor) Execute(context.Context, ExecutionContext, []ImportPlan) (ExecutionSummary, error) {
+	return ExecutionSummary{Results: []ExecutionResult{{Status: ExecutionStatusRolledBack}}}, nil
 }
 
 func TestNormalizedImportEngineSkipsManualReviewAsError(t *testing.T) {

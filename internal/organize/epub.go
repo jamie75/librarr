@@ -4,9 +4,7 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/url"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -277,39 +275,6 @@ type opfGuideReference struct {
 
 func ReadEPUBPackageMetadata(filePath string) (*EPUBMeta, error) {
 	return ExtractEPUBMeta(filePath)
-}
-
-func readEPUBOPF(filePath string) (*opfPackage, string, error) {
-	r, err := zip.OpenReader(filePath)
-	if err != nil {
-		return nil, "", fmt.Errorf("open epub zip: %w", err)
-	}
-	defer r.Close()
-	opfFile, err := findOPFFile(r.File)
-	if err != nil {
-		return nil, "", err
-	}
-	pkg, err := readOPFPackage(opfFile)
-	if err != nil {
-		return nil, "", err
-	}
-	return pkg, path.Dir(opfFile.Name), nil
-}
-
-func openZipText(file *zip.File, limit int64) (string, error) {
-	rc, err := file.Open()
-	if err != nil {
-		return "", err
-	}
-	defer rc.Close()
-	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
-	if err != nil {
-		return "", err
-	}
-	if int64(len(data)) > limit {
-		return "", fmt.Errorf("zip entry is too large")
-	}
-	return string(data), nil
 }
 
 func firstNonEmpty(values ...string) string {
