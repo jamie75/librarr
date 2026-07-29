@@ -580,7 +580,7 @@ func (r *NormalizedRepository) listBooksOrderBy(query ListBooksQuery) string {
 	case "", "recently_added":
 		return fmt.Sprintf("datetime(b.created_at) %s, b.id %s", order, order)
 	default:
-		return fmt.Sprintf("datetime(b.created_at) DESC, b.id DESC")
+		return "datetime(b.created_at) DESC, b.id DESC"
 	}
 }
 

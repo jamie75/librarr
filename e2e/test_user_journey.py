@@ -22,6 +22,20 @@ def api(page, path):
     return page.evaluate(f"() => fetch('{path}').then(r => r.json())")
 
 
+def open_discover(page):
+    page.locator('.nav-tab[data-action="switchTab"][data-arg="search"]').click()
+    page.wait_for_selector("#search-input:visible", timeout=5000)
+    assert active_tab(page) == "tab-search"
+
+
+def open_tab(page, tab):
+    page.locator(f'.nav-tab[data-action="switchTab"][data-arg="{tab}"]').click()
+    page.wait_for_function(
+        "(expected) => document.querySelector('.tab-content.active')?.id === expected",
+        arg=f"tab-{tab}",
+    )
+
+
 # ── Boot, security posture, assets ─────────────────────────────────────────
 
 def test_boot_serves_ui_with_strict_csp(ui):
@@ -55,9 +69,8 @@ def test_tailwind_and_font_render_offline(ui):
 
 def test_all_tabs_switch(ui):
     page = ui["page"]
-    for tab in ("library", "downloads", "wishlist", "settings", "search"):
-        page.click(f'[data-action="switchTab"][data-arg="{tab}"]')
-        page.wait_for_timeout(200)
+    for tab in ("home", "library", "search", "wanted", "settings"):
+        open_tab(page, tab)
         assert active_tab(page) == f"tab-{tab}"
 
 
@@ -66,6 +79,7 @@ def test_all_tabs_switch(ui):
 @pytest.fixture()
 def searched(ui):
     page = ui["page"]
+    open_discover(page)
     page.fill("#search-input", "test adventure")
     page.press("#search-input", "Enter")
     page.wait_for_selector('[data-action="startDownload"]', timeout=30000)
@@ -159,39 +173,35 @@ def test_download_completes_and_lands_in_library(searched):
     files = list(searched["books_dir"].rglob("*.epub"))
     assert files, "no .epub imported into the library directory"
 
-    # And the Downloads tab renders the job row.
-    page.click('[data-action="switchTab"][data-arg="downloads"]')
+    # And the Downloads route renders the job row even though it is no longer
+    # part of the primary Librarr 2.0 navigation.
+    page.goto(searched["base"] + "/#downloads")
+    page.wait_for_function(
+        "() => document.querySelector('.tab-content.active')?.id === 'tab-downloads'"
+    )
     page.click('[data-action="refreshDownloads"]')
-    page.wait_for_timeout(500)
+    page.wait_for_selector("#downloads-list", timeout=5000)
     assert title in page.inner_text("#tab-downloads")
 
 
-# ── Wishlist CRUD through delegated row buttons ─────────────────────────────
+# ── Wanted CRUD through delegated buttons ───────────────────────────────────
 
-def test_wishlist_add_search_delete(ui):
+def test_wanted_add_from_discover_delete(ui):
     page = ui["page"]
-    page.click('[data-action="switchTab"][data-arg="wishlist"]')
-    page.click('[data-action="showWishlistForm"]')
-    page.wait_for_timeout(200)
-    first_input = page.evaluate(
-        "() => [...document.querySelectorAll('#wishlist-form input')]"
-        ".find(i => i.type !== 'checkbox')?.id")
-    assert first_input, "wishlist form has no text input"
-    page.fill(f"#{first_input}", "The Hobbit")
-    page.click('[data-action="addWishlistItem"]')
-    page.wait_for_selector('[data-action="deleteWishlistItem"]', timeout=5000)
+    open_discover(page)
+    page.fill("#search-input", "test adventure")
+    page.press("#search-input", "Enter")
+    page.wait_for_selector('[data-action="addWantedFromSearch"]', timeout=30000)
+    page.click('[data-action="addWantedFromSearch"]')
+    page.wait_for_selector("text=Wanted", timeout=5000)
 
-    # Row's search button jumps to the search tab with the query.
-    page.click('[data-action="searchWishlistItem"]')
-    page.wait_for_timeout(400)
-    assert active_tab(page) == "tab-search"
-
-    # Delete removes the row.
-    page.click('[data-action="switchTab"][data-arg="wishlist"]')
-    page.wait_for_timeout(200)
-    page.click('[data-action="deleteWishlistItem"]')
-    page.wait_for_timeout(500)
-    assert page.locator('[data-action="deleteWishlistItem"]').count() == 0
+    open_tab(page, "wanted")
+    page.wait_for_selector('[data-action="removeWantedBook"]', timeout=5000)
+    page.on("dialog", lambda dialog: dialog.accept())
+    page.click('[data-action="removeWantedBook"]')
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-action=\"removeWantedBook\"]').length === 0"
+    )
 
 
 # ── Cover fallback via capture-phase error delegation ───────────────────────
@@ -209,14 +219,8 @@ def test_broken_cover_falls_back_to_placeholder(ui):
     assert ok, "broken cover did not swap to the gradient placeholder"
 
 
-# ── i18n toggle (re-renders DOM incl. converted anchor templates) ───────────
+# ── Legacy UI cleanup ───────────────────────────────────────────────────────
 
-def test_language_toggle_rerenders(ui):
+def test_legacy_language_toggle_is_not_rendered(ui):
     page = ui["page"]
-    before = page.evaluate("() => document.body.innerText.slice(0, 300)")
-    page.click('[data-action="toggleLanguage"]')
-    page.wait_for_timeout(400)
-    after = page.evaluate("() => document.body.innerText.slice(0, 300)")
-    assert before != after, "language toggle changed nothing"
-    page.click('[data-action="toggleLanguage"]')  # restore EN for later tests
-    page.wait_for_timeout(300)
+    assert page.locator('[data-action="toggleLanguage"]').count() == 0

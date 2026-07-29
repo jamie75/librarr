@@ -179,8 +179,9 @@ func (e *NormalizedImportEngine) Import(ctx context.Context, request ImportReque
 			}
 		case ExecutionStatusRolledBack:
 			if firstErr == nil {
-				firstErr = item.Error
-				if firstErr == nil {
+				if item.Error != nil {
+					firstErr = item.Error
+				} else {
 					firstErr = fmt.Errorf("import transaction rolled back")
 				}
 			}
