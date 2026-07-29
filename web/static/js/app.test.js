@@ -215,6 +215,19 @@ const functionBundle = [
   extractFunctionSource('validateLibraryMetadataDraft'),
   extractFunctionSource('libraryMetadataPatchFromDraft'),
   extractFunctionSource('saveLibraryMetadataEditor'),
+  extractFunctionSource('resetMetadataToolsForBook'),
+  extractFunctionSource('renderMetadataToolsPanel'),
+  extractFunctionSource('renderMetadataMatchCandidates'),
+  extractFunctionSource('renderMetadataProposalReview'),
+  extractFunctionSource('metadataProposalRows'),
+  extractFunctionSource('extractBookMetadataFromFile'),
+  extractFunctionSource('matchBookMetadataOnline'),
+  extractFunctionSource('selectMetadataMatchCandidate'),
+  extractFunctionSource('safeMetadataProposalFields'),
+  extractFunctionSource('toggleMetadataProposalField'),
+  extractFunctionSource('selectAllSafeMetadataProposalFields'),
+  extractFunctionSource('cancelMetadataTools'),
+  extractFunctionSource('applySelectedMetadataProposal'),
   extractFunctionSource('libraryMetadataCandidate'),
   extractFunctionSource('publicationYearFromMetadata'),
   extractFunctionSource('loadUsers'),
@@ -293,6 +306,7 @@ function createContext(overrides = {}) {
       currentTab: 'home',
       libraryImport: libraryImportState(),
       libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      metadataTools: { bookId: 0, loading: false, error: '', mode: '', proposal: null, candidates: [], selectedToken: '', selectedFields: new Set() },
       bookDeleteDialog: { open: false, deleteFiles: false, loading: false, error: '' },
       libraryBooks: [],
       wantedBooks: [],
@@ -339,6 +353,7 @@ function createContext(overrides = {}) {
     startDownloadPolling: () => {},
     loadHomeDashboard: async () => {},
     loadLibrary: async () => {},
+    openBookDetails: async () => {},
     loadSettings: async () => {},
     refreshDownloads: async () => {},
     getDownloadKey: result => result.title,
@@ -2867,6 +2882,138 @@ test('library metadata editor API errors are displayed and editor remains open',
 
   assert.equal(context.state.libraryMetadataEditor.open, true);
   assert.deepEqual(toasts, [{ msg: 'metadata service unavailable', type: 'error' }]);
+});
+
+test('metadata tools buttons and proposal review render side-by-side fields', () => {
+  assert.match(appSource, /data-action="extractBookMetadataFromFile"/);
+  assert.match(appSource, /data-action="matchBookMetadataOnline"/);
+  assert.match(appSource, /extractBookMetadataFromFile:\s*\(\)\s*=>\s*extractBookMetadataFromFile\(\)/);
+  assert.match(appSource, /matchBookMetadataOnline:\s*\(\)\s*=>\s*matchBookMetadataOnline\(\)/);
+
+  const book = sampleDetailBook();
+  const proposal = {
+    token: 'proposal-1',
+    source: 'epub',
+    provider: 'epub',
+    score: 90,
+    reason: 'Embedded EPUB metadata',
+    fields: {
+      title: 'New Title',
+      publisher: 'Threshold Editions',
+      language: 'en',
+      genres: 'Politics, Conservatism',
+    },
+    author: 'Mark R. Levin',
+    identifiers: [{ type: 'isbn', value: '9781501135972' }],
+    series: { name: 'Political Books', position: '2' },
+    cover: { available: true, source: 'embedded_epub', mime_type: 'image/jpeg' },
+  };
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      metadataTools: { bookId: 42, loading: false, error: '', mode: 'extract', proposal, candidates: [], selectedToken: 'proposal-1', selectedFields: new Set(['publisher', 'cover']) },
+      activeDetailBook: book,
+      libraryBooks: [book],
+    },
+  });
+
+  const html = context.renderMetadataToolsPanel(book);
+
+  assert.match(html, /Review metadata extracted from file/);
+  assert.match(html, /Current/);
+  assert.match(html, /Proposed/);
+  assert.match(html, /Threshold Editions/);
+  assert.match(html, /9781501135972/);
+  assert.match(html, /Cover artwork available/);
+  assert.match(html, /Apply Selected Fields/);
+});
+
+test('metadata tools extraction loads proposal and apply posts selected token fields', async () => {
+  const book = sampleDetailBook();
+  const calls = [];
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      metadataTools: { bookId: 42, loading: false, error: '', mode: '', proposal: null, candidates: [], selectedToken: '', selectedFields: new Set() },
+      activeDetailBook: book,
+      activeDetailContext: { index: 0, collection: 'libraryBooks', bookId: 42 },
+      libraryBooks: [book],
+    },
+    rerenderActiveBookDetails: () => calls.push({ type: 'rerender' }),
+    loadLibrary: async () => {
+      calls.push({ type: 'loadLibrary' });
+      context.state.libraryBooks = [{ ...book, id: 42, title: 'American Marxism' }];
+    },
+    openBookDetails: async (index, collection) => calls.push({ type: 'openBookDetails', index, collection }),
+    apiJson: async (url, options = {}) => {
+      calls.push({ type: 'api', url, method: options.method, body: options.body });
+      if (url.endsWith('/extract')) {
+        return {
+          success: true,
+          proposal: {
+            token: 'extract-token',
+            source: 'epub',
+            fields: { publisher: 'Threshold Editions' },
+            cover: { available: true, source: 'embedded_epub' },
+          },
+        };
+      }
+      return { success: true };
+    },
+  });
+
+  await context.extractBookMetadataFromFile();
+  assert.equal(context.state.metadataTools.proposal.token, 'extract-token');
+  assert.ok(calls.some(call => call.url === '/api/v1/books/42/metadata/extract'));
+
+  context.state.metadataTools.selectedFields = new Set(['publisher', 'cover']);
+  await context.applySelectedMetadataProposal();
+  const apply = calls.find(call => call.url === '/api/v1/books/42/metadata/apply');
+  assert.ok(apply);
+  assert.deepEqual(JSON.parse(apply.body), { token: 'extract-token', selected_fields: ['publisher', 'cover'] });
+  assert.equal(context.state.metadataTools.mode, '');
+});
+
+test('metadata tools online candidates select into proposal and cancel is local only', async () => {
+  const book = sampleDetailBook();
+  const calls = [];
+  const context = createContext({
+    state: {
+      config: { library_repository_mode: 'normalized' },
+      libraryImport: libraryImportState(),
+      libraryMetadataEditor: { open: false, draft: null, errors: [] },
+      metadataTools: { bookId: 42, loading: false, error: '', mode: '', proposal: null, candidates: [], selectedToken: '', selectedFields: new Set() },
+      activeDetailBook: book,
+      activeDetailContext: { index: 0, collection: 'libraryBooks', bookId: 42 },
+      libraryBooks: [book],
+    },
+    rerenderActiveBookDetails: () => calls.push({ type: 'rerender' }),
+    apiJson: async (url, options = {}) => {
+      calls.push({ type: 'api', url, method: options.method });
+      return {
+        success: true,
+        candidates: [
+          { token: 'candidate-1', provider: 'openlibrary', score: 98, reason: 'ISBN exact match', fields: { title: 'American Marxism' }, author: 'Mark R. Levin' },
+        ],
+      };
+    },
+  });
+
+  await context.matchBookMetadataOnline();
+  assert.equal(context.state.metadataTools.candidates.length, 1);
+  const html = context.renderMetadataToolsPanel(book);
+  assert.match(html, /Choose an online metadata match/);
+  assert.match(html, /ISBN exact match/);
+
+  context.selectMetadataMatchCandidate('candidate-1');
+  assert.equal(context.state.metadataTools.proposal.token, 'candidate-1');
+  context.cancelMetadataTools();
+  assert.equal(context.state.metadataTools.mode, '');
+  assert.equal(calls.filter(call => call.type === 'api').length, 1);
 });
 
 function contextSafeDraft() {

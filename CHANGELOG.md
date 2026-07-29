@@ -17,6 +17,10 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Library scanner with scan jobs, progress, review results, duplicate detection,
   manual review, and explicit import actions.
 - Metadata editor for scan-review candidates and imported library books.
+- Review-first Book Details metadata tools for extracting EPUB metadata from
+  managed files, matching Open Library candidates, applying selected fields,
+  storing identifiers/provenance, and attaching managed covers without
+  modifying ebook files.
 - Normalized Library cards group multiple formats under one logical book.
 - Admin book details actions for removing catalog records or deleting managed
   files with explicit confirmation.
