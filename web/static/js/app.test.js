@@ -204,6 +204,8 @@ const functionBundle = [
   extractFunctionSource('loadConfig'),
   extractFunctionSource('loadStats'),
   extractFunctionSource('updateLibraryImportSaveState'),
+  extractFunctionSource('bindLibraryImportActionHandlers'),
+  extractFunctionSource('loadSettingToggles'),
   extractFunctionSource('saveLibraryImportSettings'),
   extractFunctionSource('libraryMetadataDraftFromBook'),
   extractFunctionSource('renderLibraryMetadataEditor'),
@@ -361,6 +363,7 @@ function createContext(overrides = {}) {
     hasTrackedDirectDownload: () => false,
     getTrackedDownloadJob: () => null,
     SOURCE_COLORS: { prowlarr: { bg: '#000', text: '#fff', label: 'Prowlarr' } },
+    INTEGRATION_FIELDS: {},
     scrollToSettingsSection: () => {},
     window: { setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {}, prompt: () => null, location: { hash: '' }, addEventListener: () => {} },
     normalizedLibraryMode: () => false,
@@ -860,6 +863,13 @@ test('index.html uses renamed import folder label and helper text', () => {
   assert.doesNotMatch(indexHTML, /Incoming Directory/);
 });
 
+test('index.html Library & Import placeholders match application fallback defaults', () => {
+  assert.match(indexHTML, /id="setting-incoming_dir"[^>]+placeholder="\/data\/incoming"/);
+  assert.match(indexHTML, /id="setting-ebook_dir"[^>]+placeholder="\/books\/ebooks"/);
+  assert.match(indexHTML, /id="setting-audiobook_dir"[^>]+placeholder="\/books\/audiobooks"/);
+  assert.match(indexHTML, /id="setting-manga_dir"[^>]+placeholder="\/books\/manga"/);
+});
+
 test('index.html uses requested field ordering', () => {
   const labels = [
     'Import Folder (Downloads)',
@@ -959,6 +969,118 @@ test('saveLibraryImportSettings uses existing settings save path', async () => {
     manga_dir: '/manga',
     file_org_enabled: true,
   });
+});
+
+test('loadSettingToggles populates fresh-install Library & Import defaults from settings API', async () => {
+  const elements = {
+    'setting-incoming_dir': { value: '' },
+    'setting-ebook_dir': { value: '' },
+    'setting-audiobook_dir': { value: '' },
+    'setting-manga_dir': { value: '' },
+    'setting-file_org_enabled': { checked: false },
+    'settings-library-import-save-standard': { disabled: false, classList: fakeClassList() },
+    'settings-library-import-step2': { dataset: {}, classList: fakeClassList() },
+    'settings-library-import-step2-icon': { textContent: '', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': { classList: fakeClassList(['hidden']), textContent: '' },
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-complete-title': { textContent: '' },
+    'settings-library-import-complete-copy': { textContent: '' },
+    'settings-library-import-unsaved': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
+  };
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async url => {
+      assert.equal(url, '/api/settings');
+      return {
+        incoming_dir: '/data/incoming',
+        ebook_dir: '/books/ebooks',
+        audiobook_dir: '/books/audiobooks',
+        manga_dir: '/books/manga',
+        file_org_enabled: true,
+      };
+    },
+  });
+
+  await context.loadSettingToggles();
+
+  assert.equal(elements['setting-incoming_dir'].value, '/data/incoming');
+  assert.equal(elements['setting-ebook_dir'].value, '/books/ebooks');
+  assert.equal(elements['setting-audiobook_dir'].value, '/books/audiobooks');
+  assert.equal(elements['setting-manga_dir'].value, '/books/manga');
+  assert.equal(elements['setting-file_org_enabled'].checked, true);
+  assert.equal(context.state.libraryImport.completed, true);
+  assert.equal(elements['settings-library-import-save-continue'].classList.contains('hidden'), true);
+  assert.match(elements['settings-library-import-summary'].innerHTML, /\/books\/ebooks/);
+});
+
+test('Save & Continue button binding posts current Library & Import values', async () => {
+  const events = [];
+  function button(id) {
+    return {
+      dataset: {},
+      disabled: false,
+      classList: fakeClassList(id.includes('continue') ? [] : []),
+      addEventListener(type, fn) {
+        events.push(`bound:${id}:${type}`);
+        this.listener = fn;
+      },
+    };
+  }
+  const saveStandard = button('settings-library-import-save-standard');
+  const saveContinue = button('settings-library-import-save-continue');
+  const elements = {
+    'setting-incoming_dir': { value: '/data/incoming' },
+    'setting-ebook_dir': { value: '/books/ebooks' },
+    'setting-audiobook_dir': { value: '/books/audiobooks' },
+    'setting-manga_dir': { value: '/books/manga' },
+    'setting-file_org_enabled': { checked: true },
+    'settings-library-import-save-standard': saveStandard,
+    'settings-library-import-step2': { dataset: {}, classList: fakeClassList(), focus: () => events.push('focus') },
+    'settings-library-import-step2-icon': { textContent: '', className: '' },
+    'settings-library-import-step2-copy': { textContent: '' },
+    'settings-library-import-summary': { innerHTML: '', classList: fakeClassList(['hidden']) },
+    'settings-library-import-save-continue': saveContinue,
+    'settings-library-import-complete': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-complete-title': { textContent: '' },
+    'settings-library-import-complete-copy': { textContent: '' },
+    'settings-library-import-unsaved': { classList: fakeClassList(['hidden']) },
+    'settings-library-import-validation': { classList: fakeClassList(['hidden']), innerHTML: '' },
+  };
+  let request = null;
+  const context = createContext({
+    document: { getElementById: id => elements[id] || null },
+    apiJson: async (url, options) => {
+      request = { url, options };
+      return { success: true };
+    },
+    showToast: (msg, kind) => events.push(`toast:${kind}:${msg}`),
+    scrollToSettingsSection: id => events.push(`scroll:${id}`),
+  });
+
+  context.bindLibraryImportActionHandlers();
+  assert.equal(saveContinue.dataset.libraryImportActionBound, 'true');
+  assert.equal(typeof saveContinue.listener, 'function');
+
+  saveContinue.listener({
+    preventDefault: () => events.push('preventDefault'),
+    stopPropagation: () => events.push('stopPropagation'),
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(request.url, '/api/settings');
+  assert.deepEqual(JSON.parse(request.options.body), {
+    incoming_dir: '/data/incoming',
+    ebook_dir: '/books/ebooks',
+    audiobook_dir: '/books/audiobooks',
+    manga_dir: '/books/manga',
+    file_org_enabled: true,
+  });
+  assert.match(events.join('\n'), /preventDefault/);
+  assert.match(events.join('\n'), /stopPropagation/);
+  assert.match(events.join('\n'), /scroll:settings-library-import-step2/);
 });
 
 test('successful Save & Continue advances focus to Step 2 panel', async () => {

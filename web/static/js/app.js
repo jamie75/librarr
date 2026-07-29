@@ -4226,6 +4226,7 @@ async function saveWantedSettings() {
 // ============================================================
 async function loadSettings() {
   bindLibraryImportChangeHandlers();
+  bindLibraryImportActionHandlers();
   loadConfig();
   loadSources();
   loadTOTPStatus();
@@ -5624,6 +5625,23 @@ function bindLibraryImportChangeHandlers() {
   }
 }
 
+function bindLibraryImportActionHandlers() {
+  const bindings = [
+    ['settings-library-import-save-standard', false],
+    ['settings-library-import-save-continue', true],
+  ];
+  for (const [id, continueAfterSave] of bindings) {
+    const button = document.getElementById(id);
+    if (!button || button.dataset.libraryImportActionBound === 'true') continue;
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      saveLibraryImportSettings(continueAfterSave);
+    });
+    button.dataset.libraryImportActionBound = 'true';
+  }
+}
+
 async function saveLibraryImportSettings(continueAfterSave = false) {
   const values = getLibraryImportFormValues();
   const validation = validateLibraryImportSettings(values);
@@ -6588,7 +6606,7 @@ document.addEventListener('click', e => {
   const fn = CLICK_ACTIONS[el.dataset.action];
   if (!fn) return;
   // Anchors previously used inline `return false` — keep them from navigating.
-  if (el.tagName === 'A') e.preventDefault();
+  if (el.tagName === 'A' || el.tagName === 'BUTTON') e.preventDefault();
   fn(el, e);
 });
 
