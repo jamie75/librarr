@@ -56,6 +56,11 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
   and move to Completed instead of remaining active.
 - Downloads has a hidden details route for Home attention cards while primary
   navigation remains focused on Home, Library, Discover, Wanted, and Settings.
+- Normalized startup now disables the legacy audiobook folder scanner so
+  populated mounts do not create `library_items` rows before explicit scan and
+  import.
+- Audiobook path fallback parsing now treats the parent folder as author and
+  the filename stem as title for single-file audiobook layouts.
 
 ### Known limitations
 

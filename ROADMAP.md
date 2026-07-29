@@ -102,6 +102,7 @@ Replace the file-centric library core with a normalized domain model while prese
 - [x] Coordinate filesystem and database failure recovery.
 - [x] Add rollback-by-configuration through `LIBRARR_IMPORT_ENGINE=legacy`.
 - [x] Add explicit scan-review import using the configured import engine.
+- [x] Disable legacy background folder adoption when normalized mode is active.
 - [ ] Make normalized import the default after more dogfooding.
 
 ### 2.0.6 Compatibility API

@@ -392,6 +392,9 @@ them.
 - The source download is not removed until import success is durable.
 - Library scanning is discovery-only; it never imports until the user explicitly
   chooses Import Selected or Import All Ready.
+- In normalized mode, startup does not auto-adopt mounted library folders or run
+  legacy scanners that write to `library_items`; mounted libraries enter the
+  normalized model through the explicit scan/review/import workflow.
 
 ## Download Client Architecture
 

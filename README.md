@@ -87,6 +87,12 @@ After the first Library & Import save:
 
 Scanning never imports files. It only discovers and classifies files.
 
+In normalized Librarr 2.0 mode, mounted library folders are not adopted at
+startup. Legacy background folder scanners are disabled, including the older
+audiobook folder scanner that wrote directly to `library_items`. Existing
+ebooks, audiobooks, and manga mounted into the container become part of Librarr
+only after an administrator runs the explicit Scan → Review → Import workflow.
+
 The scanner currently supports:
 
 - recursive folder scanning
