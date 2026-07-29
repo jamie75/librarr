@@ -111,6 +111,77 @@ func TestWantedCreateListPatchDelete(t *testing.T) {
 	}
 }
 
+func TestWantedListMarksExistingLibraryMatchImported(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	createAPIScanBook(t, s.libraryService, "American Marxism", "Mark R. Levin")
+	wanted, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:     "American Marxism",
+		Author:    "Mark R Levin",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "downloading",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/wanted", nil)
+	rr := httptest.NewRecorder()
+	s.handleV1WantedList(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var listed wantedListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].Status != "imported" || listed.Counts["imported"] != 1 {
+		t.Fatalf("wanted list = %+v", listed)
+	}
+
+	stored, err := s.db.GetWantedBook(wanted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "imported" {
+		t.Fatalf("stored status = %q, want imported", stored.Status)
+	}
+}
+
+func TestWantedListDoesNotMarkSameAuthorDifferentTitleImported(t *testing.T) {
+	s, cleanup := newWantedAPIServer(t)
+	defer cleanup()
+
+	createAPIScanBook(t, s.libraryService, "American Marxism", "Mark R. Levin")
+	if _, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:     "Men in Black: How the Supreme Court is Destroying America",
+		Author:    "Mark R Levin",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "found",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/wanted", nil)
+	rr := httptest.NewRecorder()
+	s.handleV1WantedList(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var listed wantedListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].Status != "found" {
+		t.Fatalf("wanted list = %+v", listed)
+	}
+}
+
 func TestWantedDuplicateRejected(t *testing.T) {
 	s, cleanup := newWantedAPIServer(t)
 	defer cleanup()

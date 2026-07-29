@@ -1922,10 +1922,10 @@ function renderDownloadList() {
   // Update badge
   const activeCount = jobs.filter(j => isActiveDownloadStatus(j.status)).length;
   const badge = document.getElementById('dl-badge');
-  if (activeCount > 0) {
+  if (badge && activeCount > 0) {
     badge.textContent = activeCount;
     badge.classList.remove('hidden');
-  } else {
+  } else if (badge) {
     badge.classList.add('hidden');
   }
 

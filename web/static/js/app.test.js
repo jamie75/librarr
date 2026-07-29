@@ -118,6 +118,8 @@ const functionBundle = [
   extractFunctionSource('renderMetricCard'),
   extractFunctionSource('loadHomeDashboard'),
   extractFunctionSource('renderCompactDownload'),
+  extractFunctionSource('isActiveDownloadStatus'),
+  extractFunctionSource('renderDownloadList'),
   extractFunctionSource('renderDownloadJob'),
   extractFunctionSource('renderActivityRow'),
   extractFunctionSource('renderDashboardEmpty'),
@@ -739,6 +741,21 @@ test('download rows tolerate failed imports and malformed historic entries', () 
   assert.match(failed, /data-action="retryDownload"/);
   assert.match(malformed, /Unknown/);
   assert.match(malformed, /status_queued/);
+});
+
+test('downloads page renders without the removed navigation badge', () => {
+  const elements = {
+    'downloads-list': { innerHTML: '' },
+    'downloads-empty': { classList: fakeClassList(['hidden']) },
+  };
+  const context = createContext({
+    state: { downloadJobs: [{ status: 'dead_letter', title: 'Broken Import', job_id: 'job-1', error: 'permission denied' }], pendingRetryDownloads: new Set() },
+    document: { getElementById: id => elements[id] || null },
+  });
+
+  assert.doesNotThrow(() => context.renderDownloadList());
+  assert.match(elements['downloads-list'].innerHTML, /Broken Import/);
+  assert.ok(elements['downloads-empty'].classList.contains('hidden'));
 });
 
 test('all-zero dashboard activity renders compact empty state instead of zero boxes', () => {

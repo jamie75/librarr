@@ -94,6 +94,7 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted books"})
 		return
 	}
+	items = s.reconcileWantedImportedStatus(r.Context(), items)
 
 	counts := map[string]int{
 		"total":       len(items),
@@ -114,6 +115,73 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, wantedListResponse{Items: items, Counts: counts})
+}
+
+func (s *Server) reconcileWantedImportedStatus(ctx context.Context, items []models.WantedBook) []models.WantedBook {
+	if s == nil || s.db == nil || len(items) == 0 || s.libraryService == nil {
+		return items
+	}
+	for i := range items {
+		status := strings.TrimSpace(strings.ToLower(items[i].Status))
+		if status == "ignored" || status == "downloaded" || status == "imported" {
+			continue
+		}
+		matched, err := s.wantedBookInLibrary(ctx, items[i])
+		if err != nil {
+			slog.Debug("wanted library reconciliation skipped", "wanted_id", items[i].ID, "error", err)
+			continue
+		}
+		if !matched {
+			continue
+		}
+		imported := "imported"
+		updated, err := s.db.UpdateWantedBook(items[i].ID, nil, &imported)
+		if err != nil {
+			slog.Warn("wanted library reconciliation failed", "wanted_id", items[i].ID, "error", err)
+			items[i].Status = imported
+			continue
+		}
+		items[i] = *updated
+	}
+	return items
+}
+
+func (s *Server) wantedBookInLibrary(ctx context.Context, item models.WantedBook) (bool, error) {
+	titleKey := library.TitleMatchKey(item.Title)
+	authorKey := library.ContributorMatchKey(item.Author)
+	if titleKey == "" {
+		return false, nil
+	}
+	mediaType := library.MediaType(strings.TrimSpace(strings.ToLower(item.MediaType)))
+	if mediaType == "" {
+		mediaType = library.MediaTypeEbook
+	}
+	queries := []string{item.Title, leadingWords(titleKey, 3), item.Author}
+	seen := map[string]struct{}{}
+	for _, query := range queries {
+		query = strings.TrimSpace(query)
+		if query == "" {
+			continue
+		}
+		if _, ok := seen[strings.ToLower(query)]; ok {
+			continue
+		}
+		seen[strings.ToLower(query)] = struct{}{}
+		books, err := s.libraryService.ListBookReadModels(ctx, library.ListBooksQuery{MediaType: mediaType, Search: query, Limit: 500})
+		if err != nil {
+			return false, err
+		}
+		for _, book := range books {
+			if library.TitleMatchKey(book.Book.Title) != titleKey {
+				continue
+			}
+			if authorKey != "" && library.ContributorMatchKey(primaryReadModelAuthor(book)) != authorKey {
+				continue
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) handleV1WantedCreate(w http.ResponseWriter, r *http.Request) {
