@@ -21,9 +21,9 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - Admin book details actions for removing catalog records or deleting managed
   files with explicit confirmation.
 - Embedded EPUB cover extraction with local cover caching.
-- Wanted Books with canonical book metadata, local-only Prowlarr monitor searches,
-  search history, Discover-origin release seeding, and manual selected-release
-  qBittorrent handoff.
+- Wanted Books with canonical book metadata, monitored Prowlarr searches, search
+  history, stored release inspection, Discover-origin release seeding, manual
+  selected-release qBittorrent handoff, and library reconciliation.
 - Expanded local user management.
 - Rich staged diagnostics for Prowlarr and qBittorrent.
 - Remote qBittorrent torrent upload and remote-to-local path mapping fixes.
@@ -47,13 +47,17 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
   preview, collision/missing/unsafe statuses, safe moves, catalog path updates,
   and empty-directory cleanup.
 - Wanted rows created from release results now preserve raw release titles as
-  origin context instead of storing them as canonical book titles. Automatic
-  downloading remains unimplemented.
+  origin context instead of storing them as canonical book titles.
+- Wanted rows that match imported normalized Library books are marked imported
+  and move to Completed instead of remaining active.
+- Downloads has a hidden details route for Home attention cards while primary
+  navigation remains focused on Home, Library, Discover, Wanted, and Settings.
 
 ### Known limitations
 
 - Librarr 2.0 is not yet declared stable.
-- Some Library metadata editing paths still need polish.
+- External metadata provider lookup and provider-backed refresh are not yet
+  implemented.
 - Historical duplicate logical book rows and nested ebook paths are not repaired
   automatically; administrators must run the explicit repair tools.
 - MOBI, AZW3, and PDF cover extraction remain incomplete.
@@ -63,3 +67,5 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 - A full import-repair workflow for resolving failed organization attempts is
   still planned.
 - User account editor UX still has rough edges.
+- Automatic Wanted grabbing, quality profiles, and durable torrent/import
+  identity linkage are still planned.

@@ -193,11 +193,14 @@ stored releases:
    release title.
 7. Clicks while already downloading should be rejected instead of adding a
    duplicate torrent.
+8. After the completed download imports into the normalized Library, refresh
+   Wanted and verify the matching card moves to **Imported** / Completed instead
+   of remaining in Active.
 
 The current handoff does not fake completion. The existing torrent watcher and
-import pipeline still handle completed downloads, but durable Wanted
-`downloaded`/`imported` propagation requires a later torrent-identity linkage
-milestone.
+import pipeline still handle completed downloads. Wanted currently reconciles
+against the normalized Library by conservative title/author/media-type matching;
+deeper torrent-identity completion linkage remains a later milestone.
 
 Run it with:
 
@@ -230,8 +233,12 @@ If you want to walk the flow manually in the UI:
     unsafe paths, and unknown non-cataloged files are skipped.
 12. If Prowlarr or qBittorrent are configured, run Connection Diagnostics and
     verify staged results render in Settings.
-13. Restart the container.
-14. Verify onboarding remains complete and imported books remain present.
+13. Add a Wanted book from Discover, inspect stored releases, manually hand off
+    one torrent/magnet release, and verify the Downloads details page renders
+    active and failed import rows.
+14. Restart the container.
+15. Verify onboarding remains complete, imported books remain present, and
+    imported Wanted matches remain Completed.
 
 ## Health check
 
