@@ -1317,7 +1317,7 @@ function setupLibrarr2Shell() {
 function routeTabFromLocation() {
   const hash = String(window.location?.hash || '').replace(/^#/, '').trim().toLowerCase();
   if (!hash) return 'home';
-  if (['home', 'library', 'search', 'wanted', 'settings'].includes(hash)) return hash;
+  if (['home', 'library', 'search', 'wanted', 'settings', 'downloads'].includes(hash)) return hash;
   if (hash.startsWith('settings-')) return 'settings';
   return 'home';
 }
@@ -1902,7 +1902,7 @@ async function refreshDownloads(manual = false) {
 
   try {
     const data = await apiJson('/api/downloads');
-    state.downloadJobs = data.downloads || data.jobs || [];
+    state.downloadJobs = normalizeDownloadsResponse(data);
     syncTrackedDownloadJobs(state.downloadJobs);
     renderDownloadList();
   } catch (err) {
@@ -1940,14 +1940,16 @@ function renderDownloadList() {
 }
 
 function renderDownloadJob(job) {
-  const st = STATUS_STYLES[job.status] || STATUS_STYLES.queued;
+  job = (job && typeof job === 'object') ? job : {};
+  const status = String(job.status || 'queued');
+  const st = STATUS_STYLES[status] || STATUS_STYLES.queued;
   const progress = job.progress || 0;
-  const showProgress = job.status === 'downloading' && progress > 0;
+  const showProgress = status === 'downloading' && progress > 0;
   const retryKey = String(job.job_id);
   const retryPending = state.pendingRetryDownloads.has(retryKey);
 
   let actions = '';
-  if (job.status === 'error' || job.status === 'dead_letter') {
+  if (status === 'error' || status === 'dead_letter') {
     actions = `
       <button
         data-action="retryDownload" data-job-id="${escapeHtml(job.job_id)}"
@@ -1963,7 +1965,7 @@ function renderDownloadJob(job) {
     <div class="bg-slate-900 border ${st.border} rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1">
-          <span class="px-2 py-0.5 rounded text-xs font-medium ${st.bg} ${st.text}">${t('status_' + job.status)}</span>
+          <span class="px-2 py-0.5 rounded text-xs font-medium ${st.bg} ${st.text}">${t('status_' + status)}</span>
           ${job.source ? `<span class="text-xs text-slate-500">${escapeHtml(job.source)}</span>` : ''}
         </div>
         <h4 class="text-sm font-medium text-white truncate" title="${escapeHtml(job.title || '')}">${escapeHtml(job.title || 'Unknown')}</h4>
@@ -2612,9 +2614,14 @@ function currentLibraryCount(useNormalized, stats) {
 }
 
 function normalizeDownloadsResponse(value) {
-	if (Array.isArray(value)) return value;
-	if (value && Array.isArray(value.downloads)) return value.downloads;
-	return [];
+	const raw = Array.isArray(value) ? value : (value && Array.isArray(value.downloads) ? value.downloads : []);
+	return raw
+		.filter(item => item && typeof item === 'object')
+		.map(item => ({
+			...item,
+			status: String(item.status || 'queued'),
+			title: item.title || 'Unknown',
+		}));
 }
 
 function isAdminUser() {
@@ -3493,13 +3500,13 @@ function renderWantedCard(item) {
           ${downloading ? `<div class="flex items-center justify-between gap-3"><dt>${t('wanted_download_started')}</dt><dd class="text-stone-200">${escapeHtml(downloadStarted)}</dd></div>` : ''}
         </dl>
         ${lastError ? `<p class="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">${t('wanted_error')}: ${escapeHtml(lastError)}</p>` : ''}
-        <div class="mt-4 flex items-center justify-between gap-2">
+        <div class="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           ${completed ? '<span class="text-sm text-stone-500"></span>' : `
           <label class="inline-flex items-center gap-2 text-sm text-stone-300">
             <input data-action-change="toggleWantedMonitored" data-id="${item.id}" type="checkbox" ${item.monitored ? 'checked' : ''} class="rounded border-stone-600 bg-stone-950 text-amber-500">
             <span>${t('wanted_toggle_monitored')}</span>
           </label>`}
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             ${completed ? '' : `
             <button data-action="searchWantedBook" data-id="${item.id}" ${searching || downloading || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${searching ? '<span class="inline-block animate-spin">⟳</span> ' : ''}${searchButtonLabel}</button>
             ${resultCount > 0 ? `<button data-action="openWantedReleases" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_view_releases')}</button>` : ''}

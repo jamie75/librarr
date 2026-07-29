@@ -373,6 +373,7 @@ func (s *Server) registerDownloadRoutes() {
 	s.mux.HandleFunc("POST /api/download/annas", s.handleDownloadAnnas)
 	s.mux.HandleFunc("POST /api/download/audiobook", s.handleDownloadAudiobook)
 	s.mux.HandleFunc("GET /api/downloads", s.handleGetDownloads)
+	s.mux.HandleFunc("GET /api/v1/downloads", s.handleGetDownloads)
 	s.mux.HandleFunc("DELETE /api/downloads/torrent/{hash}", s.handleDeleteTorrent)
 	s.mux.HandleFunc("DELETE /api/downloads/novel/{jobID}", s.handleDeleteJob)
 	s.mux.HandleFunc("POST /api/downloads/clear", s.handleClearFinished)

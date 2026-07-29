@@ -118,6 +118,7 @@ const functionBundle = [
   extractFunctionSource('renderMetricCard'),
   extractFunctionSource('loadHomeDashboard'),
   extractFunctionSource('renderCompactDownload'),
+  extractFunctionSource('renderDownloadJob'),
   extractFunctionSource('renderActivityRow'),
   extractFunctionSource('renderDashboardEmpty'),
   extractFunctionSource('buildFormatCounts'),
@@ -312,12 +313,20 @@ function createContext(overrides = {}) {
       searchResults: [],
       renderedResults: [],
       pendingDownloads: new Set(),
+      pendingRetryDownloads: new Set(),
       trackedDownloadJobs: new Map(),
       downloadOutcomes: new Map(),
       activeDetailBook: null,
       activeDetailContext: null,
       libraryRepair: { nestedEbookPaths: { loading: false, running: false, plan: null, result: null, error: '' } },
       config: { library_repository_mode: 'normalized' },
+    },
+    STATUS_STYLES: {
+      queued: { bg: 'queued-bg', text: 'queued-text', border: 'queued-border' },
+      completed: { bg: 'completed-bg', text: 'completed-text', border: 'completed-border' },
+      error: { bg: 'error-bg', text: 'error-text', border: 'error-border' },
+      dead_letter: { bg: 'dead-bg', text: 'dead-text', border: 'dead-border' },
+      downloading: { bg: 'downloading-bg', text: 'downloading-text', border: 'downloading-border' },
     },
     document: { getElementById: () => null, querySelector: () => null },
     api: async () => ({ ok: true, json: async () => ({ success: true }) }),
@@ -707,7 +716,8 @@ test('home dashboard hides needs attention when empty and renders actionable ite
 
 test('home dashboard activity summary normalizes downloads response and counts failures', () => {
   const context = createContext();
-  assert.deepEqual(context.normalizeDownloadsResponse({ downloads: [{ status: 'downloading' }] }), [{ status: 'downloading' }]);
+  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [{ status: 'downloading' }] })), JSON.stringify([{ status: 'downloading', title: 'Unknown' }]));
+  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [null, { title: '', status: '' }] })), JSON.stringify([{ title: 'Unknown', status: 'queued' }]));
   const summary = context.buildDashboardActivitySummary(
     [{ status: 'downloading' }, { status: 'retry_wait' }, { status: 'error' }],
     [{ detail: 'Manual review required' }, { detail: 'Ready to import' }]
@@ -717,6 +727,18 @@ test('home dashboard activity summary normalizes downloads response and counts f
   assert.equal(summary.failed, 1);
   assert.equal(summary.manualReview, 1);
   assert.equal(summary.ready, 1);
+});
+
+test('download rows tolerate failed imports and malformed historic entries', () => {
+  const context = createContext();
+  const failed = context.renderDownloadJob({ status: 'dead_letter', title: 'Broken Import', job_id: 'job-1', error: 'permission denied' });
+  const malformed = context.renderDownloadJob(null);
+
+  assert.match(failed, /Broken Import/);
+  assert.match(failed, /permission denied/);
+  assert.match(failed, /data-action="retryDownload"/);
+  assert.match(malformed, /Unknown/);
+  assert.match(malformed, /status_queued/);
 });
 
 test('all-zero dashboard activity renders compact empty state instead of zero boxes', () => {
@@ -1380,9 +1402,11 @@ test('setupLibrarr2Shell preserves Wanted nav in runtime shell', () => {
   assert.match(nav.innerHTML, /data-arg="wanted"/);
 });
 
-test('routeTabFromLocation resolves wanted and settings section hashes', () => {
+test('routeTabFromLocation resolves wanted, hidden downloads, and settings section hashes', () => {
   const context = createContext({ window: { location: { hash: '#wanted' }, addEventListener: () => {}, setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {} } });
   assert.equal(context.routeTabFromLocation(), 'wanted');
+  context.window.location.hash = '#downloads';
+  assert.equal(context.routeTabFromLocation(), 'downloads');
   context.window.location.hash = '#settings-library-import';
   assert.equal(context.routeTabFromLocation(), 'settings');
   context.window.location.hash = '';
@@ -1596,6 +1620,8 @@ test('wanted card renders search metadata and search action', () => {
   assert.match(html, /data-action="removeWantedBook"/);
   assert.match(html, /data-action="ignoreWantedBook"/);
   assert.match(html, /Project Hail Mary EPUB/);
+  assert.match(html, /flex flex-col gap-3 lg:flex-row/);
+  assert.match(html, /flex flex-wrap items-center gap-2/);
   assert.doesNotMatch(html, /wanted_status_downloaded_future/);
 });
 

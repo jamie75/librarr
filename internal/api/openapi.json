@@ -2152,6 +2152,11 @@
         "summary": "List active and recent downloads"
       }
     },
+    "/api/v1/downloads": {
+      "get": {
+        "summary": "List active and recent downloads"
+      }
+    },
     "/api/downloads/torrent/{hash}": {
       "delete": {
         "summary": "Remove a torrent download"
