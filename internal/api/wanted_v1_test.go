@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,9 +13,11 @@ import (
 
 	"github.com/jamie75/librarr/internal/config"
 	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/download"
 	"github.com/jamie75/librarr/internal/library"
 	"github.com/jamie75/librarr/internal/models"
 	"github.com/jamie75/librarr/internal/scheduler"
+	"github.com/jamie75/librarr/internal/search"
 )
 
 func newWantedAPIServer(t *testing.T) (*Server, func()) {
@@ -423,5 +426,176 @@ func TestWantedReleasesEndpoint(t *testing.T) {
 	}
 	if response.Total != 2 || response.Items[0].Title != "Higher" || response.Items[0].Format != "mobi" {
 		t.Fatalf("response = %+v", response)
+	}
+	if response.Items[0].DownloadURL != "" {
+		t.Fatalf("download_url leaked in release response: %+v", response.Items[0])
+	}
+}
+
+func newWantedDownloadAPIServer(t *testing.T, client *recordingTorrentClient) (*Server, func()) {
+	t.Helper()
+	database, err := db.New(filepath.Join(t.TempDir(), "wanted-download.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCompletedEmptyBackfill(t, database)
+	cfg := &config.Config{
+		QBUrl:      "http://qbit.test",
+		QBSavePath: "/downloads/ebooks",
+		QBCategory: "librarr",
+	}
+	manager := download.NewManager(cfg, database, client, nil, nil, nil, nil, search.NewHealthTracker(3, 300))
+	return &Server{cfg: cfg, db: database, downloadMgr: manager}, func() { _ = database.Close() }
+}
+
+func createWantedReleaseForDownload(t *testing.T, s *Server, status string, release models.WantedRelease) (*models.WantedBook, models.WantedRelease) {
+	t.Helper()
+	book, err := s.db.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    status,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release.Title == "" {
+		release.Title = "The Martian release"
+	}
+	if err := s.db.ReplaceWantedReleases(book.ID, []models.WantedRelease{release}); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := s.db.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return book, releases[0]
+}
+
+func TestWantedReleaseDownloadSubmitsStoredRelease(t *testing.T) {
+	client := &recordingTorrentClient{}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+	book, release := createWantedReleaseForDownload(t, s, "found", models.WantedRelease{
+		Title:       "The Martian 2014 EPUB",
+		Indexer:     "Books",
+		Protocol:    "torrent",
+		Format:      "epub",
+		DownloadURL: "magnet:?xt=urn:btih:abc",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/1/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(release.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if client.url != "magnet:?xt=urn:btih:abc" || client.title != "The Martian 2014 EPUB" || client.savePath != "/downloads/ebooks" || client.category != "librarr" {
+		t.Fatalf("torrent submission = url=%q title=%q savePath=%q category=%q", client.url, client.title, client.savePath, client.category)
+	}
+	updated, err := s.db.GetWantedBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "downloading" || updated.SelectedReleaseID != release.ID || updated.SelectedReleaseTitle != release.Title || updated.DownloadClient != "qbittorrent" || updated.DownloadHash != "abc" {
+		t.Fatalf("updated item = %+v", updated)
+	}
+}
+
+func TestWantedReleaseDownloadRejectsWrongWantedRelease(t *testing.T) {
+	client := &recordingTorrentClient{}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+	book, _ := createWantedReleaseForDownload(t, s, "found", models.WantedRelease{Title: "One", Protocol: "torrent", DownloadURL: "magnet:?xt=urn:btih:one"})
+	other, err := s.db.CreateWantedBook(models.WantedBook{Title: "Project Hail Mary", Author: "Andy Weir", MediaType: "ebook", Monitored: true, Status: "found"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.ReplaceWantedReleases(other.ID, []models.WantedRelease{{Title: "Two", Protocol: "torrent", DownloadURL: "magnet:?xt=urn:btih:two"}}); err != nil {
+		t.Fatal(err)
+	}
+	otherReleases, err := s.db.ListWantedReleases(other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRelease := otherReleases[0]
+	if book.ID == other.ID {
+		t.Fatal("expected distinct wanted ids")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/2/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(otherRelease.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("wrong release status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if client.url != "" {
+		t.Fatalf("unexpected torrent submission for wrong release: %q", client.url)
+	}
+}
+
+func TestWantedReleaseDownloadRejectsUnsupportedOrMissingURL(t *testing.T) {
+	client := &recordingTorrentClient{}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+	book, release := createWantedReleaseForDownload(t, s, "found", models.WantedRelease{Title: "Usenet", Protocol: "usenet"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/1/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(release.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsupported status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWantedReleaseDownloadFailureLeavesStatusUnchanged(t *testing.T) {
+	client := &recordingTorrentClient{err: errors.New("qbit auth failed")}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+	book, release := createWantedReleaseForDownload(t, s, "found", models.WantedRelease{Protocol: "torrent", DownloadURL: "magnet:?xt=urn:btih:abc"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/1/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(release.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("failure status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	updated, err := s.db.GetWantedBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "found" || updated.SelectedReleaseID != 0 {
+		t.Fatalf("failed submission changed handoff state: %+v", updated)
+	}
+	if updated.DownloadError == "" {
+		t.Fatalf("download error not recorded: %+v", updated)
+	}
+}
+
+func TestWantedReleaseDownloadDuplicateClickRejected(t *testing.T) {
+	client := &recordingTorrentClient{}
+	s, cleanup := newWantedDownloadAPIServer(t, client)
+	defer cleanup()
+	book, release := createWantedReleaseForDownload(t, s, "downloading", models.WantedRelease{Protocol: "torrent", DownloadURL: "magnet:?xt=urn:btih:abc"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/wanted/1/releases/1/download", nil)
+	req.SetPathValue("id", strconv.FormatInt(book.ID, 10))
+	req.SetPathValue("release_id", strconv.FormatInt(release.ID, 10))
+	rr := httptest.NewRecorder()
+	s.handleV1WantedReleaseDownload(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if client.url != "" {
+		t.Fatalf("duplicate click submitted torrent: %q", client.url)
 	}
 }

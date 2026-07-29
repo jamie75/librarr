@@ -104,6 +104,7 @@ const functionBundle = [
   extractFunctionSource('closeWantedReleases'),
   extractFunctionSource('renderWantedReleaseModal'),
   extractFunctionSource('setWantedReleaseFilter'),
+  extractFunctionSource('downloadWantedRelease'),
   extractFunctionSource('addWantedFromSearchResult'),
   extractFunctionSource('normalizeWantedBook'),
   extractFunctionSource('searchWantedBook'),
@@ -300,6 +301,7 @@ function createContext(overrides = {}) {
       wantedNormalizationResults: new Map(),
       wantedSearchPending: new Set(),
       wantedSearchAllRunning: false,
+      wantedReleaseDownloads: new Set(),
       wantedReleaseViewer: {
         open: false,
         loading: false,
@@ -1708,6 +1710,117 @@ test('openWantedReleases fetches stored releases and renders modal', async () =>
   assert.match(modal.innerHTML, /Release One/);
   assert.match(modal.innerHTML, /wanted_release_top_match/);
   assert.equal(context.state.wantedReleaseViewer.loading, false);
+});
+
+test('wanted release row shows download action only for supported releases', () => {
+  const context = createContext({
+    state: {
+      wantedReleaseDownloads: new Set(),
+      wantedReleaseViewer: { itemId: 8 },
+    },
+  });
+
+  const supported = context.renderWantedReleaseRow({ id: 22, title: 'Release One', protocol: 'torrent', download_available: true, score: 90, seeders: 4 }, 0);
+  assert.match(supported, /downloadWantedRelease/);
+  assert.match(supported, /wanted_release_download/);
+
+  const unsupported = context.renderWantedReleaseRow({ id: 23, title: 'Release Two', protocol: 'usenet', download_available: false, score: 80 }, 1);
+  assert.doesNotMatch(unsupported, /downloadWantedRelease/);
+  assert.match(unsupported, /wanted_release_unsupported/);
+});
+
+test('wanted release row highlights selected release and sending state', () => {
+  const context = createContext({
+    state: {
+      wantedReleaseDownloads: new Set(['8:22']),
+      wantedReleaseViewer: { itemId: 8 },
+    },
+  });
+
+  const html = context.renderWantedReleaseRow({ id: 22, title: 'Release One', protocol: 'torrent', download_available: true, selected: true, score: 90 }, 0);
+  assert.match(html, /wanted_release_selected/);
+  assert.match(html, /wanted_release_sending/);
+  assert.match(html, /disabled/);
+});
+
+test('downloadWantedRelease posts only wanted and release ids', async () => {
+  const calls = [];
+  const modal = {
+    innerHTML: '',
+    classList: { add: () => {}, remove: () => {} },
+  };
+  const context = createContext({
+    document: { getElementById: id => id === 'wanted-release-viewer' ? modal : null },
+    window: { confirm: () => true, setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {}, location: { hash: '' }, addEventListener: () => {} },
+    apiJson: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (url === '/api/v1/wanted/8/releases/22/download') {
+        return { success: true, message: 'Release sent', item: { id: 8, status: 'downloading', selected_release_title: 'Release One' } };
+      }
+      if (url === '/api/v1/wanted/8/releases') {
+        return { items: [{ id: 22, title: 'Release One', selected: true, download_available: true }] };
+      }
+      return { items: [], counts: {} };
+    },
+    showToast: (message, kind) => calls.push({ url: `toast:${kind}:${message}` }),
+    state: {
+      wantedBooks: [{ id: 8, status: 'found' }],
+      wantedReleaseDownloads: new Set(),
+      wantedReleaseViewer: {
+        open: true,
+        loading: false,
+        itemId: 8,
+        title: 'The Martian',
+        releases: [{ id: 22, title: 'Release One' }],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
+    },
+  });
+  context.loadWanted = async () => calls.push({ url: 'loadWanted' });
+  context.loadHomeDashboard = async () => calls.push({ url: 'loadHomeDashboard' });
+
+  await context.downloadWantedRelease(22, { title: 'Release One', indexer: 'Books', format: 'EPUB', size: '1 MB', seeders: '7' });
+
+  const post = calls.find(call => call.url === '/api/v1/wanted/8/releases/22/download');
+  assert.ok(post);
+  assert.equal(post.options.method, 'POST');
+  assert.equal(post.options.body, undefined);
+  assert.equal(context.state.wantedBooks[0].status, 'downloading');
+  assert.match(calls.map(call => call.url).join('|'), /toast:success:Release sent/);
+});
+
+test('downloadWantedRelease keeps viewer open on API failure', async () => {
+  const modal = {
+    innerHTML: '',
+    classList: { add: () => {}, remove: () => {} },
+  };
+  const toasts = [];
+  const context = createContext({
+    document: { getElementById: id => id === 'wanted-release-viewer' ? modal : null },
+    window: { confirm: () => true, setTimeout: fn => { fn(); return 1; }, clearTimeout: () => {}, location: { hash: '' }, addEventListener: () => {} },
+    apiJson: async () => { throw new Error('qBittorrent authentication failed'); },
+    showToast: (message, kind) => toasts.push(`${kind}:${message}`),
+    state: {
+      wantedReleaseDownloads: new Set(),
+      wantedReleaseViewer: {
+        open: true,
+        loading: false,
+        itemId: 8,
+        title: 'The Martian',
+        releases: [{ id: 22, title: 'Release One', download_available: true }],
+        error: '',
+        filters: { format: 'all', language: 'all', protocol: 'all', minSeeders: 0, sort: 'score' },
+      },
+    },
+  });
+
+  await context.downloadWantedRelease(22, { title: 'Release One' });
+
+  assert.equal(context.state.wantedReleaseViewer.open, true);
+  assert.equal(context.state.wantedReleaseViewer.error, 'qBittorrent authentication failed');
+  assert.deepEqual([...context.state.wantedReleaseDownloads], []);
+  assert.match(toasts.join('|'), /error:qBittorrent authentication failed/);
 });
 
 test('wanted card shows clean metadata with separate preferred format badge', () => {

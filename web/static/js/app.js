@@ -80,6 +80,7 @@ const I18N = {
     wanted_status_ignored: 'Ignored',
     wanted_status_missing: 'Missing',
     wanted_status_searching: 'Searching',
+    wanted_status_downloading: 'Downloading',
     wanted_status_imported: 'Imported',
     wanted_status_downloaded_future: 'Downloaded (future)',
     wanted_toggle_monitored: 'Monitored',
@@ -96,6 +97,15 @@ const I18N = {
     wanted_release_min_seeders: 'Minimum seeders',
     wanted_release_sort: 'Sort',
     wanted_release_top_match: 'Top match',
+    wanted_release_selected: 'Selected',
+    wanted_release_download: 'Download with qBittorrent',
+    wanted_release_sending: 'Sending...',
+    wanted_release_unsupported: 'Download unavailable',
+    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to qBittorrent?',
+    wanted_release_download_success: 'Release sent to qBittorrent',
+    wanted_release_download_failed: 'Could not send release to qBittorrent',
+    wanted_selected_release: 'Selected release',
+    wanted_download_started: 'Download started',
     wanted_last_searched: 'Last searched',
     wanted_results: 'Results',
     wanted_best_match: 'Best match',
@@ -656,6 +666,7 @@ const state = {
   wantedNormalizationResults: new Map(),
   wantedSearchPending: new Set(),
   wantedSearchAllRunning: false,
+  wantedReleaseDownloads: new Set(),
   wantedReleaseViewer: {
     open: false,
     loading: false,
@@ -3424,7 +3435,7 @@ async function loadWanted() {
 
 function renderWantedGroups(items) {
   const groups = [
-    ['active', t('wanted_group_active'), item => ['wanted', 'searching', 'found', 'missing'].includes(item.status || 'wanted')],
+    ['active', t('wanted_group_active'), item => ['wanted', 'searching', 'found', 'missing', 'downloading'].includes(item.status || 'wanted')],
     ['ignored', t('wanted_group_ignored'), item => (item.status || 'wanted') === 'ignored'],
     ['completed', t('wanted_group_completed'), item => ['downloaded', 'imported'].includes(item.status || '')],
   ];
@@ -3450,6 +3461,7 @@ function renderWantedGroups(items) {
 function renderWantedCard(item) {
   const status = item.status || 'wanted';
   const completed = ['downloaded', 'imported'].includes(status);
+  const downloading = status === 'downloading';
   const monitoredLabel = item.monitored ? t('wanted_toggle_monitored') : t('wanted_toggle_unmonitored');
   const mediaLabel = (item.media_type || 'ebook').toUpperCase();
   const preferredFormat = String(item.preferred_format || '').trim().toUpperCase();
@@ -3464,6 +3476,8 @@ function renderWantedCard(item) {
   const bestMatch = item.last_match_title || '—';
   const resultCount = Number.isFinite(item.last_result_count) ? item.last_result_count : 0;
   const lastError = item.last_error || '';
+  const selectedRelease = item.selected_release_title || '';
+  const downloadStarted = formatWantedTimestamp(item.download_started_at);
   const searchButtonLabel = searching ? t('wanted_searching_now') : t('wanted_search_now');
 
   return `
@@ -3482,6 +3496,8 @@ function renderWantedCard(item) {
           <div class="flex items-center justify-between gap-3"><dt>${t('wanted_last_searched')}</dt><dd class="text-stone-200">${escapeHtml(lastSearched)}</dd></div>
           <div class="flex items-center justify-between gap-3"><dt>${t('wanted_results')}</dt><dd class="text-stone-200">${escapeHtml(String(resultCount))}</dd></div>
           <div class="flex items-center justify-between gap-3"><dt>${t('wanted_best_match')}</dt><dd class="max-w-[60%] truncate text-stone-200" title="${escapeHtml(bestMatch)}">${escapeHtml(bestMatch)}</dd></div>
+          ${selectedRelease ? `<div class="flex items-center justify-between gap-3"><dt>${t('wanted_selected_release')}</dt><dd class="max-w-[60%] truncate text-stone-200" title="${escapeHtml(selectedRelease)}">${escapeHtml(selectedRelease)}</dd></div>` : ''}
+          ${downloading ? `<div class="flex items-center justify-between gap-3"><dt>${t('wanted_download_started')}</dt><dd class="text-stone-200">${escapeHtml(downloadStarted)}</dd></div>` : ''}
         </dl>
         ${lastError ? `<p class="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">${t('wanted_error')}: ${escapeHtml(lastError)}</p>` : ''}
         ${normalizeResult ? renderWantedNormalizationResult(normalizeResult) : ''}
@@ -3493,7 +3509,7 @@ function renderWantedCard(item) {
           </label>`}
           <div class="flex items-center gap-2">
             ${completed ? '' : `
-            <button data-action="searchWantedBook" data-id="${item.id}" ${searching || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${searching ? '<span class="inline-block animate-spin">⟳</span> ' : ''}${searchButtonLabel}</button>
+            <button data-action="searchWantedBook" data-id="${item.id}" ${searching || downloading || state.wantedSearchAllRunning ? 'disabled' : ''} class="rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">${searching ? '<span class="inline-block animate-spin">⟳</span> ' : ''}${searchButtonLabel}</button>
             ${resultCount > 0 ? `<button data-action="openWantedReleases" data-id="${item.id}" data-title="${escapeHtml(item.title || '')}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_view_releases')}</button>` : ''}
             ${showNormalize ? `<button data-action="normalizeWantedBook" data-id="${item.id}" class="rounded-xl bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-100 hover:bg-indigo-500/20">${t('wanted_normalize')}</button>` : ''}
             ${status === 'ignored' ? `<button data-action="markWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_wanted')}</button>` : `<button data-action="ignoreWantedBook" data-id="${item.id}" class="rounded-xl bg-stone-800 px-3 py-2 text-xs font-medium text-stone-200 hover:bg-stone-700">${t('wanted_group_ignored')}</button>`}
@@ -3579,17 +3595,22 @@ function renderWantedReleaseRow(release, index) {
   const format = String(release.format || '').toUpperCase();
   const language = String(release.language || '').toUpperCase();
   const protocol = String(release.protocol || '').toLowerCase();
+  const key = `${state.wantedReleaseViewer?.itemId || release.wanted_book_id || 0}:${release.id}`;
+  const sending = !!state.wantedReleaseDownloads?.has?.(key);
+  const selected = !!release.selected;
+  const downloadAvailable = !!release.download_available;
   const badges = [
     format,
     language,
     protocol === 'nzb' || protocol === 'usenet' ? 'Usenet' : protocol ? 'Torrent' : '',
   ].filter(Boolean);
   return `
-    <article class="rounded-[1.25rem] border ${index === 0 ? 'border-amber-500/50 bg-amber-500/10' : 'border-stone-800 bg-stone-950/40'} p-4">
+    <article class="rounded-[1.25rem] border ${selected ? 'border-emerald-500/60 bg-emerald-500/10' : index === 0 ? 'border-amber-500/50 bg-amber-500/10' : 'border-stone-800 bg-stone-950/40'} p-4">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             ${index === 0 ? `<span class="rounded-full bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100">${t('wanted_release_top_match')}</span>` : ''}
+            ${selected ? `<span class="rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-100">${t('wanted_release_selected')}</span>` : ''}
             ${badges.map(badge => `<span class="rounded-full bg-stone-800 px-2.5 py-1 text-xs font-medium text-stone-200">${escapeHtml(badge)}</span>`).join('')}
           </div>
           <h4 class="mt-2 text-base font-semibold text-white">${escapeHtml(release.title || '')}</h4>
@@ -3598,6 +3619,9 @@ function renderWantedReleaseRow(release, index) {
         <div class="text-right">
           <p class="text-lg font-semibold text-amber-200">${escapeHtml(String(Math.round(Number(release.score || 0))))}</p>
           <p class="text-xs text-stone-500">score</p>
+          <div class="mt-3">
+            ${downloadAvailable ? `<button data-action="downloadWantedRelease" data-release-id="${release.id}" data-title="${escapeHtml(release.title || '')}" data-indexer="${escapeHtml(release.indexer || '')}" data-format="${escapeHtml(format || 'Unknown format')}" data-size="${escapeHtml(release.size_human || formatSize(release.size || 0))}" data-seeders="${escapeHtml(String(release.seeders ?? 0))}" ${sending || selected ? 'disabled' : ''} class="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60">${sending ? `<span class="inline-block animate-spin">⟳</span> ${t('wanted_release_sending')}` : t('wanted_release_download')}</button>` : `<span class="text-xs text-stone-500">${t('wanted_release_unsupported')}</span>`}
+          </div>
         </div>
       </div>
       <dl class="mt-4 grid gap-2 text-xs text-stone-400 sm:grid-cols-5">
@@ -3704,6 +3728,44 @@ function setWantedReleaseFilter(field, value) {
     state.wantedReleaseViewer.filters[field] = value || 'all';
   }
   renderWantedReleaseModal();
+}
+
+async function downloadWantedRelease(releaseId, details = {}) {
+  const viewer = state.wantedReleaseViewer || {};
+  const wantedId = Number(viewer.itemId || 0);
+  const id = Number(releaseId || 0);
+  if (!wantedId || !id) return;
+  const title = details.title || '';
+  const confirmed = window.confirm(t('wanted_release_download_confirm', {
+    title,
+    indexer: details.indexer || 'Unknown indexer',
+    format: details.format || 'Unknown format',
+    size: details.size || 'Unknown size',
+    seeders: details.seeders || '0',
+  }));
+  if (!confirmed) return;
+
+  const key = `${wantedId}:${id}`;
+  state.wantedReleaseDownloads.add(key);
+  renderWantedReleaseModal();
+  try {
+    const data = await apiJson(`/api/v1/wanted/${wantedId}/releases/${id}/download`, { method: 'POST' });
+    if (data.item) {
+      const index = state.wantedBooks.findIndex(item => Number(item.id) === Number(wantedId));
+      if (index >= 0) state.wantedBooks[index] = data.item;
+    }
+    await loadWanted();
+    await loadHomeDashboard();
+    await openWantedReleases(wantedId, viewer.title || title);
+    showToast(data.warning || data.message || t('wanted_release_download_success'), data.warning ? 'warning' : 'success');
+  } catch (err) {
+    state.wantedReleaseViewer.error = err.message || t('wanted_release_download_failed');
+    if (err.message !== 'Unauthorized') showToast(state.wantedReleaseViewer.error, 'error');
+    renderWantedReleaseModal();
+  } finally {
+    state.wantedReleaseDownloads.delete(key);
+    renderWantedReleaseModal();
+  }
 }
 
 function likelyMalformedWantedItem(item) {
@@ -6235,6 +6297,13 @@ const CLICK_ACTIONS = {
   searchWantedBook: el => searchWantedBook(+el.dataset.id),
   openWantedReleases: el => openWantedReleases(+el.dataset.id, el.dataset.title),
   closeWantedReleases: () => closeWantedReleases(),
+  downloadWantedRelease: el => downloadWantedRelease(+el.dataset.releaseId, {
+    title: el.dataset.title,
+    indexer: el.dataset.indexer,
+    format: el.dataset.format,
+    size: el.dataset.size,
+    seeders: el.dataset.seeders,
+  }),
   normalizeWantedBook: el => normalizeWantedBook(+el.dataset.id),
   searchAllWanted: () => searchAllWanted(),
   ignoreWantedBook: el => updateWantedBook(+el.dataset.id, { status: 'ignored' }),

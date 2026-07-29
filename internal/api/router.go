@@ -413,6 +413,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/wanted", s.handleV1WantedList)
 	s.mux.HandleFunc("GET /api/v1/wanted/history", s.handleV1WantedHistory)
 	s.mux.HandleFunc("GET /api/v1/wanted/{id}/releases", s.handleV1WantedReleases)
+	s.mux.HandleFunc("POST /api/v1/wanted/{id}/releases/{release_id}/download", s.handleV1WantedReleaseDownload)
 	s.mux.HandleFunc("POST /api/v1/wanted", requireAdmin(s.handleV1WantedCreate))
 	s.mux.HandleFunc("POST /api/v1/wanted/search", requireAdmin(s.handleV1WantedSearchAll))
 	s.mux.HandleFunc("POST /api/v1/wanted/{id}/search", requireAdmin(s.handleV1WantedSearchOne))

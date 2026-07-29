@@ -22,6 +22,7 @@ var versionedMigrations = []schemaMigration{
 	{version: 6, name: "librarr_2_wanted_monitoring", run: migrateLibrarr2WantedMonitoring},
 	{version: 7, name: "librarr_2_wanted_release_context", run: migrateLibrarr2WantedReleaseContext},
 	{version: 8, name: "librarr_2_wanted_search_releases", run: migrateLibrarr2WantedSearchReleases},
+	{version: 9, name: "librarr_2_wanted_manual_download", run: migrateLibrarr2WantedManualDownload},
 }
 
 func (d *DB) runVersionedMigrations() error {
@@ -478,6 +479,36 @@ func migrateLibrarr2WantedSearchReleases(tx *sql.Tx) error {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func migrateLibrarr2WantedManualDownload(tx *sql.Tx) error {
+	columns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "selected_release_id", definition: `ALTER TABLE wanted_books ADD COLUMN selected_release_id INTEGER NOT NULL DEFAULT 0`},
+		{name: "selected_release_title", definition: `ALTER TABLE wanted_books ADD COLUMN selected_release_title TEXT NOT NULL DEFAULT ''`},
+		{name: "download_job_id", definition: `ALTER TABLE wanted_books ADD COLUMN download_job_id TEXT NOT NULL DEFAULT ''`},
+		{name: "download_client", definition: `ALTER TABLE wanted_books ADD COLUMN download_client TEXT NOT NULL DEFAULT ''`},
+		{name: "download_hash", definition: `ALTER TABLE wanted_books ADD COLUMN download_hash TEXT NOT NULL DEFAULT ''`},
+		{name: "download_started_at", definition: `ALTER TABLE wanted_books ADD COLUMN download_started_at DATETIME`},
+		{name: "download_error", definition: `ALTER TABLE wanted_books ADD COLUMN download_error TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := columnExistsInTx(tx, "wanted_books", column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec(column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_wanted_books_selected_release ON wanted_books(selected_release_id)`); err != nil {
+		return err
 	}
 	return nil
 }

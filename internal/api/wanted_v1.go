@@ -1,16 +1,22 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jamie75/librarr/internal/db"
+	"github.com/jamie75/librarr/internal/download"
 	"github.com/jamie75/librarr/internal/library"
 	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/netutil"
 	wantedmeta "github.com/jamie75/librarr/internal/wanted"
 )
 
@@ -26,6 +32,18 @@ type wantedHistoryResponse struct {
 type wantedReleasesResponse struct {
 	Items []models.WantedRelease `json:"items"`
 	Total int                    `json:"total"`
+}
+
+type wantedReleaseDownloadResponse struct {
+	Success       bool               `json:"success"`
+	WantedID      int64              `json:"wanted_id"`
+	ReleaseID     int64              `json:"release_id"`
+	DownloadJobID string             `json:"download_job_id,omitempty"`
+	DownloadHash  string             `json:"download_hash,omitempty"`
+	Status        string             `json:"status"`
+	Message       string             `json:"message,omitempty"`
+	Warning       string             `json:"warning,omitempty"`
+	Item          *models.WantedBook `json:"item,omitempty"`
 }
 
 type wantedCreateRequest struct {
@@ -65,15 +83,16 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	counts := map[string]int{
-		"total":      len(items),
-		"wanted":     0,
-		"ignored":    0,
-		"downloaded": 0,
-		"found":      0,
-		"missing":    0,
-		"searching":  0,
-		"imported":   0,
-		"monitored":  0,
+		"total":       len(items),
+		"wanted":      0,
+		"ignored":     0,
+		"downloaded":  0,
+		"downloading": 0,
+		"found":       0,
+		"missing":     0,
+		"searching":   0,
+		"imported":    0,
+		"monitored":   0,
 	}
 	for _, item := range items {
 		counts[strings.TrimSpace(strings.ToLower(item.Status))]++
@@ -314,7 +333,7 @@ func (s *Server) wantedCanonicalConflict(ignoreID int64, candidate models.Wanted
 
 func isValidWantedStatus(status string) bool {
 	switch status {
-	case "wanted", "searching", "found", "missing", "downloaded", "ignored", "imported":
+	case "wanted", "searching", "found", "missing", "downloading", "downloaded", "ignored", "imported":
 		return true
 	default:
 		return false
@@ -336,7 +355,8 @@ func (s *Server) handleV1WantedReleases(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
 		return
 	}
-	if _, err := s.db.GetWantedBook(id); err != nil {
+	item, err := s.db.GetWantedBook(id)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted book not found"})
 			return
@@ -349,7 +369,179 @@ func (s *Server) handleV1WantedReleases(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted releases"})
 		return
 	}
+	for i := range items {
+		items[i].DownloadAvailable = wantedReleaseDownloadAvailable(items[i])
+		items[i].Selected = item.SelectedReleaseID > 0 && item.SelectedReleaseID == items[i].ID
+	}
 	writeJSON(w, http.StatusOK, wantedReleasesResponse{Items: items, Total: len(items)})
+}
+
+func (s *Server) handleV1WantedReleaseDownload(w http.ResponseWriter, r *http.Request) {
+	wantedID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || wantedID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid wanted id"})
+		return
+	}
+	releaseID, err := strconv.ParseInt(r.PathValue("release_id"), 10, 64)
+	if err != nil || releaseID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid release id"})
+		return
+	}
+	if s.downloadMgr == nil || s.cfg == nil || !s.cfg.HasTorrentClient() {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"success": false, "error": "No torrent download client configured"})
+		return
+	}
+
+	item, err := s.db.GetWantedBook(wantedID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted book not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted book"})
+		return
+	}
+	switch strings.TrimSpace(strings.ToLower(item.Status)) {
+	case "downloading", "downloaded", "imported":
+		writeJSON(w, http.StatusConflict, map[string]any{"success": false, "error": "Wanted book is already downloading or complete"})
+		return
+	}
+
+	release, err := s.db.GetWantedRelease(wantedID, releaseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "Wanted release not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Failed to load wanted release"})
+		return
+	}
+	if !wantedReleaseDownloadAvailable(*release) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"success": false, "error": "Release does not have a supported torrent or magnet acquisition URL"})
+		return
+	}
+
+	clientName := s.cfg.ActiveTorrentClient()
+	if clientName == "" {
+		clientName = "torrent"
+	}
+	logAttrs := []any{
+		"wanted_id", wantedID,
+		"release_id", releaseID,
+		"title", netutil.SanitizeLogValue(release.Title),
+		"indexer", netutil.SanitizeLogValue(release.Indexer),
+		"protocol", netutil.SanitizeLogValue(release.Protocol),
+		"download_client", clientName,
+	}
+	slog.Info("submitting wanted release to torrent client", logAttrs...)
+
+	warning, err := s.submitWantedReleaseToTorrent(r.Context(), *item, *release)
+	if err != nil {
+		_, _ = s.db.MarkWantedDownloadFailure(wantedID, errString(err))
+		slog.Warn("wanted release torrent submission failed", append(logAttrs, "error", errString(err))...)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"success": false, "error": "Failed to send release to download client: " + errString(err)})
+		return
+	}
+
+	downloadHash := wantedReleaseDownloadHash(*release)
+	updated, err := s.db.MarkWantedDownloading(wantedID, releaseID, release.Title, clientName, downloadHash, time.Now().UTC())
+	if err != nil {
+		slog.Warn("wanted release submitted but status update failed", append(logAttrs, "error", errString(err))...)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": "Release was sent, but Wanted status could not be updated"})
+		return
+	}
+	slog.Info("wanted release sent to torrent client", append(logAttrs, "status", updated.Status)...)
+	writeJSON(w, http.StatusOK, wantedReleaseDownloadResponse{
+		Success:      true,
+		WantedID:     wantedID,
+		ReleaseID:    releaseID,
+		DownloadHash: downloadHash,
+		Status:       updated.Status,
+		Message:      "Release sent to " + clientName,
+		Warning:      warning,
+		Item:         updated,
+	})
+}
+
+func wantedReleaseDownloadHash(release models.WantedRelease) string {
+	for _, candidate := range []string{release.DownloadURL, release.GUID} {
+		candidate = strings.TrimSpace(candidate)
+		if !strings.HasPrefix(strings.ToLower(candidate), "magnet:") {
+			continue
+		}
+		parsed, err := url.Parse(candidate)
+		if err != nil {
+			continue
+		}
+		for _, xt := range parsed.Query()["xt"] {
+			const prefix = "urn:btih:"
+			if strings.HasPrefix(strings.ToLower(xt), prefix) {
+				return strings.TrimSpace(xt[len(prefix):])
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) submitWantedReleaseToTorrent(ctx context.Context, item models.WantedBook, release models.WantedRelease) (string, error) {
+	url, err := s.resolveTorrentURL(ctx, models.DownloadRequest{
+		Source:           "torrent",
+		Title:            firstNonEmptyString(release.Title, item.Title),
+		Author:           item.Author,
+		DownloadURL:      release.DownloadURL,
+		GUID:             release.GUID,
+		MediaType:        item.MediaType,
+		DownloadProtocol: release.Protocol,
+	}, models.SearchResult{})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(url) == "" {
+		return "", errors.New("release has no stored download URL or magnet link")
+	}
+
+	savePath := s.cfg.QBSavePath
+	category := s.cfg.QBCategory
+	switch strings.TrimSpace(strings.ToLower(item.MediaType)) {
+	case "audiobook":
+		savePath = s.cfg.QBAudiobookSavePath
+		category = s.cfg.QBAudiobookCategory
+	case "manga":
+		savePath = s.cfg.QBMangaSavePath
+		category = s.cfg.QBMangaCategory
+	}
+
+	err = s.downloadMgr.StartTorrentDownload(url, firstNonEmptyString(release.Title, item.Title), savePath, category, "")
+	var verificationWarning *download.TorrentVerificationWarning
+	if errors.As(err, &verificationWarning) {
+		return errString(err), nil
+	}
+	return "", err
+}
+
+func wantedReleaseDownloadAvailable(release models.WantedRelease) bool {
+	protocol := strings.TrimSpace(strings.ToLower(release.Protocol))
+	if protocol != "" && protocol != "torrent" && protocol != "magnet" {
+		return false
+	}
+	downloadURL := strings.TrimSpace(release.DownloadURL)
+	guid := strings.TrimSpace(release.GUID)
+	if downloadURL == "" && guid == "" {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(downloadURL), "magnet:") ||
+		strings.HasPrefix(strings.ToLower(guid), "magnet:") ||
+		strings.HasPrefix(strings.ToLower(downloadURL), "http://") ||
+		strings.HasPrefix(strings.ToLower(downloadURL), "https://")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleV1WantedSearchAll(w http.ResponseWriter, r *http.Request) {

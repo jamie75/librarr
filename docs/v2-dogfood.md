@@ -178,6 +178,27 @@ It performs:
 12. container restart
 13. post-restart persistence verification
 
+## Wanted manual release download smoke test
+
+Wanted downloads are manual in this milestone. After a Wanted search finds
+stored releases:
+
+1. Open Wanted.
+2. Click **View Releases** on a found Wanted item.
+3. Pick a torrent or magnet result and click **Download with qBittorrent**.
+4. Confirm the release title, indexer, format, size, and seeders.
+5. Verify qBittorrent receives exactly one torrent using the configured remote
+   save path and category.
+6. Verify the Wanted card changes to **Downloading** and shows the selected
+   release title.
+7. Clicks while already downloading should be rejected instead of adding a
+   duplicate torrent.
+
+The current handoff does not fake completion. The existing torrent watcher and
+import pipeline still handle completed downloads, but durable Wanted
+`downloaded`/`imported` propagation requires a later torrent-identity linkage
+milestone.
+
 Run it with:
 
 ```bash

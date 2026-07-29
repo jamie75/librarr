@@ -52,6 +52,10 @@ type WantedSearchUpdate struct {
 	Query           string
 }
 
+const wantedBookSelectColumns = `id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, selected_release_id, selected_release_title, download_job_id, download_client, download_hash, download_started_at, download_error, added_at, updated_at`
+
+const wantedReleaseSelectColumns = `id, wanted_book_id, title, guid, indexer, protocol, publish_date, size, size_human, seeders, leechers, grabs, language, format, download_url, categories, score, search_query, search_time`
+
 func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -80,13 +84,13 @@ func (d *DB) CreateWantedBook(book models.WantedBook) (*models.WantedBook, error
 }
 
 func (d *DB) GetWantedBook(id int64) (*models.WantedBook, error) {
-	row := d.db.QueryRow(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	row := d.db.QueryRow(`SELECT `+wantedBookSelectColumns+`
 		FROM wanted_books WHERE id = ?`, id)
 	return scanWantedBook(row)
 }
 
 func (d *DB) ListWantedBooks() ([]models.WantedBook, error) {
-	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	rows, err := d.db.Query(`SELECT ` + wantedBookSelectColumns + `
 		FROM wanted_books ORDER BY monitored DESC, COALESCE(last_search, added_at) DESC, id DESC`)
 	if err != nil {
 		return nil, err
@@ -105,9 +109,9 @@ func (d *DB) ListWantedBooks() ([]models.WantedBook, error) {
 }
 
 func (d *DB) ListMonitoredWantedBooks() ([]models.WantedBook, error) {
-	rows, err := d.db.Query(`SELECT id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, added_at, updated_at
+	rows, err := d.db.Query(`SELECT ` + wantedBookSelectColumns + `
 		FROM wanted_books
-		WHERE monitored = 1 AND status != 'ignored'
+		WHERE monitored = 1 AND status NOT IN ('ignored', 'downloading', 'downloaded', 'imported')
 		ORDER BY COALESCE(last_search, added_at) ASC, id ASC`)
 	if err != nil {
 		return nil, err
@@ -212,6 +216,52 @@ func (d *DB) UpdateWantedSearch(id int64, update WantedSearchUpdate) (*models.Wa
 		lastError,
 		update.BestMatchScore,
 		lastMatchTitle,
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return d.GetWantedBook(id)
+}
+
+func (d *DB) MarkWantedDownloading(id, releaseID int64, releaseTitle, client, downloadHash string, startedAt time.Time) (*models.WantedBook, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	_, err := d.db.Exec(`UPDATE wanted_books
+		SET status = 'downloading',
+		    selected_release_id = ?,
+		    selected_release_title = ?,
+		    download_client = ?,
+		    download_hash = ?,
+		    download_started_at = ?,
+		    download_error = '',
+		    updated_at = datetime('now')
+		WHERE id = ?`,
+		releaseID,
+		strings.TrimSpace(releaseTitle),
+		strings.TrimSpace(client),
+		strings.TrimSpace(downloadHash),
+		startedAt.UTC().Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return d.GetWantedBook(id)
+}
+
+func (d *DB) MarkWantedDownloadFailure(id int64, message string) (*models.WantedBook, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`UPDATE wanted_books
+		SET download_error = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		strings.TrimSpace(message),
 		id,
 	)
 	if err != nil {
@@ -354,9 +404,7 @@ func (d *DB) ReplaceWantedReleases(id int64, releases []models.WantedRelease) er
 }
 
 func (d *DB) ListWantedReleases(id int64) ([]models.WantedRelease, error) {
-	rows, err := d.db.Query(`SELECT id, wanted_book_id, title, guid, indexer, protocol, publish_date,
-		size, size_human, seeders, leechers, grabs, language, format, download_url, categories,
-		score, search_query, search_time
+	rows, err := d.db.Query(`SELECT `+wantedReleaseSelectColumns+`
 		FROM wanted_search_releases
 		WHERE wanted_book_id = ?
 		ORDER BY score DESC, id ASC`, id)
@@ -376,6 +424,13 @@ func (d *DB) ListWantedReleases(id int64) ([]models.WantedRelease, error) {
 	return releases, rows.Err()
 }
 
+func (d *DB) GetWantedRelease(wantedID, releaseID int64) (*models.WantedRelease, error) {
+	row := d.db.QueryRow(`SELECT `+wantedReleaseSelectColumns+`
+		FROM wanted_search_releases
+		WHERE wanted_book_id = ? AND id = ?`, wantedID, releaseID)
+	return scanWantedRelease(row)
+}
+
 type wantedBookScanner interface {
 	Scan(dest ...any) error
 }
@@ -385,6 +440,7 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 	var monitored int
 	var lastSuccess int
 	var lastSearch sql.NullTime
+	var downloadStartedAt sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
 		&item.Title,
@@ -411,6 +467,13 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 		&item.LastError,
 		&item.BestMatchScore,
 		&item.LastMatchTitle,
+		&item.SelectedReleaseID,
+		&item.SelectedReleaseTitle,
+		&item.DownloadJobID,
+		&item.DownloadClient,
+		&item.DownloadHash,
+		&downloadStartedAt,
+		&item.DownloadError,
 		&item.AddedAt,
 		&item.UpdatedAt,
 	); err != nil {
@@ -421,6 +484,10 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 	if lastSearch.Valid {
 		timestamp := lastSearch.Time
 		item.LastSearch = &timestamp
+	}
+	if downloadStartedAt.Valid {
+		timestamp := downloadStartedAt.Time
+		item.DownloadStartedAt = &timestamp
 	}
 	return &item, nil
 }

@@ -39,12 +39,19 @@ func (downloadWarningTorrentClient) Name() string { return "test" }
 type recordingTorrentClient struct {
 	savePath string
 	category string
+	url      string
+	title    string
+	hash     string
+	err      error
 }
 
-func (c *recordingTorrentClient) AddTorrent(_, _, savePath, category, _ string) error {
+func (c *recordingTorrentClient) AddTorrent(url, title, savePath, category, hash string) error {
+	c.url = url
+	c.title = title
 	c.savePath = savePath
 	c.category = category
-	return nil
+	c.hash = hash
+	return c.err
 }
 
 func (*recordingTorrentClient) GetTorrents(string) ([]download.TorrentInfo, error) {

@@ -148,7 +148,8 @@ Replace the file-centric library core with a normalized domain model while prese
   release context such as raw torrent title, indexer, source, and preferred
   format.
 - [x] Add explicit per-card normalization for malformed early dogfood Wanted rows.
-- [ ] Download or import matched Wanted releases.
+- [x] Add manual selected-release handoff to the existing torrent client path.
+- [ ] Add automatic grabbing, completion-state propagation, and import-state linkage.
 
 ### 2.0 exit criteria
 

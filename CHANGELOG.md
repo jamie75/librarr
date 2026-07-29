@@ -22,7 +22,8 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
   files with explicit confirmation.
 - Embedded EPUB cover extraction with local cover caching.
 - Wanted Books with canonical book metadata, local-only Prowlarr monitor searches,
-  search history, and explicit normalization for malformed release-based rows.
+  search history, manual selected-release qBittorrent handoff, and explicit
+  normalization for malformed release-based rows.
 - Expanded local user management.
 - Rich staged diagnostics for Prowlarr and qBittorrent.
 - Remote qBittorrent torrent upload and remote-to-local path mapping fixes.

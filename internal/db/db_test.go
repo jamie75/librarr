@@ -337,6 +337,76 @@ func TestWantedReleasesStoreRetrieveAndReplace(t *testing.T) {
 	}
 }
 
+func TestWantedManualDownloadMigrationAndState(t *testing.T) {
+	d := newTestDB(t)
+	if !columnExists(t, d, "wanted_books", "selected_release_id") ||
+		!columnExists(t, d, "wanted_books", "download_started_at") ||
+		!columnExists(t, d, "wanted_books", "download_error") {
+		t.Fatalf("wanted manual download columns were not created")
+	}
+
+	book, err := d.CreateWantedBook(models.WantedBook{
+		Title:     "The Martian",
+		Author:    "Andy Weir",
+		MediaType: "ebook",
+		Monitored: true,
+		Status:    "found",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ReplaceWantedReleases(book.ID, []models.WantedRelease{
+		{Title: "The Martian release", Score: 95, Format: "epub", Protocol: "torrent", DownloadURL: "magnet:?xt=urn:btih:abc"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := d.ListWantedReleases(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := d.MarkWantedDownloading(book.ID, releases[0].ID, releases[0].Title, "qbittorrent", "", time.Unix(100, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "downloading" || updated.SelectedReleaseID != releases[0].ID || updated.SelectedReleaseTitle != releases[0].Title || updated.DownloadClient != "qbittorrent" || updated.DownloadStartedAt == nil {
+		t.Fatalf("updated wanted download state = %+v", updated)
+	}
+}
+
+func TestListMonitoredWantedBooksSkipsTerminalAndDownloadingStatuses(t *testing.T) {
+	d := newTestDB(t)
+	statuses := []string{"wanted", "found", "missing", "downloading", "downloaded", "imported", "ignored"}
+	for _, status := range statuses {
+		if _, err := d.CreateWantedBook(models.WantedBook{
+			Title:     "Book " + status,
+			Author:    "Author " + status,
+			MediaType: "ebook",
+			Monitored: true,
+			Status:    status,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := d.ListMonitoredWantedBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, item := range items {
+		got[item.Status] = true
+	}
+	for _, status := range []string{"wanted", "found", "missing"} {
+		if !got[status] {
+			t.Fatalf("expected searchable status %q in %+v", status, got)
+		}
+	}
+	for _, status := range []string{"downloading", "downloaded", "imported", "ignored"} {
+		if got[status] {
+			t.Fatalf("status %q should not be monitored for search: %+v", status, got)
+		}
+	}
+}
+
 func TestSchemaFoundation_FailedMigrationIsNotRecorded(t *testing.T) {
 	d := newTestDB(t)
 	err := d.applySchemaMigration(schemaMigration{

@@ -609,6 +609,28 @@
           },
           "status": {
             "type": "string"
+          },
+          "selected_release_id": {
+            "type": "integer"
+          },
+          "selected_release_title": {
+            "type": "string"
+          },
+          "download_job_id": {
+            "type": "string"
+          },
+          "download_client": {
+            "type": "string"
+          },
+          "download_hash": {
+            "type": "string"
+          },
+          "download_started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "download_error": {
+            "type": "string"
           }
         }
       },
@@ -735,6 +757,12 @@
           "format": {
             "type": "string"
           },
+          "download_available": {
+            "type": "boolean"
+          },
+          "selected": {
+            "type": "boolean"
+          },
           "categories": {
             "type": "array",
             "items": {
@@ -764,6 +792,38 @@
           },
           "total": {
             "type": "integer"
+          }
+        }
+      },
+      "WantedReleaseDownloadResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "wanted_id": {
+            "type": "integer"
+          },
+          "release_id": {
+            "type": "integer"
+          },
+          "download_job_id": {
+            "type": "string"
+          },
+          "download_hash": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "warning": {
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/components/schemas/WantedBook"
           }
         }
       },
@@ -2770,6 +2830,82 @@
           },
           "404": {
             "description": "Wanted book not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wanted/{id}/releases/{release_id}/download": {
+      "post": {
+        "summary": "Send a stored wanted release to the configured torrent client",
+        "description": "Manually submits one stored Wanted release to the existing torrent download pipeline. The client sends only the Wanted id and stored release id; internal download URLs remain server-side.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release submitted to the torrent client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WantedReleaseDownloadResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Wanted book or release not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Wanted item is already downloading or complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Release cannot be submitted through the configured torrent pipeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Torrent client handoff failed",
             "content": {
               "application/json": {
                 "schema": {
