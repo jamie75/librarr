@@ -157,7 +157,7 @@ func TestRTorrentXMLRPCFaultPreservesCodeAndMessage(t *testing.T) {
 	if !errors.As(err, &fault) {
 		t.Fatalf("error=%v, want RPCFaultError", err)
 	}
-	if fault.Code != "17" || fault.FaultString != "Could not create directory" || fault.Method != "load.raw_start_verbose" || fault.HTTPStatus != http.StatusOK {
+	if fault.Code != "17" || fault.FaultString != "Could not create directory" || fault.Method != "load.raw_start" || fault.HTTPStatus != http.StatusOK {
 		t.Fatalf("fault=%+v", fault)
 	}
 	if !strings.Contains(err.Error(), "code 17: Could not create directory") {
@@ -287,18 +287,38 @@ func TestRTorrentSubmitMagnetReturnsStableIdentity(t *testing.T) {
 	}
 }
 
-func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
-	seenRaw := false
+func TestRTorrentMagnetUsesEmptyTargetArgument(t *testing.T) {
+	hash := "abcdef0123456789abcdef0123456789abcdef01"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		var call struct {
-			Method string `xml:"methodName"`
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
 		}
+		if call.MethodName != "load.start" || len(call.Params) != 2 || call.Params[0].Value.String == nil || *call.Params[0].Value.String != "" || call.Params[1].Value.String == nil {
+			t.Fatalf("method=%s params=%+v", call.MethodName, call.Params)
+		}
+		io.WriteString(w, rpcStringResponse(hash))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book"}); err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+}
+
+func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
+	seenRaw := false
+	var seenParams []rpcParam
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
 		if err := xml.Unmarshal(body, &call); err != nil {
 			t.Errorf("request XML: %v", err)
 		}
-		if call.Method == "load.raw_start" {
+		if call.MethodName == "load.raw_start" {
 			seenRaw = strings.Contains(string(body), "<base64>")
+			seenParams = call.Params
 		}
 		w.Header().Set("Content-Type", "text/xml")
 		io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
@@ -309,9 +329,133 @@ func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
-	if !seenRaw || result.InfoHash == "" {
+	if !seenRaw || result.InfoHash == "" || len(seenParams) != 2 || seenParams[0].Value.String == nil || *seenParams[0].Value.String != "" || seenParams[1].Value.Base64 == nil {
 		t.Fatalf("raw submission = %+v, seenRaw=%v", result, seenRaw)
 	}
+}
+
+func TestRTorrentRawStartTooFewArgumentsRegression(t *testing.T) {
+	methods := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		methods = append(methods, call.MethodName)
+		if call.MethodName == "load.raw_start" && len(call.Params) == 2 {
+			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+			return
+		}
+		io.WriteString(w, rpcFaultResponse(-503, "Too few arguments."))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+	if len(methods) != 1 || methods[0] != "load.raw_start" {
+		t.Fatalf("methods=%v, want only corrected load.raw_start", methods)
+	}
+}
+
+func TestRTorrentRawStartVerboseFallbackIsNarrow(t *testing.T) {
+	methods := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		methods = append(methods, call.MethodName)
+		if call.MethodName == "load.raw_start" {
+			io.WriteString(w, rpcFaultResponse(-501, "Method not found"))
+			return
+		}
+		io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+	if len(methods) != 2 || methods[1] != "load.raw_start_verbose" {
+		t.Fatalf("methods=%v, want narrow verbose fallback", methods)
+	}
+}
+
+func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
+	var calls [][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{}
+		for _, param := range call.Params {
+			if param.Value.String != nil {
+				args = append(args, *param.Value.String)
+			}
+		}
+		calls = append(calls, append([]string{call.MethodName}, args...))
+		if call.MethodName == "load.raw_start" {
+			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+			return
+		}
+		io.WriteString(w, rpcStringResponse(""))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=librarr", Timeout: time.Second})
+	result, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr"})
+	if err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+	if !containsRPCArgs(calls, "d.directory.set", result.InfoHash, "/remote/downloads") {
+		t.Fatalf("calls=%v, missing remote save path", calls)
+	}
+	if !containsRPCArgs(calls, "d.custom1.set", result.InfoHash, "librarr") {
+		t.Fatalf("calls=%v, missing label command", calls)
+	}
+}
+
+func TestRTorrentLabelFailureDoesNotBlockSubmission(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		if call.MethodName == "load.raw_start" {
+			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+			return
+		}
+		io.WriteString(w, rpcFaultResponse(-503, "label rejected"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", Category: "librarr"}); err != nil {
+		t.Fatalf("label failure blocked submission: %v", err)
+	}
+}
+
+func containsRPCArgs(calls [][]string, method string, args ...string) bool {
+	for _, call := range calls {
+		if len(call) != len(args)+1 || call[0] != method {
+			continue
+		}
+		matched := true
+		for i, arg := range args {
+			if call[i+1] != arg {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {

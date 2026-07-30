@@ -143,14 +143,15 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	if len(request.TorrentBytes) > 0 {
 		method = "load.raw_start"
 		encoded := base64.StdEncoding.EncodeToString(request.TorrentBytes)
-		value, err = r.call(context.Background(), method, rpcValue{Base64: stringPtr(encoded)})
-		if err != nil {
+		params := []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
+		value, err = r.call(context.Background(), method, params...)
+		if err != nil && shouldFallbackRawStartVerbose(err) {
 			// Older rTorrent builds expose the verbose raw loader instead.
 			method = "load.raw_start_verbose"
-			value, err = r.call(context.Background(), method, rpcValue{Base64: stringPtr(encoded)})
+			value, err = r.call(context.Background(), method, params...)
 		}
 	} else {
-		value, err = r.call(context.Background(), method, rpcValue{String: stringPtr(request.URL)})
+		value, err = r.call(context.Background(), method, rpcValue{String: stringPtr("")}, rpcValue{String: stringPtr(request.URL)})
 	}
 	if err != nil {
 		return TorrentSubmission{}, err
@@ -166,14 +167,42 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 			return TorrentSubmission{}, fmt.Errorf("rTorrent destination setup failed: %w", err)
 		}
 	}
-	if request.Category != "" && strings.HasSuffix(r.cfg.LabelField, "=") {
-		field := strings.TrimSuffix(r.cfg.LabelField, "=")
-		field = strings.TrimSuffix(field, ".") + ".set"
-		if _, err := r.call(context.Background(), field, rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(request.Category)}); err != nil {
-			return TorrentSubmission{}, fmt.Errorf("rTorrent label setup failed: %w", err)
+	if labelMethod, label := r.labelCommand(request.Category); labelMethod != "" && label != "" {
+		if _, err := r.call(context.Background(), labelMethod, rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(label)}); err != nil {
+			slog.Warn("rTorrent label application failed after submission", "method", labelMethod, "error", netutil.SanitizeSensitiveText(err.Error()))
 		}
 	}
 	return TorrentSubmission{ClientID: r.ClientID(), ClientType: r.Type(), DownloadID: hash, InfoHash: hash, Name: request.Title, RemoteSavePath: request.SavePath, Category: request.Category}, nil
+}
+
+func shouldFallbackRawStartVerbose(err error) bool {
+	var fault *RPCFaultError
+	if !errors.As(err, &fault) {
+		return false
+	}
+	message := strings.ToLower(fault.FaultString)
+	return strings.Contains(message, "too few arguments") || strings.Contains(message, "method not found") || strings.Contains(message, "unknown method")
+}
+
+func (r *RTorrentClient) labelCommand(category string) (string, string) {
+	spec := strings.TrimSpace(r.cfg.LabelField)
+	if spec == "" {
+		return "", ""
+	}
+	field, configuredValue, hasValue := strings.Cut(spec, "=")
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return "", ""
+	}
+	field = strings.TrimSuffix(field, ".")
+	if !strings.HasSuffix(field, ".set") {
+		field += ".set"
+	}
+	label := strings.TrimSpace(category)
+	if label == "" && hasValue {
+		label = strings.TrimSpace(configuredValue)
+	}
+	return field, label
 }
 
 func validateRTorrentSubmission(request TorrentSubmissionRequest) error {
