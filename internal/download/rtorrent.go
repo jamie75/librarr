@@ -68,6 +68,8 @@ type ClientDownload struct {
 	Progress    float64 `json:"progress"`
 	SavePath    string  `json:"save_path,omitempty"`
 	ContentPath string  `json:"content_path,omitempty"`
+	BasePath    string  `json:"base_path,omitempty"`
+	Directory   string  `json:"directory,omitempty"`
 	Size        int64   `json:"size"`
 	Completed   bool    `json:"completed"`
 	Active      bool    `json:"active"`
@@ -274,9 +276,9 @@ func (r *RTorrentClient) verifySubmittedTorrent(hash, requestedDirectory string)
 		if !strings.EqualFold(item.InfoHash, hash) && !strings.EqualFold(item.ID, hash) {
 			continue
 		}
-		slog.Debug("rTorrent submission state verified", "info_hash", hash, "directory", item.ContentPath, "base_path", item.SavePath, "active", item.Active, "state", item.Status, "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
-		if requestedDirectory != "" && filepath.Clean(item.ContentPath) != filepath.Clean(requestedDirectory) {
-			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", hash, "requested_directory", requestedDirectory, "actual_directory", item.ContentPath)
+		slog.Debug("rTorrent submission state verified", "info_hash", hash, "directory", item.Directory, "base_path", item.BasePath, "active", item.Active, "state", item.Status, "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
+		if requestedDirectory != "" && item.Directory != "" && filepath.Clean(item.Directory) != filepath.Clean(requestedDirectory) {
+			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", hash, "requested_directory", requestedDirectory, "actual_directory", item.Directory)
 		}
 		return
 	}
@@ -440,9 +442,12 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 		state := classifyRTorrentState(complete, active, valueString(values[8]))
 		basePath := valueString(values[2])
 		directory := valueString(values[3])
-		contentPath := directory
+		// d.base_path is the torrent's actual content path; d.directory is
+		// the parent directory used for placement. Prefer the former so the
+		// watcher can map a completed file rather than only its directory.
+		contentPath := basePath
 		if contentPath == "" {
-			contentPath = basePath
+			contentPath = directory
 		}
 		downloads = append(downloads, ClientDownload{
 			ID:          valueString(values[0]),
@@ -452,6 +457,8 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 			Progress:    progress,
 			SavePath:    basePath,
 			ContentPath: contentPath,
+			BasePath:    basePath,
+			Directory:   directory,
 			Size:        size,
 			Completed:   complete,
 			Active:      active,
@@ -845,6 +852,7 @@ type rpcValue struct {
 	String     *string `xml:"string"`
 	Int        *int64  `xml:"int"`
 	I4         *int64  `xml:"i4"`
+	I8         *int64  `xml:"i8"`
 	Bool       *int64  `xml:"boolean"`
 	Base64     *string `xml:"base64"`
 	ArrayValue *struct {
@@ -900,6 +908,9 @@ func valueString(v rpcValue) string {
 	if v.I4 != nil {
 		return fmt.Sprintf("%d", *v.I4)
 	}
+	if v.I8 != nil {
+		return fmt.Sprintf("%d", *v.I8)
+	}
 	if v.Bool != nil {
 		return fmt.Sprintf("%d", *v.Bool)
 	}
@@ -919,6 +930,9 @@ func valueInt(v rpcValue) int64 {
 	}
 	if v.I4 != nil {
 		return *v.I4
+	}
+	if v.I8 != nil {
+		return *v.I8
 	}
 	if v.Bool != nil {
 		return *v.Bool

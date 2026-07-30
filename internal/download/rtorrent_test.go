@@ -207,7 +207,7 @@ func TestRTorrentVersionAndListDownloads(t *testing.T) {
 		}
 		return `<methodResponse><params><param><value><array><data><value><array><data>` +
 			`<value><string>ABC123</string></value><value><string>Example</string></value>` +
-			`<value><string>/downloads</string></value><value><string>/downloads/Example</string></value>` +
+			`<value><string>/downloads/Example</string></value><value><string>/downloads</string></value>` +
 			`<value><int>100</int></value><value><int>100</int></value><value><int>1</int></value>` +
 			`<value><int>0</int></value><value><string></string></value><value><string>librarr</string></value>` +
 			`</data></array></value></data></array></value></param></params></methodResponse>`
@@ -278,6 +278,35 @@ func TestRTorrentListDownloadsUsesMainViewAndClassifiesStates(t *testing.T) {
 		if items[i].Status != want.status || items[i].Completed != want.completed || items[i].Progress != want.progress {
 			t.Fatalf("item[%d] = %+v, want status=%q completed=%t progress=%v", i, items[i], want.status, want.completed, want.progress)
 		}
+	}
+}
+
+func TestRTorrentListDownloadsDecodesI8AndUsesBasePathForContent(t *testing.T) {
+	srv := rtorrentServer(t, func(method string) string {
+		if method != "d.multicall2" {
+			return rpcStringResponse("0.9.7")
+		}
+		return `<methodResponse><params><param><value><array><data>` +
+			`<value><array><data>` +
+			`<value><string>ABC123</string></value><value><string>Book</string></value>` +
+			`<value><string>/remote/downloads/Book.epub</string></value><value><string>/remote/downloads</string></value>` +
+			`<value><i8>8589934592</i8></value><value><i8>8589934592</i8></value>` +
+			`<value><int>1</int></value><value><int>0</int></value><value><string>stopped</string></value>` +
+			`<value><string></string></value>` +
+			`</data></array></value></data></array></value></param></params></methodResponse>`
+	})
+	defer srv.Close()
+
+	items, err := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second}).ListDownloads(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v", items)
+	}
+	item := items[0]
+	if item.Size != 8589934592 || item.ContentPath != "/remote/downloads/Book.epub" || item.BasePath != item.ContentPath || item.Directory != "/remote/downloads" {
+		t.Fatalf("item = %+v", item)
 	}
 }
 
