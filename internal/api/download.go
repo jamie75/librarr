@@ -121,7 +121,7 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		category = s.cfg.QBMangaCategory
 	}
 
-	err = s.downloadMgr.StartTorrentDownload(url, req.Title, savePath, category, req.InfoHash)
+	_, err = s.downloadMgr.StartTorrentDownloadTracked(url, req.Title, savePath, category, req.InfoHash, req.MediaType, req.Source, extractSourceID(req))
 	var verificationWarning *download.TorrentVerificationWarning
 	if errors.As(err, &verificationWarning) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{

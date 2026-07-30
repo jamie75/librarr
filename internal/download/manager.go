@@ -111,10 +111,58 @@ func (m *Manager) StartAnnasDownload(md5, title string) (*models.DownloadJob, er
 
 // StartTorrentDownload adds a torrent to the active torrent client.
 func (m *Manager) StartTorrentDownload(torrentURL, title, savePath, category, expectedInfoHash string) error {
+	_, err := m.StartTorrentDownloadTracked(torrentURL, title, savePath, category, expectedInfoHash, "ebook", "", "")
+	return err
+}
+
+// StartTorrentDownloadTracked submits a torrent and records the client-bound
+// identity used by the completion watcher. The old method remains available to
+// callers that only need the historical error contract.
+func (m *Manager) StartTorrentDownloadTracked(torrentURL, title, savePath, category, expectedInfoHash, mediaType, source, sourceID string) (models.TrackedDownload, error) {
 	if m.torrent == nil {
-		return fmt.Errorf("no torrent download client configured")
+		return models.TrackedDownload{}, fmt.Errorf("no torrent download client configured")
 	}
-	return m.torrent.AddTorrent(torrentURL, title, savePath, category, expectedInfoHash)
+	var submission TorrentSubmission
+	var err error
+	if writable, ok := m.torrent.(WritableTorrentClient); ok {
+		submission, err = writable.SubmitTorrent(TorrentSubmissionRequest{URL: torrentURL, Title: title, SavePath: savePath, Category: category, ExpectedInfoHash: expectedInfoHash})
+	} else {
+		err = m.torrent.AddTorrent(torrentURL, title, savePath, category, expectedInfoHash)
+		submission = TorrentSubmission{ClientID: m.torrent.Name(), ClientType: m.torrent.Name(), DownloadID: firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL)), InfoHash: firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL)), Name: title, RemoteSavePath: savePath, Category: category}
+	}
+	if err != nil {
+		var verificationWarning *TorrentVerificationWarning
+		if errors.As(err, &verificationWarning) && submission.InfoHash != "" {
+			item, persistErr := m.persistTorrentSubmission(submission, title, mediaType, source, sourceID, category, savePath)
+			if persistErr != nil {
+				return models.TrackedDownload{}, persistErr
+			}
+			return item, err
+		}
+		return models.TrackedDownload{}, err
+	}
+	return m.persistTorrentSubmission(submission, title, mediaType, source, sourceID, category, savePath)
+}
+
+func (m *Manager) persistTorrentSubmission(submission TorrentSubmission, title, mediaType, source, sourceID, category, savePath string) (models.TrackedDownload, error) {
+	if savePath == "" {
+		savePath = submission.RemoteSavePath
+	}
+	if category == "" {
+		category = submission.Category
+	}
+	now := time.Now().UTC()
+	item := models.TrackedDownload{
+		ID:       fmt.Sprintf("%s:%s", submission.ClientID, firstNonEmptyHash(submission.InfoHash, submission.DownloadID, fmt.Sprintf("%d", now.UnixNano()))),
+		ClientID: submission.ClientID, ClientType: submission.ClientType, DownloadID: submission.DownloadID,
+		InfoHash: submission.InfoHash, Title: firstNonEmpty(title, submission.Name), MediaType: firstNonEmpty(mediaType, "ebook"),
+		Source: source, SourceID: sourceID, Category: category, RemoteSavePath: savePath,
+		Status: "submitted", ImportStatus: "pending", CreatedAt: now,
+	}
+	if err := m.db.SaveTrackedDownload(&item); err != nil {
+		return models.TrackedDownload{}, fmt.Errorf("persist torrent tracking: %w", err)
+	}
+	return item, nil
 }
 
 // StartNZBDownload sends an NZB URL to SABnzbd.
@@ -519,6 +567,20 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 		})
 	}
 	m.mu.Unlock()
+
+	// Durable torrent tracking is included even when the client is temporarily
+	// unavailable; this keeps client identity and import state visible after a
+	// restart instead of silently dropping the history row.
+	if tracked, err := m.db.GetTrackedDownloads(); err == nil {
+		for _, item := range tracked {
+			downloads = append(downloads, models.DownloadStatus{
+				Source: item.ClientType, Title: item.Title, Status: item.Status,
+				Progress: item.Progress * 100, Hash: item.InfoHash, ClientID: item.ClientID,
+				ClientType: item.ClientType, RemotePath: item.RemotePath, LocalPath: item.LocalPath,
+				ImportStatus: item.ImportStatus, Error: item.LastError,
+			})
+		}
+	}
 
 	return downloads
 }

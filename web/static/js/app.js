@@ -98,12 +98,12 @@ const I18N = {
     wanted_release_sort: 'Sort',
     wanted_release_top_match: 'Top match',
     wanted_release_selected: 'Selected',
-    wanted_release_download: 'Download with qBittorrent',
+    wanted_release_download: 'Send to download client',
     wanted_release_sending: 'Sending...',
     wanted_release_unsupported: 'Download unavailable',
-    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to qBittorrent?',
-    wanted_release_download_success: 'Release sent to qBittorrent',
-    wanted_release_download_failed: 'Could not send release to qBittorrent',
+    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to the configured download client?',
+    wanted_release_download_success: 'Release sent to download client',
+    wanted_release_download_failed: 'Could not send release to download client',
     wanted_selected_release: 'Selected release',
     wanted_download_started: 'Download started',
     wanted_last_searched: 'Last searched',
@@ -1978,6 +1978,10 @@ function renderDownloadJob(job) {
           ${job.source ? `<span class="text-xs text-slate-500">${escapeHtml(job.source)}</span>` : ''}
         </div>
         <h4 class="text-sm font-medium text-white truncate" title="${escapeHtml(job.title || '')}">${escapeHtml(job.title || 'Unknown')}</h4>
+        ${job.client_type ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(job.client_type)}${job.hash ? ` · ${escapeHtml(job.hash)}` : ''}</p>` : ''}
+        ${job.remote_path ? `<p class="text-xs text-slate-500 mt-1 truncate" title="${escapeHtml(job.remote_path)}">Remote: ${escapeHtml(job.remote_path)}</p>` : ''}
+        ${job.local_path ? `<p class="text-xs text-slate-500 truncate" title="${escapeHtml(job.local_path)}">Local: ${escapeHtml(job.local_path)}</p>` : ''}
+        ${job.import_status ? `<p class="text-xs text-slate-400 truncate">Import: ${escapeHtml(job.import_status)}</p>` : ''}
         ${job.detail ? `<p class="text-xs text-slate-400 mt-1 truncate" title="${escapeHtml(job.detail)}">${escapeHtml(job.detail)}</p>` : ''}
         ${job.max_retries > 0 && job.retry_count > 0 ? `<p class="text-xs text-amber-400 mt-1">${escapeHtml(`Attempt ${Math.min(job.retry_count + 1, job.max_retries + 1)}/${job.max_retries + 1}`)}</p>` : ''}
         ${job.error ? `<p class="text-xs text-red-400 mt-1 truncate">${escapeHtml(job.error)}</p>` : ''}

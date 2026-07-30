@@ -32,15 +32,29 @@ func (s *Server) handleGetRTorrent(w http.ResponseWriter, _ *http.Request) {
 		return fallback
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enabled":         get("rtorrent_enabled", s.cfg.RTorrentEnabled),
-		"name":            get("rtorrent_name", s.cfg.RTorrentName),
-		"url":             get("rtorrent_url", s.cfg.RTorrentURL),
-		"username":        get("rtorrent_user", s.cfg.RTorrentUser),
-		"password":        maskedValueIfSet(get("rtorrent_pass", s.cfg.RTorrentPass)),
-		"timeout_seconds": get("rtorrent_timeout_seconds", s.cfg.RTorrentTimeout),
-		"label_field":     get("rtorrent_label_field", s.cfg.RTorrentLabelField),
-		"tls_verify":      get("rtorrent_tls_verify", s.cfg.RTorrentTLSVerify),
+		"enabled":           get("rtorrent_enabled", s.cfg.RTorrentEnabled),
+		"name":              get("rtorrent_name", s.cfg.RTorrentName),
+		"url":               get("rtorrent_url", s.cfg.RTorrentURL),
+		"username":          get("rtorrent_user", s.cfg.RTorrentUser),
+		"password":          maskedValueIfSet(get("rtorrent_pass", s.cfg.RTorrentPass)),
+		"timeout_seconds":   get("rtorrent_timeout_seconds", s.cfg.RTorrentTimeout),
+		"label_field":       get("rtorrent_label_field", s.cfg.RTorrentLabelField),
+		"tls_verify":        get("rtorrent_tls_verify", s.cfg.RTorrentTLSVerify),
+		"client_id":         "rtorrent",
+		"client_type":       "rtorrent",
+		"write_supported":   true,
+		"active":            s.cfg.ActiveTorrentClient() == "rtorrent",
+		"cleanup_supported": false,
 	})
+}
+
+func (s *Server) handleGetDownloadClients(w http.ResponseWriter, _ *http.Request) {
+	clients := []map[string]interface{}{
+		{"id": "qbittorrent", "type": "qbittorrent", "name": "qBittorrent", "configured": s.cfg.HasQBittorrent(), "writable": s.cfg.HasQBittorrent(), "active": s.cfg.ActiveTorrentClient() == "qbittorrent"},
+		{"id": "transmission", "type": "transmission", "name": "Transmission", "configured": s.cfg.HasTransmission(), "writable": s.cfg.HasTransmission(), "active": s.cfg.ActiveTorrentClient() == "transmission"},
+		{"id": "rtorrent", "type": "rtorrent", "name": s.cfg.RTorrentName, "configured": s.cfg.HasRTorrent(), "writable": s.cfg.HasRTorrent(), "active": s.cfg.ActiveTorrentClient() == "rtorrent", "cleanup_supported": false},
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"clients": clients})
 }
 
 func maskedValueIfSet(value interface{}) string {

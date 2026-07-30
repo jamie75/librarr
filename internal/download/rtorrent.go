@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,15 +19,17 @@ import (
 	"github.com/jamie75/librarr/internal/netutil"
 )
 
-// RTorrentConfig contains only read-only connection settings for Phase 1.
+// RTorrentConfig contains rTorrent XML-RPC connection and submission settings.
 type RTorrentConfig struct {
-	Name       string
-	URL        string
-	Username   string
-	Password   string
-	Timeout    time.Duration
-	LabelField string
-	TLSVerify  bool
+	Name           string
+	URL            string
+	Username       string
+	Password       string
+	Timeout        time.Duration
+	LabelField     string
+	TLSVerify      bool
+	ProwlarrURL    string
+	ProwlarrAPIKey string
 }
 
 // ReadOnlyDownloadClient is the client-neutral surface used by inspection and
@@ -56,8 +61,8 @@ type ClientDownload struct {
 	Error       string  `json:"error,omitempty"`
 }
 
-// RTorrentClient is a read-only XML-RPC adapter. It talks to rTorrent's RPC
-// endpoint directly and never scrapes or automates ruTorrent.
+// RTorrentClient talks to rTorrent's XML-RPC endpoint directly and never
+// scrapes or automates ruTorrent. Removal is intentionally unsupported.
 type RTorrentClient struct {
 	cfg    RTorrentConfig
 	client *http.Client
@@ -83,6 +88,152 @@ func NewRTorrentClient(cfg RTorrentConfig) *RTorrentClient {
 func (r *RTorrentClient) ClientID() string { return "rtorrent" }
 func (r *RTorrentClient) Name() string     { return r.cfg.Name }
 func (r *RTorrentClient) Type() string     { return "rtorrent" }
+
+func (r *RTorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error {
+	_, err := r.SubmitTorrent(TorrentSubmissionRequest{URL: torrentURL, Title: title, SavePath: savePath, Category: category, ExpectedInfoHash: expectedInfoHash})
+	return err
+}
+
+func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (TorrentSubmission, error) {
+	if err := validateRTorrentSubmission(request); err != nil {
+		return TorrentSubmission{}, err
+	}
+	if len(request.TorrentBytes) == 0 && !strings.HasPrefix(strings.ToLower(request.URL), "magnet:") {
+		fetched, err := fetchRTorrentTorrent(request.URL, r.cfg)
+		if err != nil {
+			return TorrentSubmission{}, err
+		}
+		request.TorrentBytes = fetched
+	}
+	hash := firstNonEmptyHash(request.ExpectedInfoHash, infoHashFromMagnet(request.URL))
+	if len(request.TorrentBytes) > 0 {
+		calculated, err := torrentInfoHash(bytes.TrimSpace(request.TorrentBytes))
+		if err != nil {
+			return TorrentSubmission{}, fmt.Errorf("invalid torrent payload: %w", err)
+		}
+		hash = calculated
+	}
+	method := "load.start"
+	var value rpcValue
+	var err error
+	if strings.HasPrefix(strings.ToLower(request.URL), "magnet:") {
+		slog.Info("submitting magnet to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(request.Title), "category", netutil.SanitizeLogValue(request.Category))
+	} else {
+		slog.Info("uploading torrent bytes to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(request.Title), "category", netutil.SanitizeLogValue(request.Category), "bytes", len(request.TorrentBytes))
+	}
+	if len(request.TorrentBytes) > 0 {
+		method = "load.raw_start"
+		encoded := base64.StdEncoding.EncodeToString(request.TorrentBytes)
+		value, err = r.call(context.Background(), method, rpcValue{Base64: stringPtr(encoded)})
+		if err != nil {
+			// Older rTorrent builds expose the verbose raw loader instead.
+			method = "load.raw_start_verbose"
+			value, err = r.call(context.Background(), method, rpcValue{Base64: stringPtr(encoded)})
+		}
+	} else {
+		value, err = r.call(context.Background(), method, rpcValue{String: stringPtr(request.URL)})
+	}
+	if err != nil {
+		return TorrentSubmission{}, err
+	}
+	if hash == "" {
+		hash = strings.ToLower(strings.TrimSpace(valueString(value)))
+	}
+	if hash == "" {
+		return TorrentSubmission{}, fmt.Errorf("rTorrent accepted the submission but returned no torrent hash")
+	}
+	if request.SavePath != "" {
+		if _, err := r.call(context.Background(), "d.directory.set", rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(request.SavePath)}); err != nil {
+			return TorrentSubmission{}, fmt.Errorf("rTorrent destination setup failed: %w", err)
+		}
+	}
+	if request.Category != "" && strings.HasSuffix(r.cfg.LabelField, "=") {
+		field := strings.TrimSuffix(r.cfg.LabelField, "=")
+		field = strings.TrimSuffix(field, ".") + ".set"
+		if _, err := r.call(context.Background(), field, rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(request.Category)}); err != nil {
+			return TorrentSubmission{}, fmt.Errorf("rTorrent label setup failed: %w", err)
+		}
+	}
+	return TorrentSubmission{ClientID: r.ClientID(), ClientType: r.Type(), DownloadID: hash, InfoHash: hash, Name: request.Title, RemoteSavePath: request.SavePath, Category: request.Category}, nil
+}
+
+func validateRTorrentSubmission(request TorrentSubmissionRequest) error {
+	value := strings.TrimSpace(request.URL)
+	if value == "" && len(request.TorrentBytes) == 0 {
+		return fmt.Errorf("torrent URL or magnet is required")
+	}
+	if len(request.TorrentBytes) > 2<<20 {
+		return fmt.Errorf("torrent payload exceeds the 2 MiB limit")
+	}
+	if len(request.TorrentBytes) > 0 {
+		if len(bytes.TrimSpace(request.TorrentBytes)) == 0 || bytes.TrimSpace(request.TorrentBytes)[0] != 'd' {
+			return fmt.Errorf("torrent payload is not a bencode dictionary")
+		}
+	} else if strings.HasPrefix(strings.ToLower(value), "magnet:") {
+		if infoHashFromMagnet(value) == "" {
+			return fmt.Errorf("magnet is missing a valid info hash")
+		}
+	} else {
+		u, err := url.Parse(value)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			return fmt.Errorf("torrent URL must be an HTTP or HTTPS URL without credentials")
+		}
+	}
+	if request.SavePath != "" {
+		clean := filepath.Clean(strings.TrimSpace(request.SavePath))
+		if !filepath.IsAbs(clean) || clean == "." || clean == string(filepath.Separator)+".." || strings.HasPrefix(clean, string(filepath.Separator)+".."+string(filepath.Separator)) {
+			return fmt.Errorf("rTorrent save path must be an absolute remote path")
+		}
+	}
+	if len(request.Category) > 100 || strings.ContainsAny(request.Category, "\r\n") {
+		return fmt.Errorf("invalid rTorrent label")
+	}
+	return nil
+}
+
+func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
+	if strings.TrimSpace(cfg.ProwlarrURL) == "" {
+		return nil, fmt.Errorf("rTorrent torrent URL requires configured Prowlarr access")
+	}
+	if _, err := netutil.ValidateSameOriginHTTPURL(rawURL, cfg.ProwlarrURL); err != nil {
+		return nil, fmt.Errorf("rTorrent torrent URL rejected: %w", err)
+	}
+	client := &http.Client{Timeout: cfg.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 8 {
+			return fmt.Errorf("too many redirects")
+		}
+		if _, err := netutil.ValidateSameOriginHTTPURL(req.URL.String(), cfg.ProwlarrURL); err != nil {
+			return fmt.Errorf("redirect rejected: %w", err)
+		}
+		return nil
+	}}
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build rTorrent torrent request: %w", err)
+	}
+	if cfg.ProwlarrAPIKey != "" {
+		req.Header.Set("X-Api-Key", cfg.ProwlarrAPIKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch rTorrent torrent: %s", netutil.SanitizeSensitiveText(err.Error()))
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentFetchBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read rTorrent torrent: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch rTorrent torrent HTTP %d", resp.StatusCode)
+	}
+	if len(body) > maxTorrentFetchBytes {
+		return nil, fmt.Errorf("torrent response too large")
+	}
+	if _, err := validateTorrentBytes(resp.Header.Get("Content-Type"), body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
 
 func (r *RTorrentClient) TestConnection(ctx context.Context) (ClientInfo, error) {
 	version, err := r.call(ctx, "system.client_version")
@@ -160,6 +311,32 @@ func (r *RTorrentClient) GetDownload(ctx context.Context, id string) (ClientDown
 		}
 	}
 	return ClientDownload{}, fmt.Errorf("rTorrent download %q was not found", id)
+}
+
+func (r *RTorrentClient) GetTorrents(category string) ([]TorrentInfo, error) {
+	items, err := r.ListDownloads(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TorrentInfo, 0, len(items))
+	for _, item := range items {
+		if category != "" && item.Label != category {
+			continue
+		}
+		result = append(result, TorrentInfo{Name: item.Name, ContentPath: item.ContentPath, SavePath: item.SavePath, Hash: item.InfoHash, State: item.Status, Progress: item.Progress, TotalSize: item.Size, Category: item.Label})
+	}
+	return result, nil
+}
+
+func (r *RTorrentClient) GetTorrentFiles(string) ([]TorrentFile, error) { return nil, nil }
+
+func (r *RTorrentClient) DeleteTorrent(string, bool) error {
+	return fmt.Errorf("rTorrent torrent removal is not implemented")
+}
+
+func (r *RTorrentClient) DiagnoseLegacy() map[string]interface{} {
+	result := r.Diagnose(context.Background())
+	return map[string]interface{}{"success": result.Success, "steps": result.Steps}
 }
 
 // Diagnose returns the same staged diagnostics shape used by other settings
@@ -249,6 +426,7 @@ type rpcValue struct {
 	Int        *int64  `xml:"int"`
 	I4         *int64  `xml:"i4"`
 	Bool       *int64  `xml:"boolean"`
+	Base64     *string `xml:"base64"`
 	ArrayValue *struct {
 		Values []rpcValue `xml:"data>value"`
 	} `xml:"array"`

@@ -7,10 +7,11 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 
 ### Added
 
-- Phase 1 read-only rTorrent XML-RPC adapter for ruTorrent-managed seedboxes,
-  staged connection diagnostics, client-scoped Remote Path Mappings, and an
-  administrator download-listing endpoint. Submission and deletion are not
-  enabled.
+- Phase 2 rTorrent XML-RPC submission, durable client/hash tracking, mapped
+  completion polling, normalized import integration for ruTorrent-managed
+  seedboxes, client-scoped Remote Path Mappings, and an administrator
+  download-listing endpoint. Removal and data deletion remain intentionally
+  unsupported.
 
 - Normalized book-centric schema and repository selection.
 - LibraryService domain boundary.

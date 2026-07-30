@@ -2,6 +2,34 @@ package download
 
 import "github.com/jamie75/librarr/internal/config"
 
+// TorrentSubmission is the stable identity returned by a write-capable
+// client. It is persisted before polling begins.
+type TorrentSubmission struct {
+	ClientID       string
+	ClientType     string
+	DownloadID     string
+	InfoHash       string
+	Name           string
+	RemoteSavePath string
+	Category       string
+}
+
+type TorrentSubmissionRequest struct {
+	URL              string
+	TorrentBytes     []byte
+	Filename         string
+	Title            string
+	SavePath         string
+	Category         string
+	ExpectedInfoHash string
+}
+
+// WritableTorrentClient is optional so existing TorrentClient implementations
+// and test doubles remain source-compatible while clients gain stable results.
+type WritableTorrentClient interface {
+	SubmitTorrent(TorrentSubmissionRequest) (TorrentSubmission, error)
+}
+
 // TorrentClient is the common interface implemented by every torrent download
 // backend (qBittorrent, Transmission). The rest of Librarr — the download
 // Manager and the completion Watcher — talks to torrents exclusively through
@@ -24,8 +52,6 @@ type TorrentClient interface {
 	GetTorrentFiles(hash string) ([]TorrentFile, error)
 	// DeleteTorrent removes a torrent by hash, optionally deleting its data.
 	DeleteTorrent(hash string, deleteFiles bool) error
-	// Diagnose reports connectivity/auth status for the settings "Test" button.
-	Diagnose() map[string]interface{}
 	// Name is the lowercase client identifier, e.g. "qbittorrent".
 	Name() string
 }
@@ -34,6 +60,7 @@ type TorrentClient interface {
 var (
 	_ TorrentClient = (*QBittorrentClient)(nil)
 	_ TorrentClient = (*TransmissionClient)(nil)
+	_ TorrentClient = (*RTorrentClient)(nil)
 )
 
 // SelectTorrentClient returns the active torrent backend per the configuration,
@@ -41,11 +68,17 @@ var (
 // config.ActiveTorrentClient (explicit TORRENT_CLIENT override, else
 // qBittorrent-preferred auto-detect).
 func SelectTorrentClient(cfg *config.Config, qb *QBittorrentClient, tr *TransmissionClient) TorrentClient {
+	return SelectTorrentClientWithRTorrent(cfg, qb, tr, nil)
+}
+
+func SelectTorrentClientWithRTorrent(cfg *config.Config, qb *QBittorrentClient, tr *TransmissionClient, rt *RTorrentClient) TorrentClient {
 	switch cfg.ActiveTorrentClient() {
 	case "qbittorrent":
 		return qb
 	case "transmission":
 		return tr
+	case "rtorrent":
+		return rt
 	default:
 		return nil
 	}

@@ -95,6 +95,76 @@ func TestRTorrentNotConfigured(t *testing.T) {
 	}
 }
 
+func TestRTorrentSubmitMagnetReturnsStableIdentity(t *testing.T) {
+	hash := "abcdef0123456789abcdef0123456789abcdef01"
+	srv := rtorrentServer(t, func(method string) string {
+		if method == "load.start" {
+			return rpcStringResponse(hash)
+		}
+		return rpcStringResponse("")
+	})
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	result, err := client.SubmitTorrent(TorrentSubmissionRequest{
+		URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", SavePath: "/downloads", Category: "librarr",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+	if result.ClientID != "rtorrent" || result.InfoHash != hash || result.RemoteSavePath != "/downloads" {
+		t.Fatalf("submission = %+v", result)
+	}
+}
+
+func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
+	seenRaw := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call struct {
+			Method string `xml:"methodName"`
+		}
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Errorf("request XML: %v", err)
+		}
+		if call.Method == "load.raw_start" {
+			seenRaw = strings.Contains(string(body), "<base64>")
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	result, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"})
+	if err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+	if !seenRaw || result.InfoHash == "" {
+		t.Fatalf("raw submission = %+v, seenRaw=%v", result, seenRaw)
+	}
+}
+
+func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
+	prowlarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "prowlarr-secret" {
+			t.Fatalf("missing Prowlarr API key")
+		}
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		_, _ = w.Write(validTorrentBytes())
+	}))
+	defer prowlarr.Close()
+	rpc := rtorrentServer(t, func(method string) string {
+		if method != "load.raw_start" {
+			return rpcStringResponse("")
+		}
+		return rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01")
+	})
+	defer rpc.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: rpc.URL, ProwlarrURL: prowlarr.URL, ProwlarrAPIKey: "prowlarr-secret", Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: prowlarr.URL + "/download.torrent", Title: "Book"}); err != nil {
+		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+}
+
 func rpcStringResponse(value string) string {
 	return `<methodResponse><params><param><value><string>` + value + `</string></value></param></params></methodResponse>`
 }

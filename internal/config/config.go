@@ -183,8 +183,8 @@ type Config struct {
 	// ("qbittorrent" or "transmission"). Empty means auto-detect.
 	TorrentClient string
 
-	// rTorrent is a read-only Phase 1 inspection client. It is deliberately
-	// separate from TorrentClient until submission semantics are implemented.
+	// rTorrent is an opt-in torrent client. Cleanup/removal remains disabled;
+	// completed downloads are left available for seeding.
 	RTorrentEnabled    bool
 	RTorrentName       string
 	RTorrentURL        string
@@ -535,14 +535,18 @@ func (c *Config) HasTransmission() bool {
 
 // HasTorrentClient returns true if any torrent download backend is configured.
 func (c *Config) HasTorrentClient() bool {
-	return c.HasQBittorrent() || c.HasTransmission()
+	return c.HasQBittorrent() || c.HasTransmission() || c.HasRTorrent()
+}
+
+func (c *Config) HasRTorrent() bool {
+	return c.RTorrentEnabled && strings.TrimSpace(c.RTorrentURL) != ""
 }
 
 // ActiveTorrentClient resolves which torrent backend handles torrents:
 //   - an explicit, configured TORRENT_CLIENT wins ("qbittorrent"/"qbit"/"qb"
 //     or "transmission");
 //   - otherwise qBittorrent is preferred for backward compatibility;
-//   - otherwise Transmission if it alone is configured;
+//   - otherwise Transmission or rTorrent if configured;
 //   - else "" (no torrent client).
 func (c *Config) ActiveTorrentClient() string {
 	switch strings.ToLower(strings.TrimSpace(c.TorrentClient)) {
@@ -554,12 +558,19 @@ func (c *Config) ActiveTorrentClient() string {
 		if c.HasTransmission() {
 			return "transmission"
 		}
+	case "rtorrent":
+		if c.HasRTorrent() {
+			return "rtorrent"
+		}
 	}
 	if c.HasQBittorrent() {
 		return "qbittorrent"
 	}
 	if c.HasTransmission() {
 		return "transmission"
+	}
+	if c.HasRTorrent() {
+		return "rtorrent"
 	}
 	return ""
 }

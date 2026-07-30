@@ -133,6 +133,20 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if selected, ok := data["torrent_client"].(string); ok && strings.EqualFold(strings.TrimSpace(selected), "rtorrent") {
+		enabled := s.cfg.RTorrentEnabled
+		if value, ok := data["rtorrent_enabled"].(bool); ok {
+			enabled = value
+		}
+		urlValue := s.cfg.RTorrentURL
+		if value, ok := data["rtorrent_url"].(string); ok {
+			urlValue = value
+		}
+		if !enabled || strings.TrimSpace(urlValue) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "rTorrent must be enabled and configured before it can be selected"})
+			return
+		}
+	}
 	if value, ok := data["annas_archive_domain"].(string); ok && value != "" {
 		data["annas_archive_domain"] = sources.NormalizeDomain(value)
 	}

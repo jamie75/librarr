@@ -134,6 +134,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Username: cfg.RTorrentUser,
 		Password: cfg.RTorrentPass, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
 		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
+		ProwlarrURL: cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
 	})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
@@ -534,6 +535,7 @@ func (s *Server) registerAdminRoutes() {
 	s.mux.HandleFunc("POST /api/test/sabnzbd", requireAdmin(s.handleTestSABnzbd))
 	s.mux.HandleFunc("POST /api/test/rtorrent", requireAdmin(s.handleTestRTorrent))
 	s.mux.HandleFunc("GET /api/rtorrent", requireAdmin(s.handleGetRTorrent))
+	s.mux.HandleFunc("GET /api/download-clients", requireAdmin(s.handleGetDownloadClients))
 	s.mux.HandleFunc("GET /api/rtorrent/downloads", requireAdmin(s.handleListRTorrentDownloads))
 	s.mux.HandleFunc("GET /api/rtorrent/mappings", requireAdmin(s.handleGetRTorrentMappings))
 	s.mux.HandleFunc("POST /api/rtorrent/mappings", requireAdmin(s.handleAddRTorrentMapping))

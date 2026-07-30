@@ -563,17 +563,17 @@
           </div>
 
           <!-- Transmission -->
-          <!-- rTorrent / ruTorrent (Phase 1 is read-only inspection) -->
+          <!-- rTorrent / ruTorrent -->
           <div class="bg-slate-800/40 rounded-lg p-4">
             <div class="flex items-center justify-between mb-3">
               <div>
                 <h4 class="text-sm font-medium text-slate-200">rTorrent / ruTorrent</h4>
-                <p class="mt-1 text-xs text-slate-500">Read-only XML-RPC validation and download listing. Submission is not enabled yet.</p>
+                <p class="mt-1 text-xs text-slate-500">XML-RPC validation, submission, and completion tracking. Cleanup/removal is not implemented.</p>
               </div>
               <button data-action="saveIntegration" data-arg="rtorrent" class="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors">Save</button>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <label class="flex items-center gap-2 text-sm text-slate-300 md:col-span-3"><input type="checkbox" id="setting-rtorrent_enabled" class="rounded border-slate-700 bg-slate-900"> Enable rTorrent inspection</label>
+              <label class="flex items-center gap-2 text-sm text-slate-300 md:col-span-3"><input type="checkbox" id="setting-rtorrent_enabled" class="rounded border-slate-700 bg-slate-900"> Enable rTorrent</label>
               <div><label class="block text-xs text-slate-500 mb-1">Display name</label><input type="text" id="setting-rtorrent_name" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200" placeholder="rTorrent"></div>
               <div class="md:col-span-2"><label class="block text-xs text-slate-500 mb-1">XML-RPC URL</label><input type="text" id="setting-rtorrent_url" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200" placeholder="https://seedbox.example/rutorrent/plugins/httprpc/action.php"></div>
               <div><label class="block text-xs text-slate-500 mb-1">Username</label><input type="text" id="setting-rtorrent_user" class="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"></div>
@@ -620,8 +620,9 @@
                 <option value="">Auto (qBittorrent preferred)</option>
                 <option value="qbittorrent">qBittorrent</option>
                 <option value="transmission">Transmission</option>
+                <option value="rtorrent">rTorrent</option>
               </select>
-              <p class="text-xs text-slate-500 mt-1">Only matters when both qBittorrent and Transmission are configured. Restart the container after changing.</p>
+              <p class="text-xs text-slate-500 mt-1">rTorrent is available after it is enabled and diagnostics succeed. Cleanup/removal is not implemented.</p>
             </div>
           </div>
 

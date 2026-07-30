@@ -541,7 +541,7 @@ func (s *Server) processApprovedRequest(req *models.Request) {
 		}
 
 		savePath, category := s.resolveSavePathAndCategory(req.BookType)
-		if err := s.downloadMgr.StartTorrentDownload(url, chosen.Title, savePath, category, chosen.InfoHash); err != nil {
+		if _, err := s.downloadMgr.StartTorrentDownloadTracked(url, chosen.Title, savePath, category, chosen.InfoHash, dlReq.MediaType, "request", dlReq.SourceID); err != nil {
 			var verificationWarning *download.TorrentVerificationWarning
 			if errors.As(err, &verificationWarning) {
 				slog.Warn("torrent accepted; verification pending", "title", chosen.Title, "warning", err.Error())

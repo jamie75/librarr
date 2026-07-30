@@ -1025,6 +1025,9 @@
     "/api/rtorrent": {
       "get": { "summary": "Get sanitized rTorrent inspection configuration" }
     },
+    "/api/download-clients": {
+      "get": { "summary": "List configured download clients and capabilities" }
+    },
     "/api/rtorrent/downloads": {
       "get": { "summary": "List rTorrent downloads without modifying them" }
     },

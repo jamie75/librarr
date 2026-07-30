@@ -182,10 +182,12 @@ Provide *arr-style configurable download clients through a common interface.
 
 - [ ] Treat qBittorrent as the reference torrent implementation.
 - [ ] Bring Transmission into the same adapter interface.
-- [x] Add read-only rTorrent XML-RPC support compatible with ruTorrent-managed installations.
+- [x] Add rTorrent XML-RPC support compatible with ruTorrent-managed installations.
 - [x] Add generic, client-scoped Remote Path Mappings with safe longest-prefix resolution.
-- [x] Add Phase 1 rTorrent diagnostics and read-only download listing.
-- [ ] Add rTorrent submission, deletion, and completed-download integration.
+- [x] Add rTorrent diagnostics and download listing.
+- [x] Add rTorrent magnet/raw torrent submission, durable client/hash tracking,
+      mapped completion polling, and normalized import integration.
+- [ ] Add rTorrent deletion and remote data cleanup (intentionally deferred).
 - [ ] Add Deluge support.
 - [ ] Validate completed-download handling against each client.
 - [ ] Add client-specific diagnostics without leaking implementation details into the import pipeline.

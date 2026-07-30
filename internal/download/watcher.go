@@ -31,6 +31,8 @@ type Watcher struct {
 	targets   *organize.LibraryTargets
 	health    *search.HealthTracker
 	importer  libraryimport.ImportEngine
+	mappings  []RemotePathMapping
+	registry  *ClientRegistry
 
 	processing sync.Map // hash -> struct{}, tracks in-progress imports
 	imported   sync.Map // hash -> struct{}, tracks already-imported hashes
@@ -54,6 +56,14 @@ func NewWatcherWithImportEngine(cfg *config.Config, database *db.DB, torrent Tor
 		health:    health,
 		importer:  importer,
 	}
+}
+
+func (w *Watcher) SetRemotePathMappings(mappings []RemotePathMapping) {
+	w.mappings = append([]RemotePathMapping(nil), mappings...)
+}
+
+func (w *Watcher) SetClientRegistry(registry *ClientRegistry) {
+	w.registry = registry
 }
 
 // Start begins the background watcher loop. It blocks until ctx is cancelled.
@@ -82,6 +92,10 @@ func (w *Watcher) Start(ctx context.Context) {
 }
 
 func (w *Watcher) checkCompleted() {
+	w.checkTracked()
+	if clientType, ok := w.torrent.(interface{ Type() string }); ok && clientType.Type() == "rtorrent" {
+		return
+	}
 	categories := []struct {
 		name      string
 		mediaType string
@@ -113,6 +127,163 @@ func (w *Watcher) checkCompleted() {
 			go w.importTorrent(t, cat.mediaType)
 		}
 	}
+}
+
+func (w *Watcher) checkTracked() {
+	tracked, err := w.db.GetTrackedDownloads()
+	if err != nil {
+		return
+	}
+	activeClient := w.torrent
+	clientID := activeClient.Name()
+	if identified, ok := activeClient.(interface{ ClientID() string }); ok {
+		clientID = identified.ClientID()
+	}
+	for _, item := range tracked {
+		if item.ImportStatus == "imported" {
+			continue
+		}
+		pollClient := activeClient
+		if w.registry != nil {
+			resolvedClient, resolveErr := w.registry.Resolve(item.ClientID)
+			if resolveErr != nil {
+				item.LastError = resolveErr.Error()
+				_ = w.db.UpdateTrackedDownload(&item)
+				continue
+			}
+			pollClient = resolvedClient
+			clientID = item.ClientID
+		} else if item.ClientID != clientID && item.ClientType != clientID {
+			continue
+		}
+		current, err := pollClient.GetTorrents(item.Category)
+		if err != nil {
+			item.LastError = err.Error()
+			_ = w.db.UpdateTrackedDownload(&item)
+			continue
+		}
+		var match *TorrentInfo
+		for i := range current {
+			if strings.EqualFold(current[i].Hash, item.InfoHash) || strings.EqualFold(current[i].Hash, item.DownloadID) {
+				match = &current[i]
+				break
+			}
+		}
+		if match == nil {
+			item.LastError = "tracked download is not currently visible in the configured client"
+			_ = w.db.UpdateTrackedDownload(&item)
+			continue
+		}
+		item.LastObservedStatus = match.State
+		item.Progress = match.Progress
+		item.Status = MapTorrentStatus(match.State)
+		if match.Progress < 1 {
+			_ = w.db.UpdateTrackedDownload(&item)
+			continue
+		}
+		if item.CompletedAt == nil {
+			now := time.Now().UTC()
+			item.CompletedAt = &now
+		}
+		resolved := ResolveRemotePath(item.ClientID, firstNonEmpty(match.ContentPath, match.SavePath), w.mappings)
+		if resolvedPath := firstNonEmpty(match.ContentPath, match.SavePath); filepath.IsAbs(resolvedPath) {
+			clientType, _ := pollClient.(interface{ Type() string })
+			safeExact := clientType == nil || clientType.Type() != "rtorrent" || localPathMatchesClientMapping(item.ClientID, resolvedPath, w.mappings)
+			if safeExact {
+				if _, statErr := os.Stat(resolvedPath); statErr == nil {
+					resolved = PathResolution{Strategy: "reported_path_exists", ClientID: item.ClientID, ReportedPath: resolvedPath, ResolvedPath: resolvedPath, Exists: true}
+				}
+			}
+		}
+		if resolved.ResolvedPath != "" && !resolved.Exists && (resolved.Strategy == "reported_path_exists" || localPathMatchesClientMapping(item.ClientID, resolved.ResolvedPath, w.mappings)) {
+			if _, statErr := os.Stat(resolved.ResolvedPath); statErr == nil {
+				resolved.Exists = true
+			}
+		}
+		// Preserve the established qBittorrent/Transmission fallback while
+		// requiring explicit client-scoped mappings for rTorrent.
+		if !resolved.Exists {
+			if clientType, ok := pollClient.(interface{ Type() string }); !ok || clientType.Type() != "rtorrent" {
+				legacy := (&Watcher{cfg: w.cfg, torrent: pollClient}).resolveLocalPathResult(*match, item.MediaType)
+				if legacy.Failure == "" {
+					resolved = PathResolution{Strategy: legacy.Strategy, ClientID: item.ClientID, ReportedPath: legacy.ReportedPath, ResolvedPath: legacy.Path, Exists: pathExists(legacy.Path), FailureReason: legacy.Failure}
+				}
+			}
+		}
+		item.RemotePath = resolved.ReportedPath
+		item.LocalPath = resolved.ResolvedPath
+		slog.Debug("tracked download path resolution",
+			"client_id", item.ClientID, "client_type", item.ClientType,
+			"torrent_hash", item.InfoHash, "torrent_name", item.Title,
+			"reported_path", resolved.ReportedPath, "strategy", resolved.Strategy,
+			"matched_remote_prefix", resolved.MatchedRemote, "local_prefix", resolved.LocalPrefix,
+			"resolved_path", resolved.ResolvedPath, "exists", resolved.Exists,
+			"failure_reason", resolved.FailureReason)
+		if !resolved.Exists {
+			item.ImportStatus = "pending"
+			item.LastError = firstNonEmpty(resolved.FailureReason, "mapped local content is not available")
+			_ = w.db.UpdateTrackedDownload(&item)
+			continue
+		}
+		if _, loaded := w.processing.LoadOrStore(item.InfoHash, struct{}{}); loaded {
+			continue
+		}
+		go w.importTracked(item, *match)
+	}
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func localPathMatchesClientMapping(clientID, candidate string, mappings []RemotePathMapping) bool {
+	candidate = cleanPath(candidate)
+	for _, mapping := range mappings {
+		if !mapping.Enabled || !strings.EqualFold(mapping.ClientID, clientID) {
+			continue
+		}
+		localRoot := cleanPath(mapping.LocalPath)
+		if !pathWithin(candidate, localRoot) {
+			continue
+		}
+		resolvedCandidate, candidateErr := filepath.EvalSymlinks(candidate)
+		resolvedRoot, rootErr := filepath.EvalSymlinks(localRoot)
+		if candidateErr == nil && rootErr == nil {
+			return pathWithin(resolvedCandidate, resolvedRoot)
+		}
+		return true
+	}
+	return false
+}
+
+func (w *Watcher) importTracked(item models.TrackedDownload, torrent TorrentInfo) {
+	defer w.processing.Delete(item.InfoHash)
+	localPath := item.LocalPath
+	torrent.ContentPath = localPath
+	mediaType := item.MediaType
+	if err := func() error {
+		switch mediaType {
+		case "audiobook":
+			return w.importAudiobook(torrent, localPath)
+		case "manga":
+			return w.importManga(torrent, localPath)
+		default:
+			return w.importEbook(torrent, localPath)
+		}
+	}(); err != nil {
+		item.ImportStatus = "failed"
+		item.LastError = err.Error()
+		_ = w.db.UpdateTrackedDownload(&item)
+		return
+	}
+	now := time.Now().UTC()
+	item.ImportStatus = "imported"
+	item.Status = "imported"
+	item.ImportedAt = &now
+	item.LastError = ""
+	_ = w.db.UpdateTrackedDownload(&item)
+	w.imported.Store(item.InfoHash, struct{}{})
 }
 
 func (w *Watcher) importTorrent(t TorrentInfo, mediaType string) {

@@ -97,6 +97,29 @@ func (d *DB) migrate() error {
 			created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
 			updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS tracked_downloads (
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			client_type TEXT NOT NULL,
+			download_id TEXT NOT NULL DEFAULT '',
+			info_hash TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			media_type TEXT NOT NULL DEFAULT 'ebook',
+			source TEXT NOT NULL DEFAULT '',
+			source_id TEXT NOT NULL DEFAULT '',
+			category TEXT NOT NULL DEFAULT '',
+			remote_save_path TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'submitted',
+			last_observed_status TEXT NOT NULL DEFAULT '',
+			progress REAL NOT NULL DEFAULT 0,
+			remote_path TEXT NOT NULL DEFAULT '',
+			local_path TEXT NOT NULL DEFAULT '',
+			import_status TEXT NOT NULL DEFAULT 'pending',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+			completed_at REAL,
+			imported_at REAL
+		)`,
 		`CREATE TABLE IF NOT EXISTS wishlist (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			title TEXT NOT NULL DEFAULT '',
@@ -108,6 +131,8 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_library_items_media_type ON library_items(media_type)`,
 		`CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp)`,
 		`CREATE INDEX IF NOT EXISTS idx_download_jobs_status ON download_jobs(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracked_downloads_hash ON tracked_downloads(info_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracked_downloads_client ON tracked_downloads(client_id, status)`,
 	}
 
 	// Users table for multi-user auth.

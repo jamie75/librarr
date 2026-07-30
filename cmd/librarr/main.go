@@ -94,7 +94,13 @@ func main() {
 	qb := download.NewQBittorrentClient(cfg)
 	transmission := download.NewTransmissionClient(cfg)
 	sab := download.NewSABnzbdClient(cfg)
-	torrentClient := download.SelectTorrentClient(cfg, qb, transmission)
+	rtorrent := download.NewRTorrentClient(download.RTorrentConfig{
+		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Username: cfg.RTorrentUser,
+		Password: cfg.RTorrentPass, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
+		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
+		ProwlarrURL: cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
+	})
+	torrentClient := download.SelectTorrentClientWithRTorrent(cfg, qb, transmission, rtorrent)
 	if torrentClient != nil {
 		slog.Info("active torrent client", "client", torrentClient.Name())
 	} else {
@@ -132,6 +138,10 @@ func main() {
 		slog.Error("failed to configure import engine", "error", err)
 		os.Exit(1)
 	}
+	if cfg.ActiveTorrentClient() == "rtorrent" && importSelection.Mode != libraryimport.EngineModeV2 {
+		slog.Error("rTorrent completion imports require the normalized import engine")
+		os.Exit(1)
+	}
 	slog.Info("import engine selected", "mode", importSelection.Mode)
 	downloadMgr := download.NewManagerWithImportEngine(cfg, database, torrentClient, sab, directDL, organizer, targets, health, librarySelection.LibraryService, importSelection.Engine, importSelection.Mode)
 
@@ -145,6 +155,18 @@ func main() {
 
 	// Start torrent completion watcher.
 	watcher := download.NewWatcherWithImportEngine(cfg, database, torrentClient, organizer, targets, health, importSelection.Engine)
+	watcher.SetRemotePathMappings(download.LoadRemotePathMappings(cfg.SettingsFile))
+	configuredClients := make([]download.TorrentClient, 0, 3)
+	if cfg.HasQBittorrent() {
+		configuredClients = append(configuredClients, qb)
+	}
+	if cfg.HasTransmission() {
+		configuredClients = append(configuredClients, transmission)
+	}
+	if cfg.HasRTorrent() {
+		configuredClients = append(configuredClients, rtorrent)
+	}
+	watcher.SetClientRegistry(download.NewClientRegistry(configuredClients...))
 	go watcher.Start(ctx)
 
 	// Start audiobook folder scanner (Feature 21).

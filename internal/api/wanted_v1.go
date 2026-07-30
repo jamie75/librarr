@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -604,7 +605,7 @@ func (s *Server) submitWantedReleaseToTorrent(ctx context.Context, item models.W
 		category = s.cfg.QBMangaCategory
 	}
 
-	err = s.downloadMgr.StartTorrentDownload(url, firstNonEmptyString(release.Title, item.Title), savePath, category, "")
+	_, err = s.downloadMgr.StartTorrentDownloadTracked(url, firstNonEmptyString(release.Title, item.Title), savePath, category, "", item.MediaType, "wanted", fmt.Sprintf("wanted:%d", item.ID))
 	var verificationWarning *download.TorrentVerificationWarning
 	if errors.As(err, &verificationWarning) {
 		return errString(err), nil

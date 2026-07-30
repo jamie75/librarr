@@ -398,8 +398,8 @@ them.
 
 ## Download Client Architecture
 
-Phase 1 also includes a separate read-only inspection contract for clients that
-are not yet safe to use for submission:
+The download layer includes a separate read-only inspection contract plus an
+optional write capability. This keeps polling and submission identity explicit:
 
 ```go
 type ReadOnlyDownloadClient interface {
@@ -412,11 +412,14 @@ type ReadOnlyDownloadClient interface {
 }
 ```
 
-rTorrent implements this contract through XML-RPC. It does not implement the
-existing write-oriented `TorrentClient`, so qBittorrent and Transmission
-submission and watcher behavior remain unchanged. The shared Remote Path
-Mapping service is client-scoped, uses the longest matching normalized remote
-prefix, and rejects traversal outside the configured local prefix.
+rTorrent implements the inspection contract and the optional write capability
+through XML-RPC. Magnet submissions use `load.start`; validated `.torrent`
+bytes use `load.raw_start`. Each accepted submission is recorded in
+`tracked_downloads` with client ID, client type, hash, media type, category,
+and remote path. The watcher resolves that same client/hash and uses the shared
+client-scoped Remote Path Mapping service before invoking normalized import.
+Removal and data deletion remain unsupported, so completed torrents are left
+seeding.
 
 Librarr should support download clients through a common interface modeled after *arr behavior.
 

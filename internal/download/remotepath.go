@@ -1,10 +1,41 @@
 package download
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
+
+// LoadRemotePathMappings reads the persisted client-scoped mappings without
+// exposing settings-file details to the watcher or API layers.
+func LoadRemotePathMappings(path string) []RemotePathMapping {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var settings map[string]any
+	if json.Unmarshal(body, &settings) != nil {
+		return nil
+	}
+	raw, ok := settings["rtorrent_path_mappings"]
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var mappings []RemotePathMapping
+	if json.Unmarshal(encoded, &mappings) != nil {
+		return nil
+	}
+	return mappings
+}
 
 // RemotePathMapping translates a path reported by one download client into
 // the path visible to Librarr. Mappings are intentionally client-scoped.
