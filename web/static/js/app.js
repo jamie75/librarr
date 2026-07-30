@@ -839,7 +839,10 @@ async function api(path, options = {}) {
 
 async function apiJson(path, options = {}) {
   const resp = await api(path, options);
-  if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || `API error: ${resp.status}`);
+  }
   return resp.json();
 }
 

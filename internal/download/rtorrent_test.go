@@ -4,6 +4,8 @@ import (
 	"crypto/md5" // #nosec G501 -- test fixture for HTTP Digest.
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +135,33 @@ func TestRTorrentEndpointFieldsMigrateLegacyURL(t *testing.T) {
 	endpoint, err := RTorrentEndpoint(RTorrentConfig{Host: "seedbox.example", Port: 443, UseTLS: true, URLPath: "/rpc"})
 	if err != nil || endpoint != "https://seedbox.example:443/rpc" {
 		t.Fatalf("endpoint=%q err=%v", endpoint, err)
+	}
+}
+
+func TestRTorrentXMLRPCFaultPreservesCodeAndMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call struct {
+			Method string `xml:"methodName"`
+		}
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		io.WriteString(w, rpcFaultResponse(17, "Could not create directory"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	_, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"})
+	var fault *RPCFaultError
+	if !errors.As(err, &fault) {
+		t.Fatalf("error=%v, want RPCFaultError", err)
+	}
+	if fault.Code != "17" || fault.FaultString != "Could not create directory" || fault.Method != "load.raw_start_verbose" || fault.HTTPStatus != http.StatusOK {
+		t.Fatalf("fault=%+v", fault)
+	}
+	if !strings.Contains(err.Error(), "code 17: Could not create directory") {
+		t.Fatalf("error=%v", err)
 	}
 }
 
@@ -309,4 +338,11 @@ func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
 
 func rpcStringResponse(value string) string {
 	return `<methodResponse><params><param><value><string>` + value + `</string></value></param></params></methodResponse>`
+}
+
+func rpcFaultResponse(code int, message string) string {
+	return `<methodResponse><fault><value><struct>` +
+		`<member><name>faultCode</name><value><int>` + fmt.Sprint(code) + `</int></value></member>` +
+		`<member><name>faultString</name><value><string>` + message + `</string></value></member>` +
+		`</struct></value></fault></methodResponse>`
 }

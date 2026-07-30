@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -409,6 +410,7 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 	probe := rtorrentProbe{}
 	requestURL := r.cfg.URL
 	for attempt := 0; attempt < 3; attempt++ {
+		slog.Debug("rTorrent XML-RPC method", "method", method, "args", debugRPCArgs(params), "phase", "before_request")
 		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(requestBody))
 		if requestErr != nil {
 			return rpcValue{}, probe, fmt.Errorf("build rTorrent request: %w", requestErr)
@@ -432,11 +434,13 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 		}
 		resp, requestErr := r.client.Do(req)
 		if requestErr != nil {
+			slog.Debug("rTorrent XML-RPC request failed", "method", method, "args", debugRPCArgs(params), "phase", "before_response_parsing", "error", requestErr)
 			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC request failed: %w", requestErr)
 		}
 		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
 		if readErr != nil {
+			slog.Debug("rTorrent XML-RPC response read failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "before_response_parsing", "error", readErr)
 			return rpcValue{}, probe, fmt.Errorf("read rTorrent response: %w", readErr)
 		}
 		probe.status = resp.StatusCode
@@ -461,6 +465,7 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 			return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			slog.Debug("rTorrent XML-RPC HTTP failure", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "before_response_parsing")
 			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC endpoint returned HTTP %d", resp.StatusCode)
 		}
 		if challenge != nil {
@@ -472,15 +477,48 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 			probe.authScheme = "None"
 		}
 		if strings.Contains(strings.ToLower(string(responseBody)), "<html") {
+			slog.Debug("rTorrent XML-RPC response parsing failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", "HTML response")
 			return rpcValue{}, probe, fmt.Errorf("rTorrent endpoint returned HTML instead of XML-RPC")
 		}
+		slog.Debug("rTorrent XML-RPC method", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing")
 		value, parseErr := parseRPCResponse(responseBody)
 		if parseErr != nil {
+			var fault *RPCFaultError
+			if errors.As(parseErr, &fault) {
+				fault.Method = method
+				fault.HTTPStatus = resp.StatusCode
+				fault.Phase = "after_response_parsing"
+				slog.Error("rTorrent XML-RPC fault", "method", method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", resp.StatusCode, "phase", fault.Phase)
+			} else {
+				slog.Debug("rTorrent XML-RPC response parsing failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", parseErr)
+			}
 			return rpcValue{}, probe, parseErr
 		}
+		slog.Debug("rTorrent XML-RPC method completed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing")
 		return value, probe, nil
 	}
 	return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected after Digest challenge")
+}
+
+func debugRPCArgs(params []rpcValue) []string {
+	args := make([]string, 0, len(params))
+	for _, param := range params {
+		switch {
+		case param.Base64 != nil:
+			args = append(args, "<torrent bytes omitted>")
+		case param.String != nil:
+			args = append(args, *param.String)
+		case param.Int != nil:
+			args = append(args, fmt.Sprintf("%d", *param.Int))
+		case param.I4 != nil:
+			args = append(args, fmt.Sprintf("%d", *param.I4))
+		case param.Bool != nil:
+			args = append(args, fmt.Sprintf("%d", *param.Bool))
+		default:
+			args = append(args, "<complex value omitted>")
+		}
+	}
+	return args
 }
 
 func sameRTorrentOriginRedirect(endpoint string) func(*http.Request, []*http.Request) error {
@@ -625,6 +663,35 @@ type rpcValue struct {
 	ArrayValue *struct {
 		Values []rpcValue `xml:"data>value"`
 	} `xml:"array"`
+	StructValue *struct {
+		Members []rpcMember `xml:"member"`
+	} `xml:"struct"`
+}
+
+type rpcMember struct {
+	Name  string   `xml:"name"`
+	Value rpcValue `xml:"value"`
+}
+
+// RPCFaultError preserves the server-provided XML-RPC fault details while
+// keeping method/status context available to API callers and diagnostics.
+type RPCFaultError struct {
+	Method      string
+	Code        string
+	FaultString string
+	HTTPStatus  int
+	Phase       string
+}
+
+func (e *RPCFaultError) Error() string {
+	message := "rTorrent XML-RPC fault"
+	if e.Code != "" {
+		message += " code " + e.Code
+	}
+	if e.FaultString != "" {
+		message += ": " + e.FaultString
+	}
+	return message
 }
 
 func (v rpcValue) Array() ([]rpcValue, bool) {
@@ -648,6 +715,13 @@ func valueString(v rpcValue) string {
 	}
 	if v.Bool != nil {
 		return fmt.Sprintf("%d", *v.Bool)
+	}
+	if v.StructValue != nil {
+		for _, member := range v.StructValue.Members {
+			if strings.EqualFold(member.Name, "faultString") || strings.EqualFold(member.Name, "message") {
+				return valueString(member.Value)
+			}
+		}
 	}
 	return ""
 }
@@ -674,10 +748,27 @@ func parseRPCResponse(body []byte) (rpcValue, error) {
 		return rpcValue{}, fmt.Errorf("rTorrent returned invalid XML-RPC: %w", err)
 	}
 	if response.Fault != nil {
-		return rpcValue{}, fmt.Errorf("rTorrent XML-RPC fault: %s", valueString(*response.Fault))
+		code, faultString := rpcFaultFields(*response.Fault)
+		return rpcValue{}, &RPCFaultError{Code: code, FaultString: faultString}
 	}
 	if len(response.Params) != 1 {
 		return rpcValue{}, fmt.Errorf("rTorrent XML-RPC response contained no value")
 	}
 	return response.Params[0].Value, nil
+}
+
+func rpcFaultFields(value rpcValue) (string, string) {
+	if value.StructValue == nil {
+		return "", valueString(value)
+	}
+	var code, faultString string
+	for _, member := range value.StructValue.Members {
+		switch {
+		case strings.EqualFold(member.Name, "faultCode") || strings.EqualFold(member.Name, "code"):
+			code = valueString(member.Value)
+		case strings.EqualFold(member.Name, "faultString") || strings.EqualFold(member.Name, "message"):
+			faultString = valueString(member.Value)
+		}
+	}
+	return code, faultString
 }

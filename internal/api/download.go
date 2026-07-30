@@ -132,7 +132,12 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	status := http.StatusOK
+	if err != nil {
+		status = http.StatusBadGateway
+		slog.Error("torrent submission failed", "title", req.Title, "error", errString(err))
+	}
+	writeJSON(w, status, map[string]interface{}{
 		"success": err == nil,
 		"title":   req.Title,
 		"error":   errString(err),
