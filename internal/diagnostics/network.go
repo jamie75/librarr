@@ -71,13 +71,18 @@ func tcpConnect(ctx context.Context, host, port string, timeout time.Duration) e
 }
 
 func tlsHandshake(ctx context.Context, host, port string, timeout time.Duration) error {
+	return tlsHandshakeWithVerify(ctx, host, port, timeout, true)
+}
+
+func tlsHandshakeWithVerify(ctx context.Context, host, port string, timeout time.Duration, verify bool) error {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(&dialer, "tcp", net.JoinHostPort(host, port), &tls.Config{
-		ServerName: host,
-		MinVersion: tls.VersionTLS12,
+		ServerName:         host,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: !verify, // #nosec G402 -- explicit administrator setting.
 	})
 	if err != nil {
 		return err

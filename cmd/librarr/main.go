@@ -95,8 +95,9 @@ func main() {
 	transmission := download.NewTransmissionClient(cfg)
 	sab := download.NewSABnzbdClient(cfg)
 	rtorrent := download.NewRTorrentClient(download.RTorrentConfig{
-		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Username: cfg.RTorrentUser,
-		Password: cfg.RTorrentPass, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
+		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Host: cfg.RTorrentHost, Port: cfg.RTorrentPort,
+		UseTLS: cfg.RTorrentUseTLS, URLPath: cfg.RTorrentURLPath, Username: cfg.RTorrentUser,
+		Password: cfg.RTorrentPass, AuthMode: cfg.RTorrentAuthMode, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
 		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
 		ProwlarrURL: cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
 	})

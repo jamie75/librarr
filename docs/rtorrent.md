@@ -9,20 +9,36 @@ seeding.
 
 ## Configuration
 
-Configure `RTORRENT_URL` with the XML-RPC endpoint already exposed by the
-seedbox. Keep credentials in the separate fields; credential-bearing URLs are
-rejected. The Settings page also supports saving and testing the connection.
+The preferred configuration uses separate Host, Port, Use TLS, and URL Path
+fields. For the common ruTorrent endpoint, use
+`https://HOST:443/rutorrent/plugins/httprpc/action.php`. Keep credentials in
+the separate fields; credential-bearing URLs are rejected. Existing
+`RTORRENT_URL` values remain supported and are normalized into these fields in
+the Settings response.
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `RTORRENT_ENABLED` | `false` | Enables rTorrent |
 | `RTORRENT_NAME` | `rTorrent` | Display name |
-| `RTORRENT_URL` | | HTTP/HTTPS XML-RPC endpoint |
-| `RTORRENT_USER` | | Optional HTTP basic-auth username |
-| `RTORRENT_PASS` | | Optional HTTP basic-auth password |
+| `RTORRENT_URL` | | Legacy full HTTP/HTTPS XML-RPC endpoint |
+| `RTORRENT_HOST` | | Seedbox hostname |
+| `RTORRENT_PORT` | `443` | XML-RPC port |
+| `RTORRENT_USE_TLS` | `true` | Use HTTPS when constructing the endpoint |
+| `RTORRENT_URL_PATH` | `/rutorrent/plugins/httprpc/action.php` | XML-RPC path |
+| `RTORRENT_USER` | | HTTP authentication username |
+| `RTORRENT_PASS` | | HTTP authentication password |
+| `RTORRENT_AUTH_MODE` | `auto` | `auto`, `basic`, or `digest` |
 | `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC request timeout |
 | `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
 | `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
+
+`auto` is recommended. Basic authentication is attempted when credentials are
+configured; if the server responds with `WWW-Authenticate: Digest`, Librarr
+performs the MD5/qop=auth challenge-response and retries the XML-RPC call.
+`digest` starts with the Digest challenge flow, while `basic` never falls back
+to Digest. A successful authenticated retry is reported as success; the
+initial 401 challenge is not a failure. Supported Digest features include
+MD5, qop=auth, nonce counts, opaque values, and one safe `stale=true` retry.
 
 For HTTP/HTTPS Prowlarr torrent URLs, Librarr fetches and validates the
 `.torrent` bytes locally, then submits them with `load.raw_start`. Magnets are
@@ -54,15 +70,17 @@ For `/downloads/rclone-mnt/downloads/example.epub`, map remote
 ## Dogfood checklist
 
 1. Find the XML-RPC endpoint used by ruTorrent; do not guess from the web UI URL.
-2. Enable rTorrent, enter the endpoint and credentials, and run diagnostics.
-3. Configure rTorrent as the active torrent client only after diagnostics pass.
-4. Add the mapping `remote=/downloads/rclone-mnt/downloads` to
+2. Enable rTorrent, enter Host, Port `443`, Use TLS, and
+   `/rutorrent/plugins/httprpc/action.php`, then choose Digest or Auto.
+3. Enter credentials and run diagnostics.
+4. Configure rTorrent as the active torrent client only after diagnostics pass.
+5. Add the mapping `remote=/downloads/rclone-mnt/downloads` to
    `local=/data/incoming`.
-5. Submit one small magnet or `.torrent` release and record its hash.
-6. Confirm `GET /api/downloads` shows the rTorrent client, hash, status, and
+6. Submit one small magnet or `.torrent` release and record its hash.
+7. Confirm `GET /api/downloads` shows the rTorrent client, hash, status, and
    remote/local path evidence.
-7. Allow synchronization to complete and confirm normalized import succeeds.
-8. Confirm the torrent remains present and seeding. Do not use cleanup controls;
+8. Allow synchronization to complete and confirm normalized import succeeds.
+9. Confirm the torrent remains present and seeding. Do not use cleanup controls;
    removal is not implemented.
 
 To roll back, select qBittorrent as the active client and restart Librarr. This

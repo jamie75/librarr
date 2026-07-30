@@ -421,6 +421,14 @@ client-scoped Remote Path Mapping service before invoking normalized import.
 Removal and data deletion remain unsupported, so completed torrents are left
 seeding.
 
+rTorrent XML-RPC calls use one bounded authenticated transport. It supports
+`auto`, `basic`, and `digest` modes; Digest MD5/qop=auth challenges, nonce
+counts, opaque values, and a single stale-nonce retry are handled before the
+XML-RPC response is parsed. Redirects must remain on the configured origin and
+authorization is cleared before following them. Legacy full URLs are converted
+to the normalized host, port, TLS, and path settings at the configuration
+boundary.
+
 Librarr should support download clients through a common interface modeled after *arr behavior.
 
 Suggested capabilities:

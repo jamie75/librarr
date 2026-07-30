@@ -598,9 +598,14 @@ not implemented; completed torrents remain available for seeding.
 |---|---:|---|
 | `RTORRENT_ENABLED` | `false` | Enable rTorrent |
 | `RTORRENT_NAME` | `rTorrent` | Display name |
-| `RTORRENT_URL` | | XML-RPC endpoint |
+| `RTORRENT_URL` | | Legacy full HTTP/HTTPS XML-RPC endpoint; retained for compatibility |
+| `RTORRENT_HOST` | | rTorrent/ruTorrent hostname, preferred with the fields below |
+| `RTORRENT_PORT` | `443` | XML-RPC port; defaults to 80 when TLS is disabled |
+| `RTORRENT_USE_TLS` | `true` | Construct an HTTPS endpoint |
+| `RTORRENT_URL_PATH` | `/rutorrent/plugins/httprpc/action.php` | XML-RPC URL path |
 | `RTORRENT_USER` | | Optional username |
 | `RTORRENT_PASS` | | Optional password |
+| `RTORRENT_AUTH_MODE` | `auto` | `auto`, `basic`, or `digest` HTTP authentication |
 | `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC timeout |
 | `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
 | `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
@@ -613,6 +618,12 @@ Prowlarr origin.
 Use Settings → Connection Diagnostics to test the current values. For seedbox
 paths, configure a Remote Path Mapping from the path reported by rTorrent to
 the path visible inside Librarr; see [docs/rtorrent.md](docs/rtorrent.md).
+
+ruTorrent installations commonly require HTTP Digest authentication. In
+`auto` mode Librarr accepts the expected initial 401 challenge, negotiates
+MD5/qop=auth Digest authentication, and retries once with a bounded stale-nonce
+retry. The configured seedbox credentials are never sent to another redirect
+origin or returned in diagnostics.
 
 ### Prowlarr
 

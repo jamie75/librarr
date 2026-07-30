@@ -16,8 +16,13 @@ type rtorrentRequest struct {
 	Enabled    bool   `json:"enabled"`
 	Name       string `json:"name"`
 	URL        string `json:"url"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	UseTLS     *bool  `json:"use_tls"`
+	URLPath    string `json:"url_path"`
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+	AuthMode   string `json:"auth_mode"`
 	Timeout    int    `json:"timeout_seconds"`
 	LabelField string `json:"label_field"`
 	TLSVerify  *bool  `json:"tls_verify"`
@@ -25,6 +30,13 @@ type rtorrentRequest struct {
 
 func (s *Server) handleGetRTorrent(w http.ResponseWriter, _ *http.Request) {
 	settings := s.loadSettings()
+	host, port, useTLS, path, _ := download.RTorrentEndpointFields(download.RTorrentConfig{
+		URL: s.cfg.RTorrentURL, Host: s.cfg.RTorrentHost, Port: s.cfg.RTorrentPort,
+		UseTLS: s.cfg.RTorrentUseTLS, URLPath: s.cfg.RTorrentURLPath,
+	})
+	if host == "" {
+		host, port, useTLS, path = s.cfg.RTorrentHost, s.cfg.RTorrentPort, s.cfg.RTorrentUseTLS, s.cfg.RTorrentURLPath
+	}
 	get := func(key string, fallback interface{}) interface{} {
 		if value, ok := settings[key]; ok {
 			return value
@@ -35,8 +47,13 @@ func (s *Server) handleGetRTorrent(w http.ResponseWriter, _ *http.Request) {
 		"enabled":           get("rtorrent_enabled", s.cfg.RTorrentEnabled),
 		"name":              get("rtorrent_name", s.cfg.RTorrentName),
 		"url":               get("rtorrent_url", s.cfg.RTorrentURL),
+		"host":              get("rtorrent_host", host),
+		"port":              get("rtorrent_port", port),
+		"use_tls":           get("rtorrent_use_tls", useTLS),
+		"url_path":          get("rtorrent_url_path", path),
 		"username":          get("rtorrent_user", s.cfg.RTorrentUser),
 		"password":          maskedValueIfSet(get("rtorrent_pass", s.cfg.RTorrentPass)),
+		"auth_mode":         get("rtorrent_auth_mode", s.cfg.RTorrentAuthMode),
 		"timeout_seconds":   get("rtorrent_timeout_seconds", s.cfg.RTorrentTimeout),
 		"label_field":       get("rtorrent_label_field", s.cfg.RTorrentLabelField),
 		"tls_verify":        get("rtorrent_tls_verify", s.cfg.RTorrentTLSVerify),
@@ -76,6 +93,15 @@ func (s *Server) handleTestRTorrent(w http.ResponseWriter, r *http.Request) {
 	if payload.URL == "" {
 		payload.URL = s.cfg.RTorrentURL
 	}
+	if payload.Host == "" {
+		payload.Host = s.cfg.RTorrentHost
+	}
+	if payload.Port <= 0 {
+		payload.Port = s.cfg.RTorrentPort
+	}
+	if payload.URLPath == "" {
+		payload.URLPath = s.cfg.RTorrentURLPath
+	}
 	if payload.Name == "" {
 		payload.Name = s.cfg.RTorrentName
 	}
@@ -91,6 +117,13 @@ func (s *Server) handleTestRTorrent(w http.ResponseWriter, r *http.Request) {
 	if payload.Timeout <= 0 {
 		payload.Timeout = s.cfg.RTorrentTimeout
 	}
+	useTLS := s.cfg.RTorrentUseTLS
+	if payload.UseTLS != nil {
+		useTLS = *payload.UseTLS
+	}
+	if payload.AuthMode == "" {
+		payload.AuthMode = s.cfg.RTorrentAuthMode
+	}
 	if payload.Timeout <= 0 {
 		payload.Timeout = 10
 	}
@@ -99,7 +132,8 @@ func (s *Server) handleTestRTorrent(w http.ResponseWriter, r *http.Request) {
 		tlsVerify = *payload.TLSVerify
 	}
 	client := download.NewRTorrentClient(download.RTorrentConfig{
-		Name: payload.Name, URL: strings.TrimRight(payload.URL, "/"), Username: payload.Username,
+		Name: payload.Name, URL: strings.TrimRight(payload.URL, "/"), Host: payload.Host, Port: payload.Port,
+		UseTLS: useTLS, URLPath: payload.URLPath, Username: payload.Username, AuthMode: payload.AuthMode,
 		Password: payload.Password, Timeout: time.Duration(payload.Timeout) * time.Second,
 		LabelField: payload.LabelField, TLSVerify: tlsVerify,
 	})

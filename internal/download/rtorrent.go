@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +25,13 @@ import (
 type RTorrentConfig struct {
 	Name           string
 	URL            string
+	Host           string
+	Port           int
+	UseTLS         bool
+	URLPath        string
 	Username       string
 	Password       string
+	AuthMode       string
 	Timeout        time.Duration
 	LabelField     string
 	TLSVerify      bool
@@ -44,7 +51,11 @@ type ReadOnlyDownloadClient interface {
 }
 
 type ClientInfo struct {
-	Version string `json:"version,omitempty"`
+	Version        string `json:"version,omitempty"`
+	AuthScheme     string `json:"auth_scheme,omitempty"`
+	DigestAccepted bool   `json:"digest_accepted,omitempty"`
+	HTTPStatus     int    `json:"http_status,omitempty"`
+	LatencyMillis  int64  `json:"latency_ms,omitempty"`
 }
 
 type ClientDownload struct {
@@ -80,9 +91,16 @@ func NewRTorrentClient(cfg RTorrentConfig) *RTorrentClient {
 	if cfg.LabelField == "" {
 		cfg.LabelField = "d.custom1="
 	}
+	if cfg.AuthMode == "" {
+		cfg.AuthMode = "auto"
+	}
+	if normalized, err := normalizeRTorrentConfig(cfg); err == nil {
+		cfg = normalized
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: !cfg.TLSVerify} // #nosec G402 -- explicit admin setting
-	return &RTorrentClient{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout, Transport: transport}}
+	endpoint := cfg.URL
+	return &RTorrentClient{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout, Transport: transport, CheckRedirect: sameRTorrentOriginRedirect(endpoint)}}
 }
 
 func (r *RTorrentClient) ClientID() string { return "rtorrent" }
@@ -236,11 +254,12 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 }
 
 func (r *RTorrentClient) TestConnection(ctx context.Context) (ClientInfo, error) {
-	version, err := r.call(ctx, "system.client_version")
+	started := time.Now()
+	version, probe, err := r.callDetailed(ctx, "system.client_version")
 	if err != nil {
 		return ClientInfo{}, err
 	}
-	return ClientInfo{Version: valueString(version)}, nil
+	return ClientInfo{Version: valueString(version), AuthScheme: probe.authScheme, DigestAccepted: probe.digestAccepted, HTTPStatus: probe.status, LatencyMillis: time.Since(started).Milliseconds()}, nil
 }
 
 func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, error) {
@@ -343,21 +362,39 @@ func (r *RTorrentClient) DiagnoseLegacy() map[string]interface{} {
 // integrations, while keeping credentials out of the response.
 func (r *RTorrentClient) Diagnose(ctx context.Context) diagnostics.Result {
 	return diagnostics.DiagnoseRTorrent(ctx, diagnostics.RTorrentConfig{
-		URL: r.cfg.URL, Username: r.cfg.Username, Password: r.cfg.Password, Timeout: r.cfg.Timeout,
-		Test: func(testCtx context.Context) (string, error) {
+		URL: r.cfg.URL, AuthMode: r.cfg.AuthMode, TLSVerify: r.cfg.TLSVerify, Timeout: r.cfg.Timeout,
+		Test: func(testCtx context.Context) (diagnostics.RTorrentTestResult, error) {
 			info, err := r.TestConnection(testCtx)
-			return info.Version, err
+			return diagnostics.RTorrentTestResult{Version: info.Version, AuthScheme: info.AuthScheme, DigestAccepted: info.DigestAccepted, HTTPStatus: info.HTTPStatus, LatencyMillis: info.LatencyMillis}, err
 		},
 	})
 }
 
 func (r *RTorrentClient) call(ctx context.Context, method string, params ...rpcValue) (rpcValue, error) {
+	value, _, err := r.callDetailed(ctx, method, params...)
+	return value, err
+}
+
+type rtorrentProbe struct {
+	authScheme     string
+	digestAccepted bool
+	status         int
+}
+
+func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params ...rpcValue) (rpcValue, rtorrentProbe, error) {
+	authMode := strings.ToLower(strings.TrimSpace(r.cfg.AuthMode))
+	if authMode == "" {
+		authMode = "auto"
+	}
+	if authMode != "auto" && authMode != "basic" && authMode != "digest" {
+		return rpcValue{}, rtorrentProbe{}, fmt.Errorf("unsupported rTorrent authentication mode")
+	}
 	if err := netutil.ValidateIntegrationURL(r.cfg.URL); err != nil {
-		return rpcValue{}, fmt.Errorf("invalid rTorrent URL: %w", err)
+		return rpcValue{}, rtorrentProbe{}, fmt.Errorf("invalid rTorrent URL: %w", err)
 	}
 	u, err := url.Parse(r.cfg.URL)
 	if err != nil || u.User != nil {
-		return rpcValue{}, fmt.Errorf("rTorrent URL must not contain credentials")
+		return rpcValue{}, rtorrentProbe{}, fmt.Errorf("rTorrent URL must not contain credentials")
 	}
 	rpcParams := make([]rpcParam, 0, len(params))
 	for _, param := range params {
@@ -365,39 +402,197 @@ func (r *RTorrentClient) call(ctx context.Context, method string, params ...rpcV
 	}
 	body, err := xml.Marshal(rpcRequest{MethodName: method, Params: rpcParams})
 	if err != nil {
-		return rpcValue{}, fmt.Errorf("encode rTorrent XML-RPC request: %w", err)
+		return rpcValue{}, rtorrentProbe{}, fmt.Errorf("encode rTorrent XML-RPC request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.URL, bytes.NewReader(append([]byte(xml.Header), body...)))
+	requestBody := append([]byte(xml.Header), body...)
+	var challenge *digestChallenge
+	probe := rtorrentProbe{}
+	requestURL := r.cfg.URL
+	for attempt := 0; attempt < 3; attempt++ {
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(requestBody))
+		if requestErr != nil {
+			return rpcValue{}, probe, fmt.Errorf("build rTorrent request: %w", requestErr)
+		}
+		req.Header.Set("Content-Type", "text/xml")
+		switch authMode {
+		case "basic":
+			if r.cfg.Username != "" {
+				req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+			}
+		case "digest":
+			if challenge != nil {
+				req.Header.Set("Authorization", digestAuthorization(challenge, r.cfg.Username, r.cfg.Password, req.Method, req.URL.RequestURI()))
+			}
+		default:
+			if challenge != nil {
+				req.Header.Set("Authorization", digestAuthorization(challenge, r.cfg.Username, r.cfg.Password, req.Method, req.URL.RequestURI()))
+			} else if r.cfg.Username != "" {
+				req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+			}
+		}
+		resp, requestErr := r.client.Do(req)
+		if requestErr != nil {
+			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC request failed: %w", requestErr)
+		}
+		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		resp.Body.Close()
+		if readErr != nil {
+			return rpcValue{}, probe, fmt.Errorf("read rTorrent response: %w", readErr)
+		}
+		probe.status = resp.StatusCode
+		if resp.Request != nil && resp.Request.URL != nil {
+			requestURL = resp.Request.URL.String()
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			if authMode == "basic" || r.cfg.Username == "" {
+				return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected")
+			}
+			parsed, parseErr := parseDigestChallenge(resp.Header.Get("WWW-Authenticate"))
+			if parseErr != nil {
+				return rpcValue{}, probe, parseErr
+			}
+			if challenge != nil && !parsed.stale && parsed.nonce == challenge.nonce {
+				return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected after Digest challenge")
+			}
+			challenge = &parsed
+			continue
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected")
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC endpoint returned HTTP %d", resp.StatusCode)
+		}
+		if challenge != nil {
+			probe.authScheme = "Digest"
+			probe.digestAccepted = true
+		} else if r.cfg.Username != "" {
+			probe.authScheme = "Basic"
+		} else {
+			probe.authScheme = "None"
+		}
+		if strings.Contains(strings.ToLower(string(responseBody)), "<html") {
+			return rpcValue{}, probe, fmt.Errorf("rTorrent endpoint returned HTML instead of XML-RPC")
+		}
+		value, parseErr := parseRPCResponse(responseBody)
+		if parseErr != nil {
+			return rpcValue{}, probe, parseErr
+		}
+		return value, probe, nil
+	}
+	return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected after Digest challenge")
+}
+
+func sameRTorrentOriginRedirect(endpoint string) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 8 {
+			return fmt.Errorf("too many rTorrent redirects")
+		}
+		base, baseErr := url.Parse(endpoint)
+		if baseErr != nil || !sameHTTPOrigin(base, req.URL) {
+			return fmt.Errorf("rTorrent redirect rejected: different origin")
+		}
+		req.Header.Del("Authorization")
+		return nil
+	}
+}
+
+func sameHTTPOrigin(left, right *url.URL) bool {
+	if left == nil || right == nil || !strings.EqualFold(left.Scheme, right.Scheme) || !strings.EqualFold(left.Hostname(), right.Hostname()) {
+		return false
+	}
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		if strings.EqualFold(u.Scheme, "https") {
+			return "443"
+		}
+		return "80"
+	}
+	return port(left) == port(right)
+}
+
+func normalizeRTorrentConfig(cfg RTorrentConfig) (RTorrentConfig, error) {
+	if strings.TrimSpace(cfg.URL) != "" && strings.TrimSpace(cfg.Host) == "" {
+		u, err := url.Parse(strings.TrimSpace(cfg.URL))
+		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+			return cfg, fmt.Errorf("invalid rTorrent URL")
+		}
+		cfg.Host, cfg.URLPath, cfg.UseTLS = u.Hostname(), u.EscapedPath(), u.Scheme == "https"
+		if cfg.Port == 0 {
+			if p := u.Port(); p != "" {
+				_, _ = fmt.Sscanf(p, "%d", &cfg.Port)
+			} else if cfg.UseTLS {
+				cfg.Port = 443
+			} else {
+				cfg.Port = 80
+			}
+		}
+		return cfg, nil
+	}
+	if strings.TrimSpace(cfg.Host) == "" {
+		return cfg, nil
+	}
+	if cfg.URLPath == "" {
+		cfg.URLPath = "/rutorrent/plugins/httprpc/action.php"
+	}
+	if !strings.HasPrefix(cfg.URLPath, "/") {
+		cfg.URLPath = "/" + cfg.URLPath
+	}
+	if cfg.Port == 0 {
+		if cfg.UseTLS {
+			cfg.Port = 443
+		} else {
+			cfg.Port = 80
+		}
+	}
+	scheme := "http"
+	if cfg.UseTLS {
+		scheme = "https"
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return cfg, fmt.Errorf("rTorrent port must be between 1 and 65535")
+	}
+	cfg.URL = fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), cfg.URLPath)
+	return cfg, nil
+}
+
+// RTorrentEndpoint returns the effective XML-RPC endpoint while accepting both
+// the current host/port/path fields and the legacy full URL.
+func RTorrentEndpoint(cfg RTorrentConfig) (string, error) {
+	normalized, err := normalizeRTorrentConfig(cfg)
 	if err != nil {
-		return rpcValue{}, fmt.Errorf("build rTorrent request: %w", err)
+		return "", err
 	}
-	req.Header.Set("Content-Type", "text/xml")
-	if r.cfg.Username != "" {
-		req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+	if strings.TrimSpace(normalized.URL) == "" {
+		return "", fmt.Errorf("rTorrent endpoint is not configured")
 	}
-	resp, err := r.client.Do(req)
+	return normalized.URL, nil
+}
+
+// RTorrentEndpointFields returns the effective UI fields, including values
+// migrated from a legacy full URL.
+func RTorrentEndpointFields(cfg RTorrentConfig) (host string, port int, useTLS bool, path string, err error) {
+	normalized, err := normalizeRTorrentConfig(cfg)
 	if err != nil {
-		return rpcValue{}, fmt.Errorf("rTorrent XML-RPC request failed: %w", err)
+		return "", 0, false, "", err
 	}
-	defer resp.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if readErr != nil {
-		return rpcValue{}, fmt.Errorf("read rTorrent response: %w", readErr)
+	u, err := url.Parse(normalized.URL)
+	if err != nil || u.Hostname() == "" {
+		return "", 0, false, "", fmt.Errorf("rTorrent endpoint is not configured")
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return rpcValue{}, fmt.Errorf("rTorrent authentication rejected")
+	port = normalized.Port
+	if port == 0 {
+		if parsedPort := u.Port(); parsedPort != "" {
+			_, _ = fmt.Sscanf(parsedPort, "%d", &port)
+		} else if u.Scheme == "https" {
+			port = 443
+		} else {
+			port = 80
+		}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return rpcValue{}, fmt.Errorf("rTorrent XML-RPC endpoint returned HTTP %d", resp.StatusCode)
-	}
-	if strings.Contains(strings.ToLower(string(responseBody)), "<html") {
-		return rpcValue{}, fmt.Errorf("rTorrent endpoint returned HTML instead of XML-RPC")
-	}
-	value, err := parseRPCResponse(responseBody)
-	if err != nil {
-		return rpcValue{}, err
-	}
-	return value, nil
+	return u.Hostname(), port, u.Scheme == "https", u.EscapedPath(), nil
 }
 
 func mapRTorrentState(active bool, progress float64) string {

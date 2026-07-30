@@ -251,9 +251,11 @@ If you want to walk the flow manually in the UI:
     unsafe paths, and unknown non-cataloged files are skipped.
 12. If Prowlarr or qBittorrent are configured, run Connection Diagnostics and
     verify staged results render in Settings.
-13. To validate a ruTorrent-managed seedbox, enable rTorrent, configure its
-    XML-RPC endpoint in Settings → rTorrent / ruTorrent, run diagnostics,
-    select it as the active torrent client, and add a Remote Path Mapping.
+13. To validate a ruTorrent-managed seedbox, enable rTorrent, configure Host,
+    Port, Use TLS, URL Path, credentials, and Digest/Auto authentication in
+    Settings → rTorrent / ruTorrent, run diagnostics, select it as the active
+    torrent client, and add a Remote Path Mapping. The expected initial HTTP
+    401 Digest challenge is normal when the authenticated retry succeeds.
 14. Submit one small magnet or `.torrent`, confirm the hash and client identity
     in Downloads, wait for synchronization, and verify normalized import.
     Confirm the torrent remains present and seeding; removal and data cleanup

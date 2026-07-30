@@ -1,6 +1,8 @@
 package download
 
 import (
+	"crypto/md5" // #nosec G501 -- test fixture for HTTP Digest.
+	"encoding/hex"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -9,6 +11,146 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRTorrentDigestAuthentication(t *testing.T) {
+	const username, password = "operator", "secret"
+	const realm, nonce = "ruTorrent", "fixed-nonce"
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Digest ") {
+			w.Header().Set("WWW-Authenticate", `Digest realm="`+realm+`", nonce="`+nonce+`", algorithm=MD5, qop="auth", opaque="opaque-value"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if !strings.Contains(auth, `qop=auth`) || !strings.Contains(auth, `nc=00000001`) || !strings.Contains(auth, `opaque="opaque-value"`) {
+			t.Fatalf("Digest authorization = %s", auth)
+		}
+		fields := parseTestDigestAuthorization(auth)
+		ha1 := testMD5(username + ":" + realm + ":" + password)
+		ha2 := testMD5(r.Method + ":" + fields["uri"])
+		want := testMD5(ha1 + ":" + nonce + ":" + fields["nc"] + ":" + fields["cnonce"] + ":auth:" + ha2)
+		if fields["response"] != want {
+			t.Fatalf("Digest response = %q, want %q", fields["response"], want)
+		}
+		io.WriteString(w, rpcStringResponse("0.9.7"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: username, Password: password, AuthMode: "auto", Timeout: time.Second})
+	info, err := client.TestConnection(t.Context())
+	if err != nil || info.Version != "0.9.7" || !info.DigestAccepted || info.AuthScheme != "Digest" {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d, want challenge plus retry", requests)
+	}
+}
+
+func TestRTorrentDigestWrongPassword(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			w.Header().Set("WWW-Authenticate", `Digest realm="test", nonce="nonce", qop="auth"`)
+		} else {
+			w.Header().Set("WWW-Authenticate", `Digest realm="test", nonce="nonce", qop="auth"`)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "wrong", AuthMode: "digest", Timeout: time.Second})
+	if _, err := client.TestConnection(t.Context()); err == nil || !strings.Contains(err.Error(), "authentication rejected") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestRTorrentDigestRejectsMalformedAndUnsupportedChallenges(t *testing.T) {
+	for name, challenge := range map[string]string{
+		"malformed":   `Digest realm="test", nonce=`,
+		"unsupported": `Digest realm="test", nonce="nonce", algorithm=SHA-256, qop="auth"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("WWW-Authenticate", challenge)
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			defer srv.Close()
+			client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", Timeout: time.Second})
+			if _, err := client.TestConnection(t.Context()); err == nil {
+				t.Fatal("expected Digest challenge error")
+			}
+		})
+	}
+}
+
+func TestRTorrentDigestRetriesStaleNonce(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests < 3 {
+			nonce := "first"
+			stale := "false"
+			if requests == 2 {
+				nonce, stale = "second", "true"
+			}
+			w.Header().Set("WWW-Authenticate", `Digest realm="test", nonce="`+nonce+`", qop="auth", stale=`+stale)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, rpcStringResponse("0.9.7"))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", AuthMode: "digest", Timeout: time.Second})
+	info, err := client.TestConnection(t.Context())
+	if err != nil || !info.DigestAccepted || requests != 3 {
+		t.Fatalf("info=%+v requests=%d err=%v", info, requests, err)
+	}
+}
+
+func TestRTorrentRedirectDoesNotForwardDigestCredentials(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Fatal("credentials forwarded to another origin")
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer source.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: source.URL, Username: "user", Password: "secret", Timeout: time.Second})
+	if _, err := client.TestConnection(t.Context()); err == nil || !strings.Contains(err.Error(), "redirect rejected") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestRTorrentEndpointFieldsMigrateLegacyURL(t *testing.T) {
+	host, port, tlsEnabled, path, err := RTorrentEndpointFields(RTorrentConfig{URL: "https://nl2010.dediseedbox.com:443/rutorrent/plugins/httprpc/action.php"})
+	if err != nil || host != "nl2010.dediseedbox.com" || port != 443 || !tlsEnabled || path != "/rutorrent/plugins/httprpc/action.php" {
+		t.Fatalf("fields=%q %d %t %q err=%v", host, port, tlsEnabled, path, err)
+	}
+	endpoint, err := RTorrentEndpoint(RTorrentConfig{Host: "seedbox.example", Port: 443, UseTLS: true, URLPath: "/rpc"})
+	if err != nil || endpoint != "https://seedbox.example:443/rpc" {
+		t.Fatalf("endpoint=%q err=%v", endpoint, err)
+	}
+}
+
+func parseTestDigestAuthorization(header string) map[string]string {
+	result := map[string]string{}
+	for _, part := range strings.Split(strings.TrimPrefix(header, "Digest "), ",") {
+		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(keyValue) == 2 {
+			result[keyValue[0]] = strings.Trim(keyValue[1], `"`)
+		}
+	}
+	return result
+}
+
+func testMD5(value string) string {
+	sum := md5.Sum([]byte(value)) // #nosec G401 -- test fixture for HTTP Digest.
+	return hex.EncodeToString(sum[:])
+}
 
 func rtorrentServer(t *testing.T, response func(string) string) *httptest.Server {
 	t.Helper()

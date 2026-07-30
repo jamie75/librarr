@@ -131,8 +131,9 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	authorMon := scheduler.NewAuthorMonitor(cfg, database, ws)
 	wantedMon := scheduler.NewWantedMonitor(cfg, database, searchMgr, &http.Client{Timeout: 30 * time.Second})
 	rtorrent := download.NewRTorrentClient(download.RTorrentConfig{
-		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Username: cfg.RTorrentUser,
-		Password: cfg.RTorrentPass, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
+		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Host: cfg.RTorrentHost, Port: cfg.RTorrentPort,
+		UseTLS: cfg.RTorrentUseTLS, URLPath: cfg.RTorrentURLPath, Username: cfg.RTorrentUser,
+		Password: cfg.RTorrentPass, AuthMode: cfg.RTorrentAuthMode, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
 		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
 		ProwlarrURL: cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
 	})

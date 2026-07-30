@@ -7,6 +7,11 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 
 ### Added
 
+- rTorrent/ruTorrent HTTP Digest authentication with bounded challenge and
+  stale-nonce handling, normalized Host/Port/TLS/URL Path settings, legacy URL
+  migration, and diagnostics that distinguish the expected initial 401 from a
+  failed authenticated retry.
+
 - Phase 2 rTorrent XML-RPC submission, durable client/hash tracking, mapped
   completion polling, normalized import integration for ruTorrent-managed
   seedboxes, client-scoped Remote Path Mappings, and an administrator

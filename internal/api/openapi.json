@@ -1018,12 +1018,12 @@
     "/api/test/rtorrent": {
       "post": {
         "summary": "Run staged read-only rTorrent XML-RPC diagnostics",
-        "description": "Checks URL validation, DNS, TCP, TLS, XML-RPC, authentication, version, and latency. Secrets are not returned.",
+        "description": "Checks the configured rTorrent XML-RPC endpoint, DNS, TCP, TLS, HTTP status, XML-RPC response, authentication scheme, version, and latency. Supports auto, Basic, and HTTP Digest authentication. The first 401 Digest challenge is expected and is not reported as a failure when the authenticated retry succeeds. Secrets are not returned.",
         "responses": { "200": { "description": "Diagnostic result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiagnosticResult" } } } } }
       }
     },
     "/api/rtorrent": {
-      "get": { "summary": "Get sanitized rTorrent inspection configuration" }
+      "get": { "summary": "Get sanitized rTorrent inspection configuration", "description": "Returns the effective rTorrent endpoint fields (host, port, TLS, and URL path), authentication mode, and capability flags. Legacy full XML-RPC URLs are accepted and exposed as normalized fields; passwords remain masked." }
     },
     "/api/download-clients": {
       "get": { "summary": "List configured download clients and capabilities" }

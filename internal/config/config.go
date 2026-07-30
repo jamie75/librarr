@@ -188,8 +188,13 @@ type Config struct {
 	RTorrentEnabled    bool
 	RTorrentName       string
 	RTorrentURL        string
+	RTorrentHost       string
+	RTorrentPort       int
+	RTorrentUseTLS     bool
+	RTorrentURLPath    string
 	RTorrentUser       string
 	RTorrentPass       string
+	RTorrentAuthMode   string
 	RTorrentTimeout    int
 	RTorrentLabelField string
 	RTorrentTLSVerify  bool
@@ -433,8 +438,13 @@ func buildFromEnv() *Config {
 		RTorrentEnabled:    getEnvBool("RTORRENT_ENABLED", false),
 		RTorrentName:       getEnv("RTORRENT_NAME", "rTorrent"),
 		RTorrentURL:        getEnv("RTORRENT_URL", ""),
+		RTorrentHost:       getEnv("RTORRENT_HOST", ""),
+		RTorrentPort:       getEnvInt("RTORRENT_PORT", 0),
+		RTorrentUseTLS:     getEnvBool("RTORRENT_USE_TLS", true),
+		RTorrentURLPath:    getEnv("RTORRENT_URL_PATH", "/rutorrent/plugins/httprpc/action.php"),
 		RTorrentUser:       getEnv("RTORRENT_USER", ""),
 		RTorrentPass:       getEnv("RTORRENT_PASS", ""),
+		RTorrentAuthMode:   getEnv("RTORRENT_AUTH_MODE", "auto"),
 		RTorrentTimeout:    getEnvInt("RTORRENT_TIMEOUT_SECONDS", 10),
 		RTorrentLabelField: getEnv("RTORRENT_LABEL_FIELD", "d.custom1="),
 		RTorrentTLSVerify:  getEnvBool("RTORRENT_TLS_VERIFY", true),
@@ -539,7 +549,7 @@ func (c *Config) HasTorrentClient() bool {
 }
 
 func (c *Config) HasRTorrent() bool {
-	return c.RTorrentEnabled && strings.TrimSpace(c.RTorrentURL) != ""
+	return c.RTorrentEnabled && (strings.TrimSpace(c.RTorrentURL) != "" || strings.TrimSpace(c.RTorrentHost) != "")
 }
 
 // ActiveTorrentClient resolves which torrent backend handles torrents:
@@ -623,8 +633,11 @@ func (c *Config) applySettingsFileOverrides() {
 		"torrent_client":            &c.TorrentClient,
 		"rtorrent_name":             &c.RTorrentName,
 		"rtorrent_url":              &c.RTorrentURL,
+		"rtorrent_host":             &c.RTorrentHost,
+		"rtorrent_url_path":         &c.RTorrentURLPath,
 		"rtorrent_user":             &c.RTorrentUser,
 		"rtorrent_pass":             &c.RTorrentPass,
+		"rtorrent_auth_mode":        &c.RTorrentAuthMode,
 		"rtorrent_label_field":      &c.RTorrentLabelField,
 		"prowlarr_url":              &c.ProwlarrURL,
 		"prowlarr_api_key":          &c.ProwlarrAPIKey,
@@ -695,6 +708,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"wanted_retry_failures":       &c.WantedRetryFailures,
 		"rtorrent_enabled":            &c.RTorrentEnabled,
 		"rtorrent_tls_verify":         &c.RTorrentTLSVerify,
+		"rtorrent_use_tls":            &c.RTorrentUseTLS,
 	}
 	for key, fieldPtr := range boolPtrs {
 		v, ok := raw[key]
@@ -712,6 +726,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"wishlist_cleanup_interval_hours": &c.WishlistCleanupIntervalHours,
 		"wanted_max_results_keep":         &c.WantedMaxResultsKeep,
 		"rtorrent_timeout_seconds":        &c.RTorrentTimeout,
+		"rtorrent_port":                   &c.RTorrentPort,
 	}
 	for key, fieldPtr := range intPtrs {
 		v, ok := raw[key]

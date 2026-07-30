@@ -187,6 +187,8 @@ Provide *arr-style configurable download clients through a common interface.
 - [x] Add rTorrent diagnostics and download listing.
 - [x] Add rTorrent magnet/raw torrent submission, durable client/hash tracking,
       mapped completion polling, and normalized import integration.
+- [x] Add ruTorrent HTTP Digest authentication, normalized Host/Port/TLS/Path
+      configuration, and challenge-aware diagnostics.
 - [ ] Add rTorrent deletion and remote data cleanup (intentionally deferred).
 - [ ] Add Deluge support.
 - [ ] Validate completed-download handling against each client.

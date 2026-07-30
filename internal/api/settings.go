@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jamie75/librarr/internal/diagnostics"
+	"github.com/jamie75/librarr/internal/download"
 	"github.com/jamie75/librarr/internal/netutil"
 	"github.com/jamie75/librarr/internal/sources"
 )
@@ -34,6 +35,13 @@ var sensitiveKeys = map[string]bool{
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	settings := s.loadSettings()
+	rtorrentHost, rtorrentPort, rtorrentUseTLS, rtorrentPath, _ := download.RTorrentEndpointFields(download.RTorrentConfig{
+		URL: s.cfg.RTorrentURL, Host: s.cfg.RTorrentHost, Port: s.cfg.RTorrentPort,
+		UseTLS: s.cfg.RTorrentUseTLS, URLPath: s.cfg.RTorrentURLPath,
+	})
+	if rtorrentHost == "" {
+		rtorrentHost, rtorrentPort, rtorrentUseTLS, rtorrentPath = s.cfg.RTorrentHost, s.cfg.RTorrentPort, s.cfg.RTorrentUseTLS, s.cfg.RTorrentURLPath
+	}
 
 	// Inject current config values as defaults so the UI can render fields
 	// even when nothing has been saved to settings.json yet.
@@ -77,8 +85,13 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"rtorrent_enabled":         s.cfg.RTorrentEnabled,
 		"rtorrent_name":            s.cfg.RTorrentName,
 		"rtorrent_url":             s.cfg.RTorrentURL,
+		"rtorrent_host":            rtorrentHost,
+		"rtorrent_port":            rtorrentPort,
+		"rtorrent_use_tls":         rtorrentUseTLS,
+		"rtorrent_url_path":        rtorrentPath,
 		"rtorrent_user":            s.cfg.RTorrentUser,
 		"rtorrent_pass":            s.cfg.RTorrentPass,
+		"rtorrent_auth_mode":       s.cfg.RTorrentAuthMode,
 		"rtorrent_timeout_seconds": s.cfg.RTorrentTimeout,
 		"rtorrent_label_field":     s.cfg.RTorrentLabelField,
 		"rtorrent_tls_verify":      s.cfg.RTorrentTLSVerify,
@@ -142,7 +155,11 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		if value, ok := data["rtorrent_url"].(string); ok {
 			urlValue = value
 		}
-		if !enabled || strings.TrimSpace(urlValue) == "" {
+		hostValue := s.cfg.RTorrentHost
+		if value, ok := data["rtorrent_host"].(string); ok {
+			hostValue = value
+		}
+		if !enabled || (strings.TrimSpace(urlValue) == "" && strings.TrimSpace(hostValue) == "") {
 			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "rTorrent must be enabled and configured before it can be selected"})
 			return
 		}
@@ -259,8 +276,11 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	s.applyStringSetting(data, "manga_dir", &s.cfg.MangaDir)
 	s.applyStringSetting(data, "rtorrent_name", &s.cfg.RTorrentName)
 	s.applyStringSetting(data, "rtorrent_url", &s.cfg.RTorrentURL)
+	s.applyStringSetting(data, "rtorrent_host", &s.cfg.RTorrentHost)
+	s.applyStringSetting(data, "rtorrent_url_path", &s.cfg.RTorrentURLPath)
 	s.applyStringSetting(data, "rtorrent_user", &s.cfg.RTorrentUser)
 	s.applyStringSetting(data, "rtorrent_pass", &s.cfg.RTorrentPass)
+	s.applyStringSetting(data, "rtorrent_auth_mode", &s.cfg.RTorrentAuthMode)
 	s.applyStringSetting(data, "rtorrent_label_field", &s.cfg.RTorrentLabelField)
 	if v, ok := data["rtorrent_enabled"].(bool); ok {
 		s.cfg.RTorrentEnabled = v
@@ -268,8 +288,14 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	if v, ok := data["rtorrent_tls_verify"].(bool); ok {
 		s.cfg.RTorrentTLSVerify = v
 	}
+	if v, ok := data["rtorrent_use_tls"].(bool); ok {
+		s.cfg.RTorrentUseTLS = v
+	}
 	if v, ok := data["rtorrent_timeout_seconds"].(float64); ok && v >= 1 {
 		s.cfg.RTorrentTimeout = int(v)
+	}
+	if v, ok := data["rtorrent_port"].(float64); ok && v >= 1 && v <= 65535 {
+		s.cfg.RTorrentPort = int(v)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
