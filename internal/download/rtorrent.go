@@ -151,6 +151,7 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 		encoded := base64.StdEncoding.EncodeToString(request.TorrentBytes)
 		params := []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
 		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
+		r.logSubmissionPathTrace(request, method, params)
 		value, err = r.call(context.Background(), method, params...)
 		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
 			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
@@ -169,6 +170,7 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 		}
 		params := []rpcValue{{String: stringPtr("")}, {String: stringPtr(request.URL)}}
 		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
+		r.logSubmissionPathTrace(request, method, params)
 		value, err = r.call(context.Background(), method, params...)
 		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
 			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
@@ -191,6 +193,25 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	}
 	r.verifySubmittedTorrent(hash, request.SavePath)
 	return TorrentSubmission{ClientID: r.ClientID(), ClientType: r.Type(), DownloadID: hash, InfoHash: hash, Name: request.Title, RemoteSavePath: request.SavePath, Category: request.Category}, nil
+}
+
+func (r *RTorrentClient) logSubmissionPathTrace(request TorrentSubmissionRequest, method string, params []rpcValue) {
+	directoryArgument := ""
+	for _, param := range params {
+		if param.String == nil || !strings.HasPrefix(*param.String, "d.directory.set=") {
+			continue
+		}
+		directoryArgument = strings.TrimPrefix(*param.String, "d.directory.set=")
+		break
+	}
+	slog.Info("rTorrent XML-RPC submission path trace",
+		"torrent_client", r.Type(),
+		"configured_save_path", request.SavePath,
+		"remote_save_path", request.SavePath,
+		"tracked_download_remote_save_path", request.SavePath,
+		"xmlrpc_method", method,
+		"xmlrpc_d_directory_argument", directoryArgument,
+	)
 }
 
 func (r *RTorrentClient) loadCommands(category, savePath string, includeLabel bool) []rpcValue {

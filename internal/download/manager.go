@@ -122,6 +122,15 @@ func (m *Manager) StartTorrentDownloadTracked(torrentURL, title, savePath, categ
 	if m.torrent == nil {
 		return models.TrackedDownload{}, fmt.Errorf("no torrent download client configured")
 	}
+	if clientType, ok := m.torrent.(interface{ Type() string }); ok && clientType.Type() == "rtorrent" {
+		slog.Info("rTorrent save-path trace before submission",
+			"torrent_client", clientType.Type(),
+			"configured_save_path", savePath,
+			"remote_save_path", savePath,
+			"tracked_download_remote_save_path", savePath,
+			"source", "submission_request",
+		)
+	}
 	var submission TorrentSubmission
 	var err error
 	if writable, ok := m.torrent.(WritableTorrentClient); ok {
@@ -159,8 +168,25 @@ func (m *Manager) persistTorrentSubmission(submission TorrentSubmission, title, 
 		Source: source, SourceID: sourceID, Category: category, RemoteSavePath: savePath,
 		Status: "submitted", ImportStatus: "pending", CreatedAt: now,
 	}
+	if item.ClientType == "rtorrent" {
+		slog.Info("rTorrent tracked-download save-path trace before persistence",
+			"torrent_client", item.ClientType,
+			"configured_save_path", savePath,
+			"remote_save_path", submission.RemoteSavePath,
+			"tracked_download_remote_save_path", item.RemoteSavePath,
+			"db_column", "remote_save_path",
+		)
+	}
 	if err := m.db.SaveTrackedDownload(&item); err != nil {
 		return models.TrackedDownload{}, fmt.Errorf("persist torrent tracking: %w", err)
+	}
+	if item.ClientType == "rtorrent" {
+		slog.Info("rTorrent tracked-download save-path persisted",
+			"torrent_client", item.ClientType,
+			"tracked_download_id", item.ID,
+			"tracked_download_remote_save_path", item.RemoteSavePath,
+			"db_column", "remote_save_path",
+		)
 	}
 	return item, nil
 }
