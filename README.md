@@ -609,6 +609,7 @@ not implemented; completed torrents remain available for seeding.
 | `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC timeout |
 | `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
 | `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
+| `RTORRENT_ALLOW_PRIVATE_NETWORKS` | `false` | Allow private/loopback rTorrent endpoints; metadata and link-local addresses remain blocked |
 
 HTTP/HTTPS Prowlarr torrent URLs are fetched by Librarr, validated within the
 existing bounded torrent limits, and uploaded to rTorrent as raw bytes. Magnets

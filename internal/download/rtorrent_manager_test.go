@@ -87,7 +87,7 @@ func TestRTorrentFailedSubmissionDoesNotCreateTrackedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	manager := NewManager(&config.Config{}, database, client, nil, nil, nil, nil, search.NewHealthTracker(3, 300))
 	if _, err := manager.StartTorrentDownloadTracked("magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01", "Book", "/remote", "librarr", "", "ebook", "", ""); err == nil {
 		t.Fatal("expected submission failure")
@@ -115,7 +115,7 @@ func TestRTorrentSuccessfulSubmissionCreatesTrackedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	manager := NewManager(&config.Config{}, database, client, nil, nil, nil, nil, search.NewHealthTracker(3, 300))
 	if _, err := manager.StartTorrentDownloadTracked("magnet:?xt=urn:btih:"+hash, "Book", "/remote", "librarr", "", "ebook", "torrent", "source-1"); err != nil {
 		t.Fatalf("submission error: %v", err)

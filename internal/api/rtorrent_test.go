@@ -23,7 +23,7 @@ func TestHandleTestRTorrentUsesUnsavedValuesAndDoesNotReturnPassword(t *testing.
 	}))
 	defer server.Close()
 	s, _ := settingsTestServer(t)
-	body, _ := json.Marshal(map[string]interface{}{"url": server.URL, "username": "unsaved-user", "password": "unsaved-pass", "timeout_seconds": 2})
+	body, _ := json.Marshal(map[string]interface{}{"url": server.URL, "username": "unsaved-user", "password": "unsaved-pass", "timeout_seconds": 2, "allow_private_networks": true})
 	rr := httptest.NewRecorder()
 	s.handleTestRTorrent(rr, httptest.NewRequest(http.MethodPost, "/api/test/rtorrent", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"success":true`) {

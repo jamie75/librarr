@@ -18,6 +18,7 @@ import (
 	"github.com/jamie75/librarr/internal/library"
 	libraryimport "github.com/jamie75/librarr/internal/library/import"
 	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/netutil"
 	"github.com/jamie75/librarr/internal/organize"
 	"github.com/jamie75/librarr/internal/search"
 	"github.com/jamie75/librarr/internal/webhook"
@@ -122,15 +123,6 @@ func (m *Manager) StartTorrentDownloadTracked(torrentURL, title, savePath, categ
 	if m.torrent == nil {
 		return models.TrackedDownload{}, fmt.Errorf("no torrent download client configured")
 	}
-	if clientType, ok := m.torrent.(interface{ Type() string }); ok && clientType.Type() == "rtorrent" {
-		slog.Info("rTorrent save-path trace before submission",
-			"torrent_client", clientType.Type(),
-			"configured_save_path", savePath,
-			"remote_save_path", savePath,
-			"tracked_download_remote_save_path", savePath,
-			"source", "submission_request",
-		)
-	}
 	var submission TorrentSubmission
 	var err error
 	if writable, ok := m.torrent.(WritableTorrentClient); ok {
@@ -168,25 +160,8 @@ func (m *Manager) persistTorrentSubmission(submission TorrentSubmission, title, 
 		Source: source, SourceID: sourceID, Category: category, RemoteSavePath: savePath,
 		Status: "submitted", ImportStatus: "pending", CreatedAt: now,
 	}
-	if item.ClientType == "rtorrent" {
-		slog.Info("rTorrent tracked-download save-path trace before persistence",
-			"torrent_client", item.ClientType,
-			"configured_save_path", savePath,
-			"remote_save_path", submission.RemoteSavePath,
-			"tracked_download_remote_save_path", item.RemoteSavePath,
-			"db_column", "remote_save_path",
-		)
-	}
 	if err := m.db.SaveTrackedDownload(&item); err != nil {
 		return models.TrackedDownload{}, fmt.Errorf("persist torrent tracking: %w", err)
-	}
-	if item.ClientType == "rtorrent" {
-		slog.Info("rTorrent tracked-download save-path persisted",
-			"torrent_client", item.ClientType,
-			"tracked_download_id", item.ID,
-			"tracked_download_remote_save_path", item.RemoteSavePath,
-			"db_column", "remote_save_path",
-		)
 	}
 	return item, nil
 }
@@ -343,7 +318,7 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("anna's archive download failed", "title", job.Title, "error", err)
+		slog.Error("anna's archive download failed", "title", netutil.SanitizeLogValue(job.Title), "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.health.RecordFailure("annas", err.Error(), "download")
 		if isAnnasNoMatchError(err) {
 			m.updateJob(job, "dead_letter", "No LibGen match found", err.Error())
@@ -393,7 +368,7 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", "annas", "path", filePath, "error", err)
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "path", netutil.SanitizeLogValue(filePath), "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -410,7 +385,7 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", job.Title, "source", "annas", "error", err)
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -423,7 +398,7 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded from Anna's Archive (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", job.Title, "source", "annas", "size", fileSize)
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {
@@ -469,7 +444,7 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("direct download failed", "title", job.Title, "error", err)
+		slog.Error("direct download failed", "title", netutil.SanitizeLogValue(job.Title), "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.updateJob(job, "error", "", err.Error())
 		return
 	}
@@ -486,7 +461,7 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", job.Source, "path", filePath, "error", err)
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "path", netutil.SanitizeLogValue(filePath), "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -503,7 +478,7 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", job.Title, "source", job.Source, "error", err)
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "error", netutil.SanitizeSensitiveText(err.Error()))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -516,7 +491,7 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", job.Title, "source", job.Source, "size", fileSize)
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {

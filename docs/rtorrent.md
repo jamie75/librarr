@@ -31,6 +31,7 @@ the Settings response.
 | `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC request timeout |
 | `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
 | `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
+| `RTORRENT_ALLOW_PRIVATE_NETWORKS` | `false` | Allow private/loopback rTorrent endpoints; metadata and link-local addresses remain blocked |
 
 `auto` is recommended. Basic authentication is attempted when credentials are
 configured; if the server responds with `WWW-Authenticate: Digest`, Librarr

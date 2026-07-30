@@ -160,6 +160,9 @@ func digestAuthorization(challenge *digestChallenge, username, password, method,
 }
 
 func md5Hex(value string) string {
+	// This MD5 use is required by the rTorrent/ruTorrent HTTP Digest
+	// compatibility protocol. It is not used for password storage, integrity,
+	// signatures, tokens, or any security decision.
 	sum := md5.Sum([]byte(value)) // #nosec G401 -- required by RFC 7616 compatibility target.
 	return hex.EncodeToString(sum[:])
 }

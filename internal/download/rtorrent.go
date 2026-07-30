@@ -25,20 +25,21 @@ import (
 
 // RTorrentConfig contains rTorrent XML-RPC connection and submission settings.
 type RTorrentConfig struct {
-	Name           string
-	URL            string
-	Host           string
-	Port           int
-	UseTLS         bool
-	URLPath        string
-	Username       string
-	Password       string
-	AuthMode       string
-	Timeout        time.Duration
-	LabelField     string
-	TLSVerify      bool
-	ProwlarrURL    string
-	ProwlarrAPIKey string
+	Name                 string
+	URL                  string
+	Host                 string
+	Port                 int
+	UseTLS               bool
+	URLPath              string
+	Username             string
+	Password             string
+	AuthMode             string
+	Timeout              time.Duration
+	LabelField           string
+	TLSVerify            bool
+	AllowPrivateNetworks bool
+	ProwlarrURL          string
+	ProwlarrAPIKey       string
 }
 
 // ReadOnlyDownloadClient is the client-neutral surface used by inspection and
@@ -80,9 +81,10 @@ type ClientDownload struct {
 // RTorrentClient talks to rTorrent's XML-RPC endpoint directly and never
 // scrapes or automates ruTorrent. Removal is intentionally unsupported.
 type RTorrentClient struct {
-	cfg       RTorrentConfig
-	client    *http.Client
-	faultLogs sync.Map // method -> fault signature, suppresses repeated poll faults
+	cfg         RTorrentConfig
+	client      *http.Client
+	endpointErr error
+	faultLogs   sync.Map // method -> fault signature, suppresses repeated poll faults
 }
 
 var _ ReadOnlyDownloadClient = (*RTorrentClient)(nil)
@@ -106,7 +108,13 @@ func NewRTorrentClient(cfg RTorrentConfig) *RTorrentClient {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: !cfg.TLSVerify} // #nosec G402 -- explicit admin setting
 	endpoint := cfg.URL
-	return &RTorrentClient{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout, Transport: transport, CheckRedirect: sameRTorrentOriginRedirect(endpoint)}}
+	client, endpointErr := netutil.NewValidatedHTTPClient(endpoint, netutil.EndpointPolicy{AllowPrivateNetworks: cfg.AllowPrivateNetworks}, cfg.Timeout, sameRTorrentOriginRedirect(endpoint))
+	if endpointErr != nil {
+		// Preserve the constructor's source-compatible signature; every request
+		// will return this configuration error before any network access.
+		client = &http.Client{Timeout: cfg.Timeout, Transport: transport, CheckRedirect: sameRTorrentOriginRedirect(endpoint)}
+	}
+	return &RTorrentClient{cfg: cfg, client: client, endpointErr: endpointErr}
 }
 
 func (r *RTorrentClient) ClientID() string { return "rtorrent" }
@@ -153,10 +161,9 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 		encoded := base64.StdEncoding.EncodeToString(request.TorrentBytes)
 		params := []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
 		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
-		r.logSubmissionPathTrace(request, method, params)
 		value, err = r.call(context.Background(), method, params...)
 		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
-			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
+			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", netutil.SanitizeLogValue(method), "error", netutil.SanitizeSensitiveText(err.Error()))
 			params = []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
 			params = append(params, r.loadCommands(request.Category, request.SavePath, false)...)
 			value, err = r.call(context.Background(), method, params...)
@@ -172,10 +179,9 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 		}
 		params := []rpcValue{{String: stringPtr("")}, {String: stringPtr(request.URL)}}
 		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
-		r.logSubmissionPathTrace(request, method, params)
 		value, err = r.call(context.Background(), method, params...)
 		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
-			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
+			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", netutil.SanitizeLogValue(method), "error", netutil.SanitizeSensitiveText(err.Error()))
 			params = []rpcValue{{String: stringPtr("")}, {String: stringPtr(request.URL)}}
 			params = append(params, r.loadCommands(request.Category, request.SavePath, false)...)
 			value, err = r.call(context.Background(), method, params...)
@@ -195,25 +201,6 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	}
 	r.verifySubmittedTorrent(hash, request.SavePath)
 	return TorrentSubmission{ClientID: r.ClientID(), ClientType: r.Type(), DownloadID: hash, InfoHash: hash, Name: request.Title, RemoteSavePath: request.SavePath, Category: request.Category}, nil
-}
-
-func (r *RTorrentClient) logSubmissionPathTrace(request TorrentSubmissionRequest, method string, params []rpcValue) {
-	directoryArgument := ""
-	for _, param := range params {
-		if param.String == nil || !strings.HasPrefix(*param.String, "d.directory.set=") {
-			continue
-		}
-		directoryArgument = strings.TrimPrefix(*param.String, "d.directory.set=")
-		break
-	}
-	slog.Info("rTorrent XML-RPC submission path trace",
-		"torrent_client", r.Type(),
-		"configured_save_path", request.SavePath,
-		"remote_save_path", request.SavePath,
-		"tracked_download_remote_save_path", request.SavePath,
-		"xmlrpc_method", method,
-		"xmlrpc_d_directory_argument", directoryArgument,
-	)
 }
 
 func (r *RTorrentClient) loadCommands(category, savePath string, includeLabel bool) []rpcValue {
@@ -269,20 +256,20 @@ func validateRTorrentLoadResponse(value rpcValue) error {
 func (r *RTorrentClient) verifySubmittedTorrent(hash, requestedDirectory string) {
 	items, err := r.ListDownloads(context.Background())
 	if err != nil {
-		slog.Warn("rTorrent submission state verification failed", "info_hash", hash, "error", netutil.SanitizeSensitiveText(err.Error()))
+		slog.Warn("rTorrent submission state verification failed", "info_hash", netutil.SanitizeLogValue(hash), "error", netutil.SanitizeSensitiveText(err.Error()))
 		return
 	}
 	for _, item := range items {
 		if !strings.EqualFold(item.InfoHash, hash) && !strings.EqualFold(item.ID, hash) {
 			continue
 		}
-		slog.Debug("rTorrent submission state verified", "info_hash", hash, "directory", item.Directory, "base_path", item.BasePath, "active", item.Active, "state", item.Status, "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
+		slog.Debug("rTorrent submission state verified", "info_hash", netutil.SanitizeLogValue(hash), "directory", netutil.SanitizeLogValue(item.Directory), "base_path", netutil.SanitizeLogValue(item.BasePath), "active", item.Active, "state", netutil.SanitizeLogValue(item.Status), "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
 		if requestedDirectory != "" && item.Directory != "" && filepath.Clean(item.Directory) != filepath.Clean(requestedDirectory) {
-			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", hash, "requested_directory", requestedDirectory, "actual_directory", item.Directory)
+			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", netutil.SanitizeLogValue(hash), "requested_directory", netutil.SanitizeLogValue(requestedDirectory), "actual_directory", netutil.SanitizeLogValue(item.Directory))
 		}
 		return
 	}
-	slog.Warn("rTorrent submission state verification could not find torrent", "info_hash", hash)
+	slog.Warn("rTorrent submission state verification could not find torrent", "info_hash", netutil.SanitizeLogValue(hash))
 }
 
 func shouldFallbackRawStartVerbose(err error) bool {
@@ -356,7 +343,7 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 	if _, err := netutil.ValidateSameOriginHTTPURL(rawURL, cfg.ProwlarrURL); err != nil {
 		return nil, fmt.Errorf("rTorrent torrent URL rejected: %w", err)
 	}
-	client := &http.Client{Timeout: cfg.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	redirect := func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 8 {
 			return fmt.Errorf("too many redirects")
 		}
@@ -364,7 +351,11 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 			return fmt.Errorf("redirect rejected: %w", err)
 		}
 		return nil
-	}}
+	}
+	client, err := netutil.NewValidatedHTTPClient(cfg.ProwlarrURL, netutil.EndpointPolicy{AllowPrivateNetworks: true}, cfg.Timeout, redirect)
+	if err != nil {
+		return nil, fmt.Errorf("configured Prowlarr endpoint rejected: %w", err)
+	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build rTorrent torrent request: %w", err)
@@ -565,6 +556,9 @@ type rtorrentProbe struct {
 }
 
 func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params ...rpcValue) (rpcValue, rtorrentProbe, error) {
+	if r.endpointErr != nil {
+		return rpcValue{}, rtorrentProbe{}, fmt.Errorf("invalid rTorrent endpoint: %w", r.endpointErr)
+	}
 	authMode := strings.ToLower(strings.TrimSpace(r.cfg.AuthMode))
 	if authMode == "" {
 		authMode = "auto"
@@ -592,7 +586,6 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 	probe := rtorrentProbe{}
 	requestURL := r.cfg.URL
 	for attempt := 0; attempt < 3; attempt++ {
-		slog.Debug("rTorrent XML-RPC method", "method", method, "args", debugRPCArgs(params), "phase", "before_request")
 		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(requestBody))
 		if requestErr != nil {
 			return rpcValue{}, probe, fmt.Errorf("build rTorrent request: %w", requestErr)
@@ -616,13 +609,13 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 		}
 		resp, requestErr := r.client.Do(req)
 		if requestErr != nil {
-			slog.Debug("rTorrent XML-RPC request failed", "method", method, "args", debugRPCArgs(params), "phase", "before_response_parsing", "error", requestErr)
+			slog.Debug("rTorrent XML-RPC request failed", "method", netutil.SanitizeLogValue(method), "phase", "before_response_parsing", "error", netutil.SanitizeSensitiveText(requestErr.Error()))
 			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC request failed: %w", requestErr)
 		}
 		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
 		if readErr != nil {
-			slog.Debug("rTorrent XML-RPC response read failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "before_response_parsing", "error", readErr)
+			slog.Debug("rTorrent XML-RPC response read failed", "method", netutil.SanitizeLogValue(method), "http_status", resp.StatusCode, "phase", "before_response_parsing", "error", netutil.SanitizeSensitiveText(readErr.Error()))
 			return rpcValue{}, probe, fmt.Errorf("read rTorrent response: %w", readErr)
 		}
 		probe.status = resp.StatusCode
@@ -647,7 +640,7 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 			return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			slog.Debug("rTorrent XML-RPC HTTP failure", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "before_response_parsing")
+			slog.Debug("rTorrent XML-RPC HTTP failure", "method", netutil.SanitizeLogValue(method), "http_status", resp.StatusCode, "phase", "before_response_parsing")
 			return rpcValue{}, probe, fmt.Errorf("rTorrent XML-RPC endpoint returned HTTP %d", resp.StatusCode)
 		}
 		if challenge != nil {
@@ -659,10 +652,9 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 			probe.authScheme = "None"
 		}
 		if strings.Contains(strings.ToLower(string(responseBody)), "<html") {
-			slog.Debug("rTorrent XML-RPC response parsing failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", "HTML response")
+			slog.Debug("rTorrent XML-RPC response parsing failed", "method", netutil.SanitizeLogValue(method), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", "HTML response")
 			return rpcValue{}, probe, fmt.Errorf("rTorrent endpoint returned HTML instead of XML-RPC")
 		}
-		slog.Debug("rTorrent XML-RPC method", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing")
 		value, parseErr := parseRPCResponse(responseBody)
 		if parseErr != nil {
 			var fault *RPCFaultError
@@ -672,11 +664,10 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 				fault.Phase = "after_response_parsing"
 				r.logRPCFault(fault)
 			} else {
-				slog.Debug("rTorrent XML-RPC response parsing failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", parseErr)
+				slog.Debug("rTorrent XML-RPC response parsing failed", "method", netutil.SanitizeLogValue(method), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", netutil.SanitizeSensitiveText(parseErr.Error()))
 			}
 			return rpcValue{}, probe, parseErr
 		}
-		slog.Debug("rTorrent XML-RPC method completed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing")
 		r.faultLogs.Delete(method)
 		return value, probe, nil
 	}
@@ -686,32 +677,11 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 func (r *RTorrentClient) logRPCFault(fault *RPCFaultError) {
 	signature := fmt.Sprintf("%s|%s|%d", fault.Code, fault.FaultString, fault.HTTPStatus)
 	if previous, loaded := r.faultLogs.Load(fault.Method); loaded && previous == signature {
-		slog.Debug("rTorrent XML-RPC fault still occurring", "method", fault.Method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", fault.Phase)
+		slog.Debug("rTorrent XML-RPC fault still occurring", "method", netutil.SanitizeLogValue(fault.Method), "fault_code", netutil.SanitizeLogValue(fault.Code), "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", netutil.SanitizeLogValue(fault.Phase))
 		return
 	}
 	r.faultLogs.Store(fault.Method, signature)
-	slog.Error("rTorrent XML-RPC fault", "method", fault.Method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", fault.Phase)
-}
-
-func debugRPCArgs(params []rpcValue) []string {
-	args := make([]string, 0, len(params))
-	for _, param := range params {
-		switch {
-		case param.Base64 != nil:
-			args = append(args, "<torrent bytes omitted>")
-		case param.String != nil:
-			args = append(args, *param.String)
-		case param.Int != nil:
-			args = append(args, fmt.Sprintf("%d", *param.Int))
-		case param.I4 != nil:
-			args = append(args, fmt.Sprintf("%d", *param.I4))
-		case param.Bool != nil:
-			args = append(args, fmt.Sprintf("%d", *param.Bool))
-		default:
-			args = append(args, "<complex value omitted>")
-		}
-	}
-	return args
+	slog.Error("rTorrent XML-RPC fault", "method", netutil.SanitizeLogValue(fault.Method), "fault_code", netutil.SanitizeLogValue(fault.Code), "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", netutil.SanitizeLogValue(fault.Phase))
 }
 
 func sameRTorrentOriginRedirect(endpoint string) func(*http.Request, []*http.Request) error {

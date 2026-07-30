@@ -4505,7 +4505,7 @@ const INTEGRATION_FIELDS = {
   prowlarr:       ['prowlarr_url', 'prowlarr_api_key'],
   qbittorrent:    ['qb_url', 'qb_user', 'qb_pass', 'qb_save_path', 'qb_category', 'qb_audiobook_save_path', 'qb_audiobook_category', 'qb_manga_save_path', 'qb_manga_category'],
   transmission:   ['transmission_url', 'transmission_user', 'transmission_pass', 'torrent_client'],
-  rtorrent:       ['rtorrent_enabled', 'rtorrent_name', 'rtorrent_url', 'rtorrent_host', 'rtorrent_port', 'rtorrent_use_tls', 'rtorrent_url_path', 'rtorrent_user', 'rtorrent_pass', 'rtorrent_auth_mode', 'rtorrent_timeout_seconds', 'rtorrent_label_field', 'rtorrent_tls_verify'],
+  rtorrent:       ['rtorrent_enabled', 'rtorrent_name', 'rtorrent_url', 'rtorrent_host', 'rtorrent_port', 'rtorrent_use_tls', 'rtorrent_url_path', 'rtorrent_user', 'rtorrent_pass', 'rtorrent_auth_mode', 'rtorrent_timeout_seconds', 'rtorrent_label_field', 'rtorrent_tls_verify', 'rtorrent_allow_private_networks'],
   sabnzbd:        ['sabnzbd_url', 'sabnzbd_api_key', 'sabnzbd_category'],
   audiobookshelf: ['abs_url', 'abs_token'],
   kavita:         ['kavita_url', 'kavita_user', 'kavita_pass'],
@@ -4564,6 +4564,8 @@ async function loadSettingToggles() {
     if (rtorrentEnabled && data.rtorrent_enabled !== undefined) rtorrentEnabled.checked = !!data.rtorrent_enabled;
     const rtorrentTLS = document.getElementById('setting-rtorrent_tls_verify');
     if (rtorrentTLS && data.rtorrent_tls_verify !== undefined) rtorrentTLS.checked = !!data.rtorrent_tls_verify;
+    const rtorrentPrivate = document.getElementById('setting-rtorrent_allow_private_networks');
+    if (rtorrentPrivate && data.rtorrent_allow_private_networks !== undefined) rtorrentPrivate.checked = !!data.rtorrent_allow_private_networks;
     const rtorrentUseTLS = document.getElementById('setting-rtorrent_use_tls');
     if (rtorrentUseTLS && data.rtorrent_use_tls !== undefined) rtorrentUseTLS.checked = !!data.rtorrent_use_tls;
     if (typeof loadRTorrentMappings === 'function') loadRTorrentMappings();
@@ -5956,6 +5958,7 @@ function diagnosticPayload(service) {
       timeout_seconds: Number(document.getElementById('setting-rtorrent_timeout_seconds')?.value || 10),
       label_field: document.getElementById('setting-rtorrent_label_field')?.value || '',
       tls_verify: document.getElementById('setting-rtorrent_tls_verify')?.checked !== false,
+      allow_private_networks: document.getElementById('setting-rtorrent_allow_private_networks')?.checked === true,
     };
   }
   return {};

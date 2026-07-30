@@ -185,19 +185,20 @@ type Config struct {
 
 	// rTorrent is an opt-in torrent client. Cleanup/removal remains disabled;
 	// completed downloads are left available for seeding.
-	RTorrentEnabled    bool
-	RTorrentName       string
-	RTorrentURL        string
-	RTorrentHost       string
-	RTorrentPort       int
-	RTorrentUseTLS     bool
-	RTorrentURLPath    string
-	RTorrentUser       string
-	RTorrentPass       string
-	RTorrentAuthMode   string
-	RTorrentTimeout    int
-	RTorrentLabelField string
-	RTorrentTLSVerify  bool
+	RTorrentEnabled              bool
+	RTorrentName                 string
+	RTorrentURL                  string
+	RTorrentHost                 string
+	RTorrentPort                 int
+	RTorrentUseTLS               bool
+	RTorrentURLPath              string
+	RTorrentUser                 string
+	RTorrentPass                 string
+	RTorrentAuthMode             string
+	RTorrentTimeout              int
+	RTorrentLabelField           string
+	RTorrentTLSVerify            bool
+	RTorrentAllowPrivateNetworks bool
 
 	// User Agent
 	UserAgent string
@@ -435,19 +436,20 @@ func buildFromEnv() *Config {
 
 		TorrentClient: getEnv("TORRENT_CLIENT", ""),
 
-		RTorrentEnabled:    getEnvBool("RTORRENT_ENABLED", false),
-		RTorrentName:       getEnv("RTORRENT_NAME", "rTorrent"),
-		RTorrentURL:        getEnv("RTORRENT_URL", ""),
-		RTorrentHost:       getEnv("RTORRENT_HOST", ""),
-		RTorrentPort:       getEnvInt("RTORRENT_PORT", 0),
-		RTorrentUseTLS:     getEnvBool("RTORRENT_USE_TLS", true),
-		RTorrentURLPath:    getEnv("RTORRENT_URL_PATH", "/rutorrent/plugins/httprpc/action.php"),
-		RTorrentUser:       getEnv("RTORRENT_USER", ""),
-		RTorrentPass:       getEnv("RTORRENT_PASS", ""),
-		RTorrentAuthMode:   getEnv("RTORRENT_AUTH_MODE", "auto"),
-		RTorrentTimeout:    getEnvInt("RTORRENT_TIMEOUT_SECONDS", 10),
-		RTorrentLabelField: getEnv("RTORRENT_LABEL_FIELD", "d.custom1="),
-		RTorrentTLSVerify:  getEnvBool("RTORRENT_TLS_VERIFY", true),
+		RTorrentEnabled:              getEnvBool("RTORRENT_ENABLED", false),
+		RTorrentName:                 getEnv("RTORRENT_NAME", "rTorrent"),
+		RTorrentURL:                  getEnv("RTORRENT_URL", ""),
+		RTorrentHost:                 getEnv("RTORRENT_HOST", ""),
+		RTorrentPort:                 getEnvInt("RTORRENT_PORT", 0),
+		RTorrentUseTLS:               getEnvBool("RTORRENT_USE_TLS", true),
+		RTorrentURLPath:              getEnv("RTORRENT_URL_PATH", "/rutorrent/plugins/httprpc/action.php"),
+		RTorrentUser:                 getEnv("RTORRENT_USER", ""),
+		RTorrentPass:                 getEnv("RTORRENT_PASS", ""),
+		RTorrentAuthMode:             getEnv("RTORRENT_AUTH_MODE", "auto"),
+		RTorrentTimeout:              getEnvInt("RTORRENT_TIMEOUT_SECONDS", 10),
+		RTorrentLabelField:           getEnv("RTORRENT_LABEL_FIELD", "d.custom1="),
+		RTorrentTLSVerify:            getEnvBool("RTORRENT_TLS_VERIFY", true),
+		RTorrentAllowPrivateNetworks: getEnvBool("RTORRENT_ALLOW_PRIVATE_NETWORKS", false),
 
 		UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 
@@ -693,22 +695,23 @@ func (c *Config) applySettingsFileOverrides() {
 	}
 
 	boolPtrs := map[string]*bool{
-		"file_org_enabled":            &c.FileOrgEnabled,
-		"rate_limit_enabled":          &c.RateLimitEnabled,
-		"metrics_enabled":             &c.MetricsEnabled,
-		"webnovel_enabled":            &c.WebNovelEnabled,
-		"mangadex_enabled":            &c.MangaDexEnabled,
-		"flibusta_enabled":            &c.FlibustaEnabled,
-		"zlibrary_enabled":            &c.ZLibraryEnabled,
-		"remove_torrent_after_import": &c.RemoveTorrentAfterImport,
-		"foreign_lang_filter":         &c.ForeignLangFilter,
-		"wishlist_cleanup_enabled":    &c.WishlistCleanupEnabled,
-		"wishlist_cleanup_dry_run":    &c.WishlistCleanupDryRun,
-		"wanted_monitor_enabled":      &c.WantedMonitorEnabled,
-		"wanted_retry_failures":       &c.WantedRetryFailures,
-		"rtorrent_enabled":            &c.RTorrentEnabled,
-		"rtorrent_tls_verify":         &c.RTorrentTLSVerify,
-		"rtorrent_use_tls":            &c.RTorrentUseTLS,
+		"file_org_enabled":                &c.FileOrgEnabled,
+		"rate_limit_enabled":              &c.RateLimitEnabled,
+		"metrics_enabled":                 &c.MetricsEnabled,
+		"webnovel_enabled":                &c.WebNovelEnabled,
+		"mangadex_enabled":                &c.MangaDexEnabled,
+		"flibusta_enabled":                &c.FlibustaEnabled,
+		"zlibrary_enabled":                &c.ZLibraryEnabled,
+		"remove_torrent_after_import":     &c.RemoveTorrentAfterImport,
+		"foreign_lang_filter":             &c.ForeignLangFilter,
+		"wishlist_cleanup_enabled":        &c.WishlistCleanupEnabled,
+		"wishlist_cleanup_dry_run":        &c.WishlistCleanupDryRun,
+		"wanted_monitor_enabled":          &c.WantedMonitorEnabled,
+		"wanted_retry_failures":           &c.WantedRetryFailures,
+		"rtorrent_enabled":                &c.RTorrentEnabled,
+		"rtorrent_tls_verify":             &c.RTorrentTLSVerify,
+		"rtorrent_allow_private_networks": &c.RTorrentAllowPrivateNetworks,
+		"rtorrent_use_tls":                &c.RTorrentUseTLS,
 	}
 	for key, fieldPtr := range boolPtrs {
 		v, ok := raw[key]

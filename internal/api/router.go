@@ -135,7 +135,8 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		UseTLS: cfg.RTorrentUseTLS, URLPath: cfg.RTorrentURLPath, Username: cfg.RTorrentUser,
 		Password: cfg.RTorrentPass, AuthMode: cfg.RTorrentAuthMode, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
 		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
-		ProwlarrURL: cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
+		AllowPrivateNetworks: cfg.RTorrentAllowPrivateNetworks,
+		ProwlarrURL:          cfg.ProwlarrURL, ProwlarrAPIKey: cfg.ProwlarrAPIKey,
 	})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))

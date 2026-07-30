@@ -43,7 +43,7 @@ func TestRTorrentDigestAuthentication(t *testing.T) {
 		io.WriteString(w, rpcStringResponse("0.9.7"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: username, Password: password, AuthMode: "auto", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Username: username, Password: password, AuthMode: "auto", Timeout: time.Second})
 	info, err := client.TestConnection(t.Context())
 	if err != nil || info.Version != "0.9.7" || !info.DigestAccepted || info.AuthScheme != "Digest" {
 		t.Fatalf("info=%+v err=%v", info, err)
@@ -51,6 +51,11 @@ func TestRTorrentDigestAuthentication(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("requests=%d, want challenge plus retry", requests)
 	}
+}
+
+func newTestRTorrentClient(cfg RTorrentConfig) *RTorrentClient {
+	cfg.AllowPrivateNetworks = true
+	return NewRTorrentClient(cfg)
 }
 
 func TestRTorrentDigestWrongPassword(t *testing.T) {
@@ -63,7 +68,7 @@ func TestRTorrentDigestWrongPassword(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "wrong", AuthMode: "digest", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "wrong", AuthMode: "digest", Timeout: time.Second})
 	if _, err := client.TestConnection(t.Context()); err == nil || !strings.Contains(err.Error(), "authentication rejected") {
 		t.Fatalf("error=%v", err)
 	}
@@ -80,7 +85,7 @@ func TestRTorrentDigestRejectsMalformedAndUnsupportedChallenges(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 			}))
 			defer srv.Close()
-			client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", Timeout: time.Second})
+			client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", Timeout: time.Second})
 			if _, err := client.TestConnection(t.Context()); err == nil {
 				t.Fatal("expected Digest challenge error")
 			}
@@ -105,7 +110,7 @@ func TestRTorrentDigestRetriesStaleNonce(t *testing.T) {
 		io.WriteString(w, rpcStringResponse("0.9.7"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", AuthMode: "digest", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Username: "user", Password: "secret", AuthMode: "digest", Timeout: time.Second})
 	info, err := client.TestConnection(t.Context())
 	if err != nil || !info.DigestAccepted || requests != 3 {
 		t.Fatalf("info=%+v requests=%d err=%v", info, requests, err)
@@ -125,7 +130,7 @@ func TestRTorrentRedirectDoesNotForwardDigestCredentials(t *testing.T) {
 		w.WriteHeader(http.StatusFound)
 	}))
 	defer source.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: source.URL, Username: "user", Password: "secret", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: source.URL, Username: "user", Password: "secret", Timeout: time.Second})
 	if _, err := client.TestConnection(t.Context()); err == nil || !strings.Contains(err.Error(), "redirect rejected") {
 		t.Fatalf("error=%v", err)
 	}
@@ -155,7 +160,7 @@ func TestRTorrentXMLRPCFaultPreservesCodeAndMessage(t *testing.T) {
 		io.WriteString(w, rpcFaultResponse(17, "Could not create directory"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	_, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"})
 	var fault *RPCFaultError
 	if !errors.As(err, &fault) {
@@ -213,7 +218,7 @@ func TestRTorrentVersionAndListDownloads(t *testing.T) {
 			`</data></array></value></data></array></value></param></params></methodResponse>`
 	})
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second, TLSVerify: true})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second, TLSVerify: true})
 	info, err := client.TestConnection(t.Context())
 	if err != nil || info.Version != "0.9.8" {
 		t.Fatalf("version = %+v, err=%v", info, err)
@@ -246,7 +251,7 @@ func TestRTorrentListDownloadsUsesMainViewAndClassifiesStates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	items, err := client.ListDownloads(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +302,7 @@ func TestRTorrentListDownloadsDecodesI8AndUsesBasePathForContent(t *testing.T) {
 	})
 	defer srv.Close()
 
-	items, err := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second}).ListDownloads(t.Context())
+	items, err := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second}).ListDownloads(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +335,7 @@ func TestRTorrentMissingMainViewReportsAvailableViews(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	_, err := client.ListDownloads(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "available views: main, custom") {
 		t.Fatalf("error = %v", err)
@@ -345,7 +350,7 @@ func TestRTorrentErrorsAreSanitized(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, tc.body) }))
 			defer srv.Close()
-			client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Password: "do-not-leak", Timeout: time.Second})
+			client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Password: "do-not-leak", Timeout: time.Second})
 			_, err := client.TestConnection(t.Context())
 			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "do-not-leak") {
 				t.Fatalf("err=%v", err)
@@ -357,7 +362,7 @@ func TestRTorrentErrorsAreSanitized(t *testing.T) {
 func TestRTorrentAuthenticationAndTimeout(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
 	defer authServer.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: authServer.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: authServer.URL, Timeout: time.Second})
 	if _, err := client.TestConnection(t.Context()); err == nil || !strings.Contains(err.Error(), "authentication rejected") {
 		t.Fatalf("authentication error = %v", err)
 	}
@@ -367,14 +372,14 @@ func TestRTorrentAuthenticationAndTimeout(t *testing.T) {
 		io.WriteString(w, rpcStringResponse("late"))
 	}))
 	defer slowServer.Close()
-	client = NewRTorrentClient(RTorrentConfig{URL: slowServer.URL, Timeout: 20 * time.Millisecond})
+	client = newTestRTorrentClient(RTorrentConfig{URL: slowServer.URL, Timeout: 20 * time.Millisecond})
 	if _, err := client.TestConnection(t.Context()); err == nil {
 		t.Fatal("expected timeout")
 	}
 }
 
 func TestRTorrentNotConfigured(t *testing.T) {
-	client := NewRTorrentClient(RTorrentConfig{})
+	client := newTestRTorrentClient(RTorrentConfig{})
 	if _, err := client.TestConnection(t.Context()); err == nil {
 		t.Fatal("expected missing URL error")
 	}
@@ -389,7 +394,7 @@ func TestRTorrentSubmitMagnetReturnsStableIdentity(t *testing.T) {
 		return rpcStringResponse("")
 	})
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	result, err := client.SubmitTorrent(TorrentSubmissionRequest{
 		URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", SavePath: "/downloads", Category: "librarr",
 	})
@@ -419,7 +424,7 @@ func TestRTorrentMagnetUsesEmptyTargetArgument(t *testing.T) {
 		io.WriteString(w, rpcStringResponse(""))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
@@ -442,7 +447,7 @@ func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
 		io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	result, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"})
 	if err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
@@ -477,7 +482,7 @@ func TestRTorrentRawStartTooFewArgumentsRegression(t *testing.T) {
 		io.WriteString(w, rpcFaultResponse(-503, "Too few arguments."))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
@@ -504,7 +509,7 @@ func TestRTorrentRawStartVerboseFallbackIsNarrow(t *testing.T) {
 		io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
@@ -534,7 +539,7 @@ func TestRTorrentStoppedRawSubmissionUsesLoadRawAndInitialCommands(t *testing.T)
 	}))
 	defer srv.Close()
 
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr", AddStopped: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +569,7 @@ func TestRTorrentMagnetSubmissionIncludesInitialCommands(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", SavePath: "/remote/downloads", Category: "librarr"}); err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +594,7 @@ func TestRTorrentStoppedMagnetUsesLoadNormal(t *testing.T) {
 		return rpcStringResponse("")
 	})
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", AddStopped: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +611,7 @@ func TestRTorrentNonzeroLoadResponseFailsSubmission(t *testing.T) {
 		return rpcStringResponse("")
 	})
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err == nil || !strings.Contains(err.Error(), "response 1") {
 		t.Fatalf("error=%v, want nonzero load response failure", err)
 	}
@@ -634,7 +639,7 @@ func TestRTorrentWrongDirectoryReadbackLogsWarning(t *testing.T) {
 		io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/wrong/path/Book", 100, 0, 0, 1, "started", "librarr")))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr"}); err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +662,7 @@ func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 		}
 		args := []string{}
 		for _, param := range call.Params {
-			args = append(args, debugRPCArgs([]rpcValue{param.Value})...)
+			args = append(args, testRPCArg(param.Value))
 		}
 		calls = append(calls, append([]string{call.MethodName}, args...))
 		if call.MethodName == "load.raw_start" {
@@ -671,7 +676,7 @@ func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 		io.WriteString(w, rpcStringResponse(""))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=librarr", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=librarr", Timeout: time.Second})
 	result, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr"})
 	if err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
@@ -686,6 +691,23 @@ func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 		if call[0] == "d.directory.set" || call[0] == "d.custom1.set" {
 			t.Fatalf("post-load setter should not be primary path: calls=%v", calls)
 		}
+	}
+}
+
+func testRPCArg(param rpcValue) string {
+	switch {
+	case param.Base64 != nil:
+		return "<torrent bytes omitted>"
+	case param.String != nil:
+		return *param.String
+	case param.Int != nil:
+		return fmt.Sprintf("%d", *param.Int)
+	case param.I4 != nil:
+		return fmt.Sprintf("%d", *param.I4)
+	case param.Bool != nil:
+		return fmt.Sprintf("%d", *param.Bool)
+	default:
+		return "<complex value omitted>"
 	}
 }
 
@@ -717,7 +739,7 @@ func TestRTorrentLabelFailureDoesNotBlockSubmission(t *testing.T) {
 		io.WriteString(w, rpcFaultResponse(-503, "label rejected"))
 	}))
 	defer srv.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", Category: "librarr"}); err != nil {
 		t.Fatalf("label failure blocked submission: %v", err)
 	}
@@ -761,7 +783,7 @@ func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
 		return rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01")
 	})
 	defer rpc.Close()
-	client := NewRTorrentClient(RTorrentConfig{URL: rpc.URL, ProwlarrURL: prowlarr.URL, ProwlarrAPIKey: "prowlarr-secret", Timeout: time.Second})
+	client := newTestRTorrentClient(RTorrentConfig{URL: rpc.URL, ProwlarrURL: prowlarr.URL, ProwlarrAPIKey: "prowlarr-secret", Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: prowlarr.URL + "/download.torrent", Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}

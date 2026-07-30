@@ -3375,6 +3375,7 @@ test('diagnosticPayload reads current unsaved rTorrent values', () => {
       'setting-rtorrent_timeout_seconds': { value: '15' },
       'setting-rtorrent_label_field': { value: 'd.custom1=' },
       'setting-rtorrent_tls_verify': { checked: true },
+      'setting-rtorrent_allow_private_networks': { checked: false },
     }[id] || null) },
   });
   assert.deepEqual(JSON.parse(JSON.stringify(context.diagnosticPayload('rtorrent'))), {
@@ -3390,6 +3391,7 @@ test('diagnosticPayload reads current unsaved rTorrent values', () => {
     timeout_seconds: 15,
     label_field: 'd.custom1=',
     tls_verify: true,
+    allow_private_networks: false,
   });
 });
 

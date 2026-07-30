@@ -13,19 +13,20 @@ import (
 )
 
 type rtorrentRequest struct {
-	Enabled    bool   `json:"enabled"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	UseTLS     *bool  `json:"use_tls"`
-	URLPath    string `json:"url_path"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	AuthMode   string `json:"auth_mode"`
-	Timeout    int    `json:"timeout_seconds"`
-	LabelField string `json:"label_field"`
-	TLSVerify  *bool  `json:"tls_verify"`
+	Enabled              bool   `json:"enabled"`
+	Name                 string `json:"name"`
+	URL                  string `json:"url"`
+	Host                 string `json:"host"`
+	Port                 int    `json:"port"`
+	UseTLS               *bool  `json:"use_tls"`
+	URLPath              string `json:"url_path"`
+	Username             string `json:"username"`
+	Password             string `json:"password"`
+	AuthMode             string `json:"auth_mode"`
+	Timeout              int    `json:"timeout_seconds"`
+	LabelField           string `json:"label_field"`
+	TLSVerify            *bool  `json:"tls_verify"`
+	AllowPrivateNetworks *bool  `json:"allow_private_networks"`
 }
 
 func (s *Server) handleGetRTorrent(w http.ResponseWriter, _ *http.Request) {
@@ -44,24 +45,25 @@ func (s *Server) handleGetRTorrent(w http.ResponseWriter, _ *http.Request) {
 		return fallback
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enabled":           get("rtorrent_enabled", s.cfg.RTorrentEnabled),
-		"name":              get("rtorrent_name", s.cfg.RTorrentName),
-		"url":               get("rtorrent_url", s.cfg.RTorrentURL),
-		"host":              get("rtorrent_host", host),
-		"port":              get("rtorrent_port", port),
-		"use_tls":           get("rtorrent_use_tls", useTLS),
-		"url_path":          get("rtorrent_url_path", path),
-		"username":          get("rtorrent_user", s.cfg.RTorrentUser),
-		"password":          maskedValueIfSet(get("rtorrent_pass", s.cfg.RTorrentPass)),
-		"auth_mode":         get("rtorrent_auth_mode", s.cfg.RTorrentAuthMode),
-		"timeout_seconds":   get("rtorrent_timeout_seconds", s.cfg.RTorrentTimeout),
-		"label_field":       get("rtorrent_label_field", s.cfg.RTorrentLabelField),
-		"tls_verify":        get("rtorrent_tls_verify", s.cfg.RTorrentTLSVerify),
-		"client_id":         "rtorrent",
-		"client_type":       "rtorrent",
-		"write_supported":   true,
-		"active":            s.cfg.ActiveTorrentClient() == "rtorrent",
-		"cleanup_supported": false,
+		"enabled":                get("rtorrent_enabled", s.cfg.RTorrentEnabled),
+		"name":                   get("rtorrent_name", s.cfg.RTorrentName),
+		"url":                    get("rtorrent_url", s.cfg.RTorrentURL),
+		"host":                   get("rtorrent_host", host),
+		"port":                   get("rtorrent_port", port),
+		"use_tls":                get("rtorrent_use_tls", useTLS),
+		"url_path":               get("rtorrent_url_path", path),
+		"username":               get("rtorrent_user", s.cfg.RTorrentUser),
+		"password":               maskedValueIfSet(get("rtorrent_pass", s.cfg.RTorrentPass)),
+		"auth_mode":              get("rtorrent_auth_mode", s.cfg.RTorrentAuthMode),
+		"timeout_seconds":        get("rtorrent_timeout_seconds", s.cfg.RTorrentTimeout),
+		"label_field":            get("rtorrent_label_field", s.cfg.RTorrentLabelField),
+		"tls_verify":             get("rtorrent_tls_verify", s.cfg.RTorrentTLSVerify),
+		"allow_private_networks": get("rtorrent_allow_private_networks", s.cfg.RTorrentAllowPrivateNetworks),
+		"client_id":              "rtorrent",
+		"client_type":            "rtorrent",
+		"write_supported":        true,
+		"active":                 s.cfg.ActiveTorrentClient() == "rtorrent",
+		"cleanup_supported":      false,
 	})
 }
 
@@ -131,11 +133,15 @@ func (s *Server) handleTestRTorrent(w http.ResponseWriter, r *http.Request) {
 	if payload.TLSVerify != nil {
 		tlsVerify = *payload.TLSVerify
 	}
+	allowPrivate := s.cfg.RTorrentAllowPrivateNetworks
+	if payload.AllowPrivateNetworks != nil {
+		allowPrivate = *payload.AllowPrivateNetworks
+	}
 	client := download.NewRTorrentClient(download.RTorrentConfig{
 		Name: payload.Name, URL: strings.TrimRight(payload.URL, "/"), Host: payload.Host, Port: payload.Port,
 		UseTLS: useTLS, URLPath: payload.URLPath, Username: payload.Username, AuthMode: payload.AuthMode,
 		Password: payload.Password, Timeout: time.Duration(payload.Timeout) * time.Second,
-		LabelField: payload.LabelField, TLSVerify: tlsVerify,
+		LabelField: payload.LabelField, TLSVerify: tlsVerify, AllowPrivateNetworks: allowPrivate,
 	})
 	result := client.Diagnose(r.Context())
 	writeJSON(w, http.StatusOK, result)
