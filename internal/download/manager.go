@@ -532,9 +532,17 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 // GetDownloads returns combined download status from qBittorrent and background jobs.
 func (m *Manager) GetDownloads() []models.DownloadStatus {
 	var downloads []models.DownloadStatus
+	trackedHashes := make(map[string]struct{})
+	if tracked, err := m.db.GetTrackedDownloads(); err == nil {
+		for _, item := range tracked {
+			if key := downloadIdentityKey(item.ClientID, item.InfoHash); key != "" {
+				trackedHashes[key] = struct{}{}
+			}
+		}
+	}
 
 	// Active torrent client (qBittorrent or Transmission).
-	if m.torrent != nil {
+	if m.torrent != nil && !isRTorrentClient(m.torrent) {
 		for _, cat := range []struct {
 			name  string
 			label string
@@ -548,6 +556,9 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 				continue
 			}
 			for _, t := range torrents {
+				if _, tracked := trackedHashes[downloadIdentityKey(m.torrent.Name(), t.Hash)]; tracked {
+					continue
+				}
 				downloads = append(downloads, models.DownloadStatus{
 					Source:   cat.label,
 					Title:    t.Name,
@@ -596,19 +607,66 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 
 	// Durable torrent tracking is included even when the client is temporarily
 	// unavailable; this keeps client identity and import state visible after a
-	// restart instead of silently dropping the history row.
+	// restart instead of silently dropping the history row. Imported rows are
+	// retained only for a short recent-history window.
 	if tracked, err := m.db.GetTrackedDownloads(); err == nil {
 		for _, item := range tracked {
+			if item.ImportStatus == "imported" && (item.ImportedAt == nil || time.Since(*item.ImportedAt) > 24*time.Hour) {
+				continue
+			}
 			downloads = append(downloads, models.DownloadStatus{
-				Source: item.ClientType, Title: item.Title, Status: item.Status,
+				Source: item.ClientType, Title: item.Title, Status: trackedDownloadDisplayStatus(item),
 				Progress: item.Progress * 100, Hash: item.InfoHash, ClientID: item.ClientID,
 				ClientType: item.ClientType, RemotePath: item.RemotePath, LocalPath: item.LocalPath,
-				ImportStatus: item.ImportStatus, Error: item.LastError,
+				ImportStatus: item.ImportStatus, Error: item.LastError, CreatedAt: item.CreatedAt,
+				CompletedAt: item.CompletedAt, ImportedAt: item.ImportedAt,
 			})
 		}
 	}
 
 	return downloads
+}
+
+func isRTorrentClient(client TorrentClient) bool {
+	typed, ok := client.(interface{ Type() string })
+	return ok && typed.Type() == "rtorrent"
+}
+
+func downloadIdentityKey(clientID, hash string) string {
+	clientID = strings.ToLower(strings.TrimSpace(clientID))
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if clientID == "" || hash == "" {
+		return ""
+	}
+	return clientID + ":" + hash
+}
+
+func trackedDownloadDisplayStatus(item models.TrackedDownload) string {
+	switch strings.ToLower(strings.TrimSpace(item.ImportStatus)) {
+	case "imported":
+		return "imported"
+	case "importing":
+		return "importing"
+	case "failed":
+		return "failed"
+	}
+
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	if status == "completed" {
+		if item.LocalPath != "" {
+			if _, err := os.Stat(item.LocalPath); err == nil {
+				return "ready_to_import"
+			}
+		}
+		return "waiting"
+	}
+	if status == "submitted" || status == "downloading" || status == "stopped" || status == "paused" {
+		return status
+	}
+	if status == "error" {
+		return "failed"
+	}
+	return status
 }
 
 func mapSABStatus(status string) string {

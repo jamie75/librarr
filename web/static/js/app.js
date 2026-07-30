@@ -58,6 +58,9 @@ const I18N = {
     dashboard_failed: 'Failed',
     dashboard_importing: 'Importing',
     dashboard_downloading_count: 'Downloading',
+    dashboard_submitted: 'Submitted',
+    dashboard_stopped: 'Paused/Stopped',
+    dashboard_recent_imported: 'Recently imported',
     dashboard_open_opds: 'Open OPDS Catalog',
     library_kicker: 'Bookshelf',
     library_title: 'Your Library',
@@ -237,6 +240,13 @@ const I18N = {
     status_searching: 'Searching',
     status_importing: 'Importing',
     status_retry_wait: 'Retry Wait',
+    status_submitted: 'Submitted',
+    status_stopped: 'Paused/Stopped',
+    status_paused: 'Paused/Stopped',
+    status_waiting: 'Waiting for sync',
+    status_ready_to_import: 'Ready to import',
+    status_failed: 'Failed',
+    status_imported: 'Imported',
     // Download actions
     download_started: 'Download started: {title}',
     download_complete: 'Download completed: {title}',
@@ -795,7 +805,14 @@ const COVER_GRADIENTS = [
 ];
 
 const STATUS_STYLES = {
-  downloading: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', label: 'Downloading' },
+	 submitted:   { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Submitted' },
+	 downloading: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', label: 'Downloading' },
+	 stopped:     { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Paused/Stopped' },
+	 paused:      { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Paused/Stopped' },
+	 waiting:     { bg: 'bg-amber-500/20', text: 'text-amber-300', border: 'border-amber-500/30', label: 'Waiting for sync' },
+	 ready_to_import: { bg: 'bg-cyan-500/20', text: 'text-cyan-300', border: 'border-cyan-500/30', label: 'Ready to import' },
+	 imported:    { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Imported' },
+	 failed:      { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', label: 'Failed' },
   completed:   { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Completed' },
   error:       { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', label: 'Error' },
   organizing:  { bg: 'bg-yellow-500/20', text: 'text-yellow-400', border: 'border-yellow-500/30', label: 'Organizing' },
@@ -1816,7 +1833,7 @@ function isTerminalDownloadStatus(status) {
 }
 
 function isActiveDownloadStatus(status) {
-  return status === 'queued' || status === 'searching' || status === 'downloading' || status === 'organizing' || status === 'importing' || status === 'retry_wait';
+	return ['submitted', 'queued', 'searching', 'downloading', 'paused', 'stopped', 'waiting', 'ready_to_import', 'organizing', 'importing', 'retry_wait'].includes(status);
 }
 
 function trackDownloadJob(downloadKey, jobId, title, source, url = '') {
@@ -1955,8 +1972,8 @@ function renderDownloadJob(job) {
   job = (job && typeof job === 'object') ? job : {};
   const status = String(job.status || 'queued');
   const st = STATUS_STYLES[status] || STATUS_STYLES.queued;
-  const progress = job.progress || 0;
-  const showProgress = status === 'downloading' && progress > 0;
+	const progress = normalizeDownloadProgress(job.progress);
+	const showProgress = ['downloading', 'submitted', 'importing'].includes(status) && progress > 0;
   const retryKey = String(job.job_id);
   const retryPending = state.pendingRetryDownloads.has(retryKey);
 
@@ -2568,6 +2585,9 @@ function hasDashboardActivity(summary) {
 		'manualReview',
 		'importing',
 		'failed',
+		'submitted',
+		'stopped',
+		'imported',
 	].some(key => Number(summary[key] || 0) > 0));
 }
 
@@ -2576,12 +2596,15 @@ function renderDashboardActivity(summary, isAdmin) {
 		return `<div class="rounded-2xl border border-dashed border-stone-800 bg-stone-900/30 px-4 py-5 text-sm text-stone-400">${t('dashboard_all_clear')}</div>`;
 	}
 	const chips = [
+		{ key: 'submitted', label: t('dashboard_submitted'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'downloading', label: t('dashboard_downloading_count'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'stopped', label: t('dashboard_stopped'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'waiting', label: t('dashboard_waiting'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'ready', label: t('dashboard_ready_to_import'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'manualReview', label: t('dashboard_manual_review'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'importing', label: t('dashboard_importing'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'failed', label: t('dashboard_failed'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'imported', label: t('dashboard_recent_imported'), action: 'switchTab', arg: 'downloads' },
 	];
 	return `<div class="grid grid-cols-2 gap-2">${chips
 		.filter(chip => Number(summary[chip.key] || 0) > 0)
@@ -2637,7 +2660,15 @@ function normalizeDownloadsResponse(value) {
 			...item,
 			status: String(item.status || 'queued'),
 			title: item.title || 'Unknown',
+			progress: normalizeDownloadProgress(item.progress),
 		}));
+}
+
+function normalizeDownloadProgress(value) {
+	const progress = Number(value);
+	if (!Number.isFinite(progress) || progress < 0) return 0;
+	if (progress > 0 && progress <= 1) return Math.min(progress * 100, 100);
+	return Math.min(progress, 100);
 }
 
 function isAdminUser() {
@@ -2658,12 +2689,19 @@ function buildDashboardActivitySummary(downloads, activity) {
 		importing: 0,
 		manualReview: 0,
 		failed: 0,
+		submitted: 0,
+		stopped: 0,
+		imported: 0,
 	};
 	(downloads || []).forEach(item => {
 		const status = String(item.status || '').toLowerCase();
 		if (['downloading', 'queued', 'searching'].includes(status)) summary.downloading++;
+		if (status === 'submitted') summary.submitted++;
+		if (['paused', 'stopped'].includes(status)) summary.stopped++;
 		if (['waiting', 'pending', 'retry_wait', 'sync_wait', 'missing_files'].includes(status)) summary.waiting++;
 		if (['importing', 'organizing'].includes(status)) summary.importing++;
+		if (status === 'ready_to_import') summary.ready++;
+		if (status === 'imported') summary.imported++;
 		if (['error', 'failed', 'dead_letter'].includes(status)) summary.failed++;
 	});
 	(activity || []).forEach(event => {

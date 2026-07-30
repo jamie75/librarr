@@ -2272,12 +2272,14 @@
     },
     "/api/downloads": {
       "get": {
-        "summary": "List active and recent downloads"
+        "summary": "List active and recent downloads",
+        "description": "Returns legacy download jobs, client downloads, and durable tracked-download/import states. Tracked imports are retained for a short recent-history window. Progress is normalized to a percentage."
       }
     },
     "/api/v1/downloads": {
       "get": {
-        "summary": "List active and recent downloads"
+        "summary": "List active and recent downloads",
+        "description": "Returns legacy download jobs, client downloads, and durable tracked-download/import states. Tracked imports are retained for a short recent-history window. Progress is normalized to a percentage."
       }
     },
     "/api/downloads/torrent/{hash}": {

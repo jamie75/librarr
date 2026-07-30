@@ -258,23 +258,26 @@ type DownloadRequest struct {
 
 // DownloadStatus is an entry in the GET /api/downloads response.
 type DownloadStatus struct {
-	Source       string  `json:"source"`
-	Title        string  `json:"title"`
-	Status       string  `json:"status"`
-	Progress     float64 `json:"progress,omitempty"`
-	Size         string  `json:"size,omitempty"`
-	Speed        string  `json:"speed,omitempty"`
-	Hash         string  `json:"hash,omitempty"`
-	JobID        string  `json:"job_id,omitempty"`
-	Error        string  `json:"error,omitempty"`
-	Detail       string  `json:"detail,omitempty"`
-	RetryCount   int     `json:"retry_count,omitempty"`
-	MaxRetries   int     `json:"max_retries,omitempty"`
-	ClientID     string  `json:"client_id,omitempty"`
-	ClientType   string  `json:"client_type,omitempty"`
-	RemotePath   string  `json:"remote_path,omitempty"`
-	LocalPath    string  `json:"local_path,omitempty"`
-	ImportStatus string  `json:"import_status,omitempty"`
+	Source       string     `json:"source"`
+	Title        string     `json:"title"`
+	Status       string     `json:"status"`
+	Progress     float64    `json:"progress,omitempty"`
+	Size         string     `json:"size,omitempty"`
+	Speed        string     `json:"speed,omitempty"`
+	Hash         string     `json:"hash,omitempty"`
+	JobID        string     `json:"job_id,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Detail       string     `json:"detail,omitempty"`
+	RetryCount   int        `json:"retry_count,omitempty"`
+	MaxRetries   int        `json:"max_retries,omitempty"`
+	ClientID     string     `json:"client_id,omitempty"`
+	ClientType   string     `json:"client_type,omitempty"`
+	RemotePath   string     `json:"remote_path,omitempty"`
+	LocalPath    string     `json:"local_path,omitempty"`
+	ImportStatus string     `json:"import_status,omitempty"`
+	CreatedAt    time.Time  `json:"created_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ImportedAt   *time.Time `json:"imported_at,omitempty"`
 }
 
 // TrackedDownload is the durable identity of a torrent submitted by Librarr.

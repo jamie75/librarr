@@ -58,6 +58,7 @@ function extractFunctionSource(name) {
 const functionBundle = [
   extractFunctionSource('currentLibraryCount'),
   extractFunctionSource('normalizeDownloadsResponse'),
+  extractFunctionSource('normalizeDownloadProgress'),
   extractFunctionSource('isAdminUser'),
   extractFunctionSource('homeDisplayName'),
   extractFunctionSource('buildDashboardActivitySummary'),
@@ -345,6 +346,13 @@ function createContext(overrides = {}) {
       error: { bg: 'error-bg', text: 'error-text', border: 'error-border' },
       dead_letter: { bg: 'dead-bg', text: 'dead-text', border: 'dead-border' },
       downloading: { bg: 'downloading-bg', text: 'downloading-text', border: 'downloading-border' },
+      submitted: { bg: 'submitted-bg', text: 'submitted-text', border: 'submitted-border' },
+      stopped: { bg: 'stopped-bg', text: 'stopped-text', border: 'stopped-border' },
+      waiting: { bg: 'waiting-bg', text: 'waiting-text', border: 'waiting-border' },
+      ready_to_import: { bg: 'ready-bg', text: 'ready-text', border: 'ready-border' },
+      importing: { bg: 'importing-bg', text: 'importing-text', border: 'importing-border' },
+      imported: { bg: 'imported-bg', text: 'imported-text', border: 'imported-border' },
+      failed: { bg: 'failed-bg', text: 'failed-text', border: 'failed-border' },
     },
     document: { getElementById: () => null, querySelector: () => null },
     api: async () => ({ ok: true, json: async () => ({ success: true }) }),
@@ -736,8 +744,8 @@ test('home dashboard hides needs attention when empty and renders actionable ite
 
 test('home dashboard activity summary normalizes downloads response and counts failures', () => {
   const context = createContext();
-  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [{ status: 'downloading' }] })), JSON.stringify([{ status: 'downloading', title: 'Unknown' }]));
-  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [null, { title: '', status: '' }] })), JSON.stringify([{ title: 'Unknown', status: 'queued' }]));
+  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [{ status: 'downloading' }] })), JSON.stringify([{ status: 'downloading', title: 'Unknown', progress: 0 }]));
+  assert.equal(JSON.stringify(context.normalizeDownloadsResponse({ downloads: [null, { title: '', status: '' }] })), JSON.stringify([{ title: 'Unknown', status: 'queued', progress: 0 }]));
   const summary = context.buildDashboardActivitySummary(
     [{ status: 'downloading' }, { status: 'retry_wait' }, { status: 'error' }],
     [{ detail: 'Manual review required' }, { detail: 'Ready to import' }]
@@ -747,6 +755,37 @@ test('home dashboard activity summary normalizes downloads response and counts f
   assert.equal(summary.failed, 1);
   assert.equal(summary.manualReview, 1);
   assert.equal(summary.ready, 1);
+});
+
+test('home activity includes tracked rTorrent states and normalizes progress', () => {
+  const context = createContext();
+  const normalized = context.normalizeDownloadsResponse({ downloads: [
+    { title: 'Downloading', status: 'downloading', progress: 0.42 },
+    { title: 'Waiting', status: 'waiting', progress: 0 },
+    { title: 'Importing', status: 'importing', progress: 100 },
+    { title: 'Failed', status: 'failed', error: 'permission denied' },
+  ] });
+  assert.equal(normalized[0].progress, 42);
+  assert.equal(normalized[2].progress, 100);
+  const summary = context.buildDashboardActivitySummary(normalized, []);
+  assert.equal(summary.downloading, 1);
+  assert.equal(summary.waiting, 1);
+  assert.equal(summary.importing, 1);
+  assert.equal(summary.failed, 1);
+  for (const [status, title] of [
+    ['submitted', 'Submitted Book'],
+    ['downloading', 'Downloading Book'],
+    ['stopped', 'Stopped Book'],
+    ['waiting', 'Waiting Book'],
+    ['ready_to_import', 'Ready Book'],
+    ['importing', 'Importing Book'],
+    ['imported', 'Imported Book'],
+    ['failed', 'Failed Book'],
+  ]) {
+    const html = context.renderDownloadJob({ status, title, progress: 0.5, client_type: 'rtorrent' });
+    assert.match(html, new RegExp(title));
+    assert.match(html, new RegExp(`status_${status}`));
+  }
 });
 
 test('download rows tolerate failed imports and malformed historic entries', () => {
