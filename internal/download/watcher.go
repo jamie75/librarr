@@ -37,6 +37,7 @@ type Watcher struct {
 	processing sync.Map // hash -> struct{}, tracks in-progress imports
 	imported   sync.Map // hash -> struct{}, tracks already-imported hashes
 	pending    sync.Map // hash/type -> reason signature, suppresses repeated pending INFO logs
+	pollErrors sync.Map // client/category -> error signature, suppresses repeated listing failures
 }
 
 var errTorrentContentPending = errors.New("torrent content pending synchronization")
@@ -158,10 +159,12 @@ func (w *Watcher) checkTracked() {
 		}
 		current, err := pollClient.GetTorrents(item.Category)
 		if err != nil {
+			w.logTorrentPollFailure(item.ClientID+"/"+item.Category, err)
 			item.LastError = err.Error()
 			_ = w.db.UpdateTrackedDownload(&item)
 			continue
 		}
+		w.logTorrentPollRecovery(item.ClientID + "/" + item.Category)
 		var match *TorrentInfo
 		for i := range current {
 			if strings.EqualFold(current[i].Hash, item.InfoHash) || strings.EqualFold(current[i].Hash, item.DownloadID) {
@@ -229,6 +232,22 @@ func (w *Watcher) checkTracked() {
 			continue
 		}
 		go w.importTracked(item, *match)
+	}
+}
+
+func (w *Watcher) logTorrentPollFailure(key string, err error) {
+	signature := err.Error()
+	if previous, loaded := w.pollErrors.Load(key); loaded && previous == signature {
+		slog.Debug("torrent watcher listing still failing", "scope", key, "error", err)
+		return
+	}
+	w.pollErrors.Store(key, signature)
+	slog.Warn("torrent watcher listing failed", "scope", key, "error", err)
+}
+
+func (w *Watcher) logTorrentPollRecovery(key string) {
+	if _, loaded := w.pollErrors.LoadAndDelete(key); loaded {
+		slog.Info("torrent watcher listing recovered", "scope", key)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jamie75/librarr/internal/diagnostics"
@@ -76,8 +77,9 @@ type ClientDownload struct {
 // RTorrentClient talks to rTorrent's XML-RPC endpoint directly and never
 // scrapes or automates ruTorrent. Removal is intentionally unsupported.
 type RTorrentClient struct {
-	cfg    RTorrentConfig
-	client *http.Client
+	cfg       RTorrentConfig
+	client    *http.Client
+	faultLogs sync.Map // method -> fault signature, suppresses repeated poll faults
 }
 
 var _ ReadOnlyDownloadClient = (*RTorrentClient)(nil)
@@ -293,14 +295,19 @@ func (r *RTorrentClient) TestConnection(ctx context.Context) (ClientInfo, error)
 }
 
 func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, error) {
-	fields := []string{"d.hash=", "d.name=", "d.base_path=", "d.directory=", "d.size_bytes=", "d.completed_bytes=", "d.is_active=", "d.state=", r.cfg.LabelField}
-	params := make([]rpcValue, 0, len(fields)+1)
-	params = append(params, rpcValue{String: stringPtr("")})
+	fields := []string{"d.hash=", "d.name=", "d.base_path=", "d.directory=", "d.size_bytes=", "d.completed_bytes=", "d.complete=", "d.is_active=", "d.state=", r.cfg.LabelField}
+	params := make([]rpcValue, 0, len(fields)+2)
+	// The first argument is the XML-RPC target and the second is the view.
+	// rTorrent installations commonly expose only the standard main view.
+	params = append(params, rpcValue{String: stringPtr("")}, rpcValue{String: stringPtr("main")})
 	for _, field := range fields {
 		params = append(params, rpcValue{String: stringPtr(field)})
 	}
 	value, err := r.call(ctx, "d.multicall2", params...)
 	if err != nil {
+		if isRTorrentMissingViewError(err) {
+			return nil, r.explainUnavailableMainView(ctx, err)
+		}
 		return nil, err
 	}
 	rows, ok := value.Array()
@@ -310,7 +317,7 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 	downloads := make([]ClientDownload, 0, len(rows))
 	for _, row := range rows {
 		values, ok := row.Array()
-		if !ok || len(values) < 8 {
+		if !ok || len(values) < 10 {
 			return nil, fmt.Errorf("rTorrent returned a malformed download row")
 		}
 		size := valueInt(values[4])
@@ -322,11 +329,9 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 		if progress > 1 {
 			progress = 1
 		}
-		active := valueInt(values[6]) != 0
-		state := valueString(values[7])
-		if state == "" {
-			state = mapRTorrentState(active, progress)
-		}
+		complete := valueInt(values[6]) != 0
+		active := valueInt(values[7]) != 0
+		state := classifyRTorrentState(complete, active, valueString(values[8]))
 		basePath := valueString(values[2])
 		directory := valueString(values[3])
 		contentPath := directory
@@ -342,11 +347,45 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 			SavePath:    basePath,
 			ContentPath: contentPath,
 			Size:        size,
-			Completed:   progress >= 1,
+			Completed:   complete,
 			Label:       valueString(values[len(values)-1]),
 		})
 	}
 	return downloads, nil
+}
+
+func (r *RTorrentClient) explainUnavailableMainView(ctx context.Context, original error) error {
+	views, err := r.listRTorrentViews(ctx)
+	if err != nil {
+		return fmt.Errorf("rTorrent main view is unavailable (%w); could not list available views: %v", original, err)
+	}
+	if len(views) == 0 {
+		return fmt.Errorf("rTorrent main view is unavailable (%w); rTorrent reported no available views", original)
+	}
+	return fmt.Errorf("rTorrent main view is unavailable (%w); available views: %s", original, strings.Join(views, ", "))
+}
+
+func (r *RTorrentClient) listRTorrentViews(ctx context.Context) ([]string, error) {
+	value, err := r.call(ctx, "view.list")
+	if err != nil {
+		return nil, err
+	}
+	entries, ok := value.Array()
+	if !ok {
+		return nil, fmt.Errorf("rTorrent returned an invalid view list")
+	}
+	views := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if view := strings.TrimSpace(valueString(entry)); view != "" {
+			views = append(views, view)
+		}
+	}
+	return views, nil
+}
+
+func isRTorrentMissingViewError(err error) bool {
+	var fault *RPCFaultError
+	return errors.As(err, &fault) && fault.Code == "-503" && strings.Contains(strings.ToLower(fault.FaultString), "could not find view")
 }
 
 func (r *RTorrentClient) GetDownload(ctx context.Context, id string) (ClientDownload, error) {
@@ -517,16 +556,27 @@ func (r *RTorrentClient) callDetailed(ctx context.Context, method string, params
 				fault.Method = method
 				fault.HTTPStatus = resp.StatusCode
 				fault.Phase = "after_response_parsing"
-				slog.Error("rTorrent XML-RPC fault", "method", method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", resp.StatusCode, "phase", fault.Phase)
+				r.logRPCFault(fault)
 			} else {
 				slog.Debug("rTorrent XML-RPC response parsing failed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing", "error", parseErr)
 			}
 			return rpcValue{}, probe, parseErr
 		}
 		slog.Debug("rTorrent XML-RPC method completed", "method", method, "args", debugRPCArgs(params), "http_status", resp.StatusCode, "phase", "after_response_parsing")
+		r.faultLogs.Delete(method)
 		return value, probe, nil
 	}
 	return rpcValue{}, probe, fmt.Errorf("rTorrent authentication rejected after Digest challenge")
+}
+
+func (r *RTorrentClient) logRPCFault(fault *RPCFaultError) {
+	signature := fmt.Sprintf("%s|%s|%d", fault.Code, fault.FaultString, fault.HTTPStatus)
+	if previous, loaded := r.faultLogs.Load(fault.Method); loaded && previous == signature {
+		slog.Debug("rTorrent XML-RPC fault still occurring", "method", fault.Method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", fault.Phase)
+		return
+	}
+	r.faultLogs.Store(fault.Method, signature)
+	slog.Error("rTorrent XML-RPC fault", "method", fault.Method, "fault_code", fault.Code, "fault_string", netutil.SanitizeLogValue(fault.FaultString), "http_status", fault.HTTPStatus, "phase", fault.Phase)
 }
 
 func debugRPCArgs(params []rpcValue) []string {
@@ -662,11 +712,12 @@ func RTorrentEndpointFields(cfg RTorrentConfig) (host string, port int, useTLS b
 	return u.Hostname(), port, u.Scheme == "https", u.EscapedPath(), nil
 }
 
-func mapRTorrentState(active bool, progress float64) string {
-	if progress >= 1 {
+func classifyRTorrentState(complete, active bool, reported string) string {
+	if complete {
 		return "completed"
 	}
-	if active {
+	reported = strings.ToLower(strings.TrimSpace(reported))
+	if active || reported == "downloading" || reported == "started" || reported == "active" {
 		return "downloading"
 	}
 	return "stopped"

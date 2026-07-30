@@ -204,8 +204,8 @@ func TestRTorrentVersionAndListDownloads(t *testing.T) {
 		return `<methodResponse><params><param><value><array><data><value><array><data>` +
 			`<value><string>ABC123</string></value><value><string>Example</string></value>` +
 			`<value><string>/downloads</string></value><value><string>/downloads/Example</string></value>` +
-			`<value><int>100</int></value><value><int>100</int></value><value><int>0</int></value>` +
-			`<value><string></string></value><value><string>librarr</string></value>` +
+			`<value><int>100</int></value><value><int>100</int></value><value><int>1</int></value>` +
+			`<value><int>0</int></value><value><string></string></value><value><string>librarr</string></value>` +
 			`</data></array></value></data></array></value></param></params></methodResponse>`
 	})
 	defer srv.Close()
@@ -220,6 +220,87 @@ func TestRTorrentVersionAndListDownloads(t *testing.T) {
 	}
 	if items[0].InfoHash != "abc123" || !items[0].Completed || items[0].ContentPath != "/downloads/Example" {
 		t.Fatalf("item = %+v", items[0])
+	}
+}
+
+func TestRTorrentListDownloadsUsesMainViewAndClassifiesStates(t *testing.T) {
+	var calls []rpcRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		calls = append(calls, call)
+		w.Header().Set("Content-Type", "text/xml")
+		io.WriteString(w, rpcListResponse(
+			rpcRow("active-complete", "Seeding", "/downloads/seed", 100, 100, 1, 1, "started", "librarr"),
+			rpcRow("stopped-complete", "Done", "/downloads/done", 100, 100, 1, 0, "stopped", "librarr"),
+			rpcRow("active-incomplete", "Downloading", "/downloads/active", 100, 40, 0, 1, "started", "librarr"),
+			rpcRow("stopped-incomplete", "Stopped", "/downloads/stopped", 100, 40, 0, 0, "stopped", "librarr"),
+		))
+	}))
+	defer srv.Close()
+
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	items, err := client.ListDownloads(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].MethodName != "d.multicall2" {
+		t.Fatalf("calls = %+v", calls)
+	}
+	args := rpcRequestStrings(calls[0])
+	wantPrefix := []string{"", "main", "d.hash=", "d.name=", "d.base_path=", "d.directory=", "d.size_bytes=", "d.completed_bytes=", "d.complete=", "d.is_active=", "d.state="}
+	if len(args) < len(wantPrefix) {
+		t.Fatalf("args = %v", args)
+	}
+	for i, want := range wantPrefix {
+		if args[i] != want {
+			t.Fatalf("args[%d] = %q, want %q; all args=%v", i, args[i], want, args)
+		}
+	}
+	wantStates := []struct {
+		status    string
+		completed bool
+		progress  float64
+	}{
+		{"completed", true, 1},
+		{"completed", true, 1},
+		{"downloading", false, .4},
+		{"stopped", false, .4},
+	}
+	for i, want := range wantStates {
+		if items[i].Status != want.status || items[i].Completed != want.completed || items[i].Progress != want.progress {
+			t.Fatalf("item[%d] = %+v, want status=%q completed=%t progress=%v", i, items[i], want.status, want.completed, want.progress)
+		}
+	}
+}
+
+func TestRTorrentMissingMainViewReportsAvailableViews(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		if call.MethodName == "d.multicall2" {
+			io.WriteString(w, rpcFaultResponse(-503, "Could not find view."))
+			return
+		}
+		if call.MethodName == "view.list" {
+			io.WriteString(w, rpcStringListResponse("main", "custom"))
+			return
+		}
+		t.Fatalf("unexpected method %q", call.MethodName)
+	}))
+	defer srv.Close()
+
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	_, err := client.ListDownloads(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "available views: main, custom") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -478,6 +559,43 @@ func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: prowlarr.URL + "/download.torrent", Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
+}
+
+func rpcRequestStrings(call rpcRequest) []string {
+	args := make([]string, 0, len(call.Params))
+	for _, param := range call.Params {
+		args = append(args, valueString(param.Value))
+	}
+	return args
+}
+
+func rpcRow(hash, name, path string, size, completed, complete, active int64, state, label string) string {
+	return `<value><array><data>` +
+		`<value><string>` + hash + `</string></value>` +
+		`<value><string>` + name + `</string></value>` +
+		`<value><string>` + path + `</string></value>` +
+		`<value><string>` + path + `</string></value>` +
+		`<value><int>` + fmt.Sprint(size) + `</int></value>` +
+		`<value><int>` + fmt.Sprint(completed) + `</int></value>` +
+		`<value><int>` + fmt.Sprint(complete) + `</int></value>` +
+		`<value><int>` + fmt.Sprint(active) + `</int></value>` +
+		`<value><string>` + state + `</string></value>` +
+		`<value><string>` + label + `</string></value>` +
+		`</data></array></value>`
+}
+
+func rpcListResponse(rows ...string) string {
+	return `<methodResponse><params><param><value><array><data>` + strings.Join(rows, "") +
+		`</data></array></value></param></params></methodResponse>`
+}
+
+func rpcStringListResponse(values ...string) string {
+	rows := make([]string, 0, len(values))
+	for _, value := range values {
+		rows = append(rows, `<value><string>`+value+`</string></value>`)
+	}
+	return `<methodResponse><params><param><value><array><data>` + strings.Join(rows, "") +
+		`</data></array></value></param></params></methodResponse>`
 }
 
 func rpcStringResponse(value string) string {

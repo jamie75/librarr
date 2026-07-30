@@ -47,6 +47,24 @@ func TestRecordTorrentItemIsIdempotentAcrossWatcherPolls(t *testing.T) {
 	}
 }
 
+func TestWatcherPollFailureStateRecoversAfterListingSucceeds(t *testing.T) {
+	w := &Watcher{}
+	err := errors.New(`rTorrent main view is unavailable`)
+
+	w.logTorrentPollFailure("rtorrent/ebook", err)
+	if _, ok := w.pollErrors.Load("rtorrent/ebook"); !ok {
+		t.Fatal("expected first poll failure to be recorded")
+	}
+	w.logTorrentPollFailure("rtorrent/ebook", err)
+	if got, _ := w.pollErrors.Load("rtorrent/ebook"); got != err.Error() {
+		t.Fatalf("repeated failure state = %v, want unchanged signature", got)
+	}
+	w.logTorrentPollRecovery("rtorrent/ebook")
+	if _, ok := w.pollErrors.Load("rtorrent/ebook"); ok {
+		t.Fatal("expected recovery to clear the repeated failure state")
+	}
+}
+
 func TestMapTorrentPathRemoteRootToLocalRoot(t *testing.T) {
 	got, ok := mapTorrentPath("/downloads/rclone-mnt/downloads/Prince Of Persia", "/downloads/rclone-mnt/downloads", "/downloads")
 	if !ok || got != "/downloads/Prince Of Persia" {
