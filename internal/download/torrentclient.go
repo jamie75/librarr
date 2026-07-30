@@ -22,6 +22,7 @@ type TorrentSubmissionRequest struct {
 	SavePath         string
 	Category         string
 	ExpectedInfoHash string
+	AddStopped       bool // rTorrent-only compatibility option; submissions start by default.
 }
 
 // WritableTorrentClient is optional so existing TorrentClient implementations

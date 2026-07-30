@@ -70,6 +70,7 @@ type ClientDownload struct {
 	ContentPath string  `json:"content_path,omitempty"`
 	Size        int64   `json:"size"`
 	Completed   bool    `json:"completed"`
+	Active      bool    `json:"active"`
 	Label       string  `json:"label,omitempty"`
 	Error       string  `json:"error,omitempty"`
 }
@@ -144,18 +145,42 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	}
 	if len(request.TorrentBytes) > 0 {
 		method = "load.raw_start"
+		if request.AddStopped {
+			method = "load.raw"
+		}
 		encoded := base64.StdEncoding.EncodeToString(request.TorrentBytes)
 		params := []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
+		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
 		value, err = r.call(context.Background(), method, params...)
-		if err != nil && shouldFallbackRawStartVerbose(err) {
+		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
+			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
+			params = []rpcValue{{String: stringPtr("")}, {Base64: stringPtr(encoded)}}
+			params = append(params, r.loadCommands(request.Category, request.SavePath, false)...)
+			value, err = r.call(context.Background(), method, params...)
+		}
+		if err != nil && method == "load.raw_start" && shouldFallbackRawStartVerbose(err) {
 			// Older rTorrent builds expose the verbose raw loader instead.
 			method = "load.raw_start_verbose"
 			value, err = r.call(context.Background(), method, params...)
 		}
 	} else {
-		value, err = r.call(context.Background(), method, rpcValue{String: stringPtr("")}, rpcValue{String: stringPtr(request.URL)})
+		if request.AddStopped {
+			method = "load.normal"
+		}
+		params := []rpcValue{{String: stringPtr("")}, {String: stringPtr(request.URL)}}
+		params = append(params, r.loadCommands(request.Category, request.SavePath, true)...)
+		value, err = r.call(context.Background(), method, params...)
+		if err != nil && hasOptionalRTorrentLabel(request.Category, r.cfg.LabelField) && isOptionalRTorrentLabelFault(err) {
+			slog.Warn("rTorrent initial label command failed; retrying submission without label", "method", method, "error", netutil.SanitizeSensitiveText(err.Error()))
+			params = []rpcValue{{String: stringPtr("")}, {String: stringPtr(request.URL)}}
+			params = append(params, r.loadCommands(request.Category, request.SavePath, false)...)
+			value, err = r.call(context.Background(), method, params...)
+		}
 	}
 	if err != nil {
+		return TorrentSubmission{}, err
+	}
+	if err := validateRTorrentLoadResponse(value); err != nil {
 		return TorrentSubmission{}, err
 	}
 	if hash == "" {
@@ -164,17 +189,77 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	if hash == "" {
 		return TorrentSubmission{}, fmt.Errorf("rTorrent accepted the submission but returned no torrent hash")
 	}
-	if request.SavePath != "" {
-		if _, err := r.call(context.Background(), "d.directory.set", rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(request.SavePath)}); err != nil {
-			return TorrentSubmission{}, fmt.Errorf("rTorrent destination setup failed: %w", err)
-		}
-	}
-	if labelMethod, label := r.labelCommand(request.Category); labelMethod != "" && label != "" {
-		if _, err := r.call(context.Background(), labelMethod, rpcValue{String: stringPtr(hash)}, rpcValue{String: stringPtr(label)}); err != nil {
-			slog.Warn("rTorrent label application failed after submission", "method", labelMethod, "error", netutil.SanitizeSensitiveText(err.Error()))
-		}
-	}
+	r.verifySubmittedTorrent(hash, request.SavePath)
 	return TorrentSubmission{ClientID: r.ClientID(), ClientType: r.Type(), DownloadID: hash, InfoHash: hash, Name: request.Title, RemoteSavePath: request.SavePath, Category: request.Category}, nil
+}
+
+func (r *RTorrentClient) loadCommands(category, savePath string, includeLabel bool) []rpcValue {
+	commands := make([]rpcValue, 0, 2)
+	if includeLabel {
+		_, label := r.labelCommand(category)
+		if label != "" {
+			commands = append(commands, rpcValue{String: stringPtr("d.custom1.set=" + label)})
+		}
+	}
+	if strings.TrimSpace(savePath) != "" {
+		commands = append(commands, rpcValue{String: stringPtr("d.directory.set=" + savePath)})
+	}
+	return commands
+}
+
+func hasOptionalRTorrentLabel(category, configuredField string) bool {
+	field, configuredValue, hasValue := strings.Cut(strings.TrimSpace(configuredField), "=")
+	if strings.TrimSpace(field) == "" {
+		return false
+	}
+	return strings.TrimSpace(category) != "" || (hasValue && strings.TrimSpace(configuredValue) != "")
+}
+
+func isOptionalRTorrentLabelFault(err error) bool {
+	var fault *RPCFaultError
+	if !errors.As(err, &fault) {
+		return false
+	}
+	message := strings.ToLower(fault.FaultString)
+	return strings.Contains(message, "label") || strings.Contains(message, "custom1")
+}
+
+func validateRTorrentLoadResponse(value rpcValue) error {
+	if value.Int != nil || value.I4 != nil || value.Bool != nil {
+		if valueInt(value) != 0 {
+			return fmt.Errorf("rTorrent rejected torrent submission with response %d", valueInt(value))
+		}
+		return nil
+	}
+	if value.String != nil {
+		response := strings.TrimSpace(*value.String)
+		if response == "" || response == "0" {
+			return nil
+		}
+		if parsed, err := strconv.ParseInt(response, 10, 64); err == nil && parsed != 0 {
+			return fmt.Errorf("rTorrent rejected torrent submission with response %d", parsed)
+		}
+	}
+	return nil
+}
+
+func (r *RTorrentClient) verifySubmittedTorrent(hash, requestedDirectory string) {
+	items, err := r.ListDownloads(context.Background())
+	if err != nil {
+		slog.Warn("rTorrent submission state verification failed", "info_hash", hash, "error", netutil.SanitizeSensitiveText(err.Error()))
+		return
+	}
+	for _, item := range items {
+		if !strings.EqualFold(item.InfoHash, hash) && !strings.EqualFold(item.ID, hash) {
+			continue
+		}
+		slog.Debug("rTorrent submission state verified", "info_hash", hash, "directory", item.ContentPath, "base_path", item.SavePath, "active", item.Active, "state", item.Status, "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
+		if requestedDirectory != "" && filepath.Clean(item.ContentPath) != filepath.Clean(requestedDirectory) {
+			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", hash, "requested_directory", requestedDirectory, "actual_directory", item.ContentPath)
+		}
+		return
+	}
+	slog.Warn("rTorrent submission state verification could not find torrent", "info_hash", hash)
 }
 
 func shouldFallbackRawStartVerbose(err error) bool {
@@ -348,6 +433,7 @@ func (r *RTorrentClient) ListDownloads(ctx context.Context) ([]ClientDownload, e
 			ContentPath: contentPath,
 			Size:        size,
 			Completed:   complete,
+			Active:      active,
 			Label:       valueString(values[len(values)-1]),
 		})
 	}

@@ -1,12 +1,16 @@
 package download
 
 import (
+	"bytes"
 	"crypto/md5" // #nosec G501 -- test fixture for HTTP Digest.
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -376,10 +380,14 @@ func TestRTorrentMagnetUsesEmptyTargetArgument(t *testing.T) {
 		if err := xml.Unmarshal(body, &call); err != nil {
 			t.Fatal(err)
 		}
-		if call.MethodName != "load.start" || len(call.Params) != 2 || call.Params[0].Value.String == nil || *call.Params[0].Value.String != "" || call.Params[1].Value.String == nil {
-			t.Fatalf("method=%s params=%+v", call.MethodName, call.Params)
+		if call.MethodName == "load.start" {
+			if len(call.Params) != 2 || call.Params[0].Value.String == nil || *call.Params[0].Value.String != "" || call.Params[1].Value.String == nil {
+				t.Fatalf("method=%s params=%+v", call.MethodName, call.Params)
+			}
+			io.WriteString(w, rpcStringResponse(hash))
+			return
 		}
-		io.WriteString(w, rpcStringResponse(hash))
+		io.WriteString(w, rpcStringResponse(""))
 	}))
 	defer srv.Close()
 	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
@@ -413,6 +421,13 @@ func TestRTorrentSubmitRawTorrentUsesRawXMLRPC(t *testing.T) {
 	if !seenRaw || result.InfoHash == "" || len(seenParams) != 2 || seenParams[0].Value.String == nil || *seenParams[0].Value.String != "" || seenParams[1].Value.Base64 == nil {
 		t.Fatalf("raw submission = %+v, seenRaw=%v", result, seenRaw)
 	}
+	decoded, err := base64.StdEncoding.DecodeString(*seenParams[1].Value.Base64)
+	if err != nil || string(decoded) != string(validTorrentBytes()) {
+		t.Fatalf("decoded torrent bytes do not match original: err=%v", err)
+	}
+	if got, want := sha256.Sum256(decoded), sha256.Sum256(validTorrentBytes()); got != want {
+		t.Fatalf("decoded torrent SHA-256 = %x, want %x", got, want)
+	}
 }
 
 func TestRTorrentRawStartTooFewArgumentsRegression(t *testing.T) {
@@ -423,7 +438,9 @@ func TestRTorrentRawStartTooFewArgumentsRegression(t *testing.T) {
 		if err := xml.Unmarshal(body, &call); err != nil {
 			t.Fatal(err)
 		}
-		methods = append(methods, call.MethodName)
+		if call.MethodName == "load.raw_start" || call.MethodName == "load.raw_start_verbose" {
+			methods = append(methods, call.MethodName)
+		}
 		if call.MethodName == "load.raw_start" && len(call.Params) == 2 {
 			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
 			return
@@ -448,7 +465,9 @@ func TestRTorrentRawStartVerboseFallbackIsNarrow(t *testing.T) {
 		if err := xml.Unmarshal(body, &call); err != nil {
 			t.Fatal(err)
 		}
-		methods = append(methods, call.MethodName)
+		if call.MethodName == "load.raw_start" || call.MethodName == "load.raw_start_verbose" {
+			methods = append(methods, call.MethodName)
+		}
 		if call.MethodName == "load.raw_start" {
 			io.WriteString(w, rpcFaultResponse(-501, "Method not found"))
 			return
@@ -465,8 +484,142 @@ func TestRTorrentRawStartVerboseFallbackIsNarrow(t *testing.T) {
 	}
 }
 
+func TestRTorrentStoppedRawSubmissionUsesLoadRawAndInitialCommands(t *testing.T) {
+	hash, err := torrentInfoHash(validTorrentBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []rpcRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		calls = append(calls, call)
+		if call.MethodName == "load.raw" {
+			io.WriteString(w, rpcIntResponse(0))
+			return
+		}
+		io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/remote/downloads/Book", 100, 0, 0, 0, "stopped", "librarr")))
+	}))
+	defer srv.Close()
+
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr", AddStopped: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) < 1 || calls[0].MethodName != "load.raw" {
+		t.Fatalf("calls=%+v, want load.raw first", calls)
+	}
+	if got := rpcRequestStrings(calls[0]); len(got) != 4 || got[0] != "" || got[2] != "d.custom1.set=librarr" || got[3] != "d.directory.set=/remote/downloads" {
+		t.Fatalf("load.raw args=%v", got)
+	}
+}
+
+func TestRTorrentMagnetSubmissionIncludesInitialCommands(t *testing.T) {
+	hash := "abcdef0123456789abcdef0123456789abcdef01"
+	var calls []rpcRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		calls = append(calls, call)
+		if call.MethodName == "load.start" {
+			io.WriteString(w, rpcIntResponse(0))
+			return
+		}
+		io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/remote/downloads/Book", 100, 0, 0, 1, "started", "librarr")))
+	}))
+	defer srv.Close()
+
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", SavePath: "/remote/downloads", Category: "librarr"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) < 1 || calls[0].MethodName != "load.start" {
+		t.Fatalf("calls=%+v, want load.start first", calls)
+	}
+	if got := rpcRequestStrings(calls[0]); len(got) != 4 || got[0] != "" || got[1] != "magnet:?xt=urn:btih:"+hash || got[2] != "d.custom1.set=librarr" || got[3] != "d.directory.set=/remote/downloads" {
+		t.Fatalf("load.start args=%v", got)
+	}
+}
+
+func TestRTorrentStoppedMagnetUsesLoadNormal(t *testing.T) {
+	hash := "abcdef0123456789abcdef0123456789abcdef01"
+	method := ""
+	srv := rtorrentServer(t, func(name string) string {
+		if strings.HasPrefix(name, "load.") {
+			method = name
+		}
+		if name == "load.normal" {
+			return rpcIntResponse(0)
+		}
+		return rpcStringResponse("")
+	})
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: "magnet:?xt=urn:btih:" + hash, Title: "Book", AddStopped: true}); err != nil {
+		t.Fatal(err)
+	}
+	if method != "load.normal" {
+		t.Fatalf("method=%q, want load.normal", method)
+	}
+}
+
+func TestRTorrentNonzeroLoadResponseFailsSubmission(t *testing.T) {
+	srv := rtorrentServer(t, func(method string) string {
+		if method == "load.raw_start" {
+			return rpcIntResponse(1)
+		}
+		return rpcStringResponse("")
+	})
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book"}); err == nil || !strings.Contains(err.Error(), "response 1") {
+		t.Fatalf("error=%v, want nonzero load response failure", err)
+	}
+}
+
+func TestRTorrentWrongDirectoryReadbackLogsWarning(t *testing.T) {
+	hash, err := torrentInfoHash(validTorrentBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var call rpcRequest
+		if err := xml.Unmarshal(body, &call); err != nil {
+			t.Fatal(err)
+		}
+		if call.MethodName == "load.raw_start" {
+			io.WriteString(w, rpcIntResponse(0))
+			return
+		}
+		io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/wrong/path/Book", 100, 0, 0, 1, "started", "librarr")))
+	}))
+	defer srv.Close()
+	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, Timeout: time.Second})
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", SavePath: "/remote/downloads", Category: "librarr"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "different directory") || !strings.Contains(logs.String(), "requested_directory=/remote/downloads") {
+		t.Fatalf("logs=%s, want wrong-directory warning", logs.String())
+	}
+}
+
 func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 	var calls [][]string
+	hash, err := torrentInfoHash(validTorrentBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var call rpcRequest
@@ -475,13 +628,15 @@ func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 		}
 		args := []string{}
 		for _, param := range call.Params {
-			if param.Value.String != nil {
-				args = append(args, *param.Value.String)
-			}
+			args = append(args, debugRPCArgs([]rpcValue{param.Value})...)
 		}
 		calls = append(calls, append([]string{call.MethodName}, args...))
 		if call.MethodName == "load.raw_start" {
-			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+			io.WriteString(w, rpcIntResponse(0))
+			return
+		}
+		if call.MethodName == "d.multicall2" {
+			io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/remote/downloads/Book", 100, 0, 0, 1, "started", "librarr")))
 			return
 		}
 		io.WriteString(w, rpcStringResponse(""))
@@ -492,15 +647,25 @@ func TestRTorrentSubmissionAppliesRemotePathAndOptionalLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
 	}
-	if !containsRPCArgs(calls, "d.directory.set", result.InfoHash, "/remote/downloads") {
-		t.Fatalf("calls=%v, missing remote save path", calls)
+	if result.InfoHash != hash {
+		t.Fatalf("result hash=%q, want %q", result.InfoHash, hash)
 	}
-	if !containsRPCArgs(calls, "d.custom1.set", result.InfoHash, "librarr") {
-		t.Fatalf("calls=%v, missing label command", calls)
+	if !containsRPCArgs(calls, "load.raw_start", "", "<torrent bytes omitted>", "d.custom1.set=librarr", "d.directory.set=/remote/downloads") {
+		t.Fatalf("calls=%v, missing initial label/directory commands", calls)
+	}
+	for _, call := range calls {
+		if call[0] == "d.directory.set" || call[0] == "d.custom1.set" {
+			t.Fatalf("post-load setter should not be primary path: calls=%v", calls)
+		}
 	}
 }
 
 func TestRTorrentLabelFailureDoesNotBlockSubmission(t *testing.T) {
+	hash, err := torrentInfoHash(validTorrentBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var call rpcRequest
@@ -508,7 +673,16 @@ func TestRTorrentLabelFailureDoesNotBlockSubmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		if call.MethodName == "load.raw_start" {
-			io.WriteString(w, rpcStringResponse("abcdef0123456789abcdef0123456789abcdef01"))
+			loadCalls++
+			if loadCalls == 1 {
+				io.WriteString(w, rpcFaultResponse(-503, "label rejected"))
+				return
+			}
+			io.WriteString(w, rpcIntResponse(0))
+			return
+		}
+		if call.MethodName == "d.multicall2" {
+			io.WriteString(w, rpcListResponse(rpcRow(hash, "Book", "/remote/downloads/Book", 100, 0, 0, 1, "started", "")))
 			return
 		}
 		io.WriteString(w, rpcFaultResponse(-503, "label rejected"))
@@ -517,6 +691,9 @@ func TestRTorrentLabelFailureDoesNotBlockSubmission(t *testing.T) {
 	client := NewRTorrentClient(RTorrentConfig{URL: srv.URL, LabelField: "d.custom1=", Timeout: time.Second})
 	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{TorrentBytes: validTorrentBytes(), Title: "Book", Category: "librarr"}); err != nil {
 		t.Fatalf("label failure blocked submission: %v", err)
+	}
+	if loadCalls != 2 {
+		t.Fatalf("load calls=%d, want one label attempt and one unlabeled retry", loadCalls)
 	}
 }
 
@@ -600,6 +777,10 @@ func rpcStringListResponse(values ...string) string {
 
 func rpcStringResponse(value string) string {
 	return `<methodResponse><params><param><value><string>` + value + `</string></value></param></params></methodResponse>`
+}
+
+func rpcIntResponse(value int) string {
+	return `<methodResponse><params><param><value><int>` + fmt.Sprint(value) + `</int></value></param></params></methodResponse>`
 }
 
 func rpcFaultResponse(code int, message string) string {
