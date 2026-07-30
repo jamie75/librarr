@@ -10,11 +10,7 @@ Librarr 2.0 is under active development. It is evolving from its Readarr roots
 into a book-centric, Docker-first personal library application for ebooks,
 audiobooks, comics, and manga.
 
-Librarr began as a fork of the original Librarr project. Librarr 2.0 is now
-independently maintained and has substantially diverged in architecture, user
-experience, and roadmap. Original licensing and attribution are preserved; the
-repository may remain in GitHub's fork network until the 2.0 detachment decision
-is made.
+Librarr began as a fork of the original Librarr project. Librarr 2.0 is now an independently maintained standalone project and has substantially diverged in architecture, user experience, and roadmap. Original licensing and attribution are preserved.
 
 The project is designed for hobby self-hosters in the same spirit as Jellyfin,
 Audiobookshelf, Kavita, and Calibre-Web:
