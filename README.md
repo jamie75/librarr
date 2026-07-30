@@ -51,6 +51,8 @@ Librarr 2.0 currently has:
 - Wanted/library reconciliation so imported Wanted titles move out of the active queue
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
+- read-only rTorrent XML-RPC diagnostics and download inspection, with safe
+  client-scoped Remote Path Mappings (submission is not enabled yet)
 - normalized `/api/v1` read endpoints
 - `/api/v1` Wanted and Downloads endpoints for new UI/API consumers
 - OPDS 1.2 catalog browsing and downloads for compatible reader apps
@@ -581,6 +583,27 @@ importing.
 | `SABNZBD_URL` | | SABnzbd URL |
 | `SABNZBD_API_KEY` | | SABnzbd API key |
 | `SABNZBD_CATEGORY` | `librarr` | NZB category |
+
+### rTorrent / ruTorrent (read-only Phase 1)
+
+Librarr can validate and inspect an rTorrent instance through its XML-RPC
+endpoint, including installations managed by ruTorrent. It does not scrape the
+ruTorrent UI and does not submit, stop, delete, or import torrents yet.
+
+| Variable | Default | Description |
+|---|---:|---|
+| `RTORRENT_ENABLED` | `false` | Enable rTorrent inspection |
+| `RTORRENT_NAME` | `rTorrent` | Display name |
+| `RTORRENT_URL` | | XML-RPC endpoint |
+| `RTORRENT_USER` | | Optional username |
+| `RTORRENT_PASS` | | Optional password |
+| `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC timeout |
+| `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
+| `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
+
+Use Settings → Connection Diagnostics to test the current values. For seedbox
+paths, configure a Remote Path Mapping from the path reported by rTorrent to
+the path visible inside Librarr; see [docs/rtorrent.md](docs/rtorrent.md).
 
 ### Prowlarr
 

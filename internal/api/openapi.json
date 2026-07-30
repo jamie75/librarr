@@ -1015,6 +1015,26 @@
         }
       }
     },
+    "/api/test/rtorrent": {
+      "post": {
+        "summary": "Run staged read-only rTorrent XML-RPC diagnostics",
+        "description": "Checks URL validation, DNS, TCP, TLS, XML-RPC, authentication, version, and latency. Secrets are not returned.",
+        "responses": { "200": { "description": "Diagnostic result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiagnosticResult" } } } } }
+      }
+    },
+    "/api/rtorrent": {
+      "get": { "summary": "Get sanitized rTorrent inspection configuration" }
+    },
+    "/api/rtorrent/downloads": {
+      "get": { "summary": "List rTorrent downloads without modifying them" }
+    },
+    "/api/rtorrent/mappings": {
+      "get": { "summary": "List rTorrent remote path mappings" },
+      "post": { "summary": "Add an rTorrent remote path mapping" }
+    },
+    "/api/rtorrent/mappings/{index}": {
+      "delete": { "summary": "Delete an rTorrent remote path mapping", "parameters": [{ "name": "index", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
     "/api/search": {
       "get": {
         "summary": "Search ebooks across all configured sources",

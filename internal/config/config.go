@@ -183,6 +183,17 @@ type Config struct {
 	// ("qbittorrent" or "transmission"). Empty means auto-detect.
 	TorrentClient string
 
+	// rTorrent is a read-only Phase 1 inspection client. It is deliberately
+	// separate from TorrentClient until submission semantics are implemented.
+	RTorrentEnabled    bool
+	RTorrentName       string
+	RTorrentURL        string
+	RTorrentUser       string
+	RTorrentPass       string
+	RTorrentTimeout    int
+	RTorrentLabelField string
+	RTorrentTLSVerify  bool
+
 	// User Agent
 	UserAgent string
 
@@ -419,6 +430,15 @@ func buildFromEnv() *Config {
 
 		TorrentClient: getEnv("TORRENT_CLIENT", ""),
 
+		RTorrentEnabled:    getEnvBool("RTORRENT_ENABLED", false),
+		RTorrentName:       getEnv("RTORRENT_NAME", "rTorrent"),
+		RTorrentURL:        getEnv("RTORRENT_URL", ""),
+		RTorrentUser:       getEnv("RTORRENT_USER", ""),
+		RTorrentPass:       getEnv("RTORRENT_PASS", ""),
+		RTorrentTimeout:    getEnvInt("RTORRENT_TIMEOUT_SECONDS", 10),
+		RTorrentLabelField: getEnv("RTORRENT_LABEL_FIELD", "d.custom1="),
+		RTorrentTLSVerify:  getEnvBool("RTORRENT_TLS_VERIFY", true),
+
 		UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 
 		WebhookURL:  getEnv("WEBHOOK_URL", ""),
@@ -590,6 +610,11 @@ func (c *Config) applySettingsFileOverrides() {
 		"transmission_user":         &c.TransmissionUser,
 		"transmission_pass":         &c.TransmissionPass,
 		"torrent_client":            &c.TorrentClient,
+		"rtorrent_name":             &c.RTorrentName,
+		"rtorrent_url":              &c.RTorrentURL,
+		"rtorrent_user":             &c.RTorrentUser,
+		"rtorrent_pass":             &c.RTorrentPass,
+		"rtorrent_label_field":      &c.RTorrentLabelField,
 		"prowlarr_url":              &c.ProwlarrURL,
 		"prowlarr_api_key":          &c.ProwlarrAPIKey,
 		"sabnzbd_url":               &c.SABnzbdURL,
@@ -657,6 +682,8 @@ func (c *Config) applySettingsFileOverrides() {
 		"wishlist_cleanup_dry_run":    &c.WishlistCleanupDryRun,
 		"wanted_monitor_enabled":      &c.WantedMonitorEnabled,
 		"wanted_retry_failures":       &c.WantedRetryFailures,
+		"rtorrent_enabled":            &c.RTorrentEnabled,
+		"rtorrent_tls_verify":         &c.RTorrentTLSVerify,
 	}
 	for key, fieldPtr := range boolPtrs {
 		v, ok := raw[key]
@@ -673,6 +700,7 @@ func (c *Config) applySettingsFileOverrides() {
 	intPtrs := map[string]*int{
 		"wishlist_cleanup_interval_hours": &c.WishlistCleanupIntervalHours,
 		"wanted_max_results_keep":         &c.WantedMaxResultsKeep,
+		"rtorrent_timeout_seconds":        &c.RTorrentTimeout,
 	}
 	for key, fieldPtr := range intPtrs {
 		v, ok := raw[key]

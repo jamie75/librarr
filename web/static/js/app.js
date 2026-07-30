@@ -4460,6 +4460,7 @@ const INTEGRATION_FIELDS = {
   prowlarr:       ['prowlarr_url', 'prowlarr_api_key'],
   qbittorrent:    ['qb_url', 'qb_user', 'qb_pass', 'qb_save_path', 'qb_category', 'qb_audiobook_save_path', 'qb_audiobook_category', 'qb_manga_save_path', 'qb_manga_category'],
   transmission:   ['transmission_url', 'transmission_user', 'transmission_pass', 'torrent_client'],
+  rtorrent:       ['rtorrent_enabled', 'rtorrent_name', 'rtorrent_url', 'rtorrent_user', 'rtorrent_pass', 'rtorrent_timeout_seconds', 'rtorrent_label_field', 'rtorrent_tls_verify'],
   sabnzbd:        ['sabnzbd_url', 'sabnzbd_api_key', 'sabnzbd_category'],
   audiobookshelf: ['abs_url', 'abs_token'],
   kavita:         ['kavita_url', 'kavita_user', 'kavita_pass'],
@@ -4514,8 +4515,48 @@ async function loadSettingToggles() {
         }
       }
     }
+    const rtorrentEnabled = document.getElementById('setting-rtorrent_enabled');
+    if (rtorrentEnabled && data.rtorrent_enabled !== undefined) rtorrentEnabled.checked = !!data.rtorrent_enabled;
+    const rtorrentTLS = document.getElementById('setting-rtorrent_tls_verify');
+    if (rtorrentTLS && data.rtorrent_tls_verify !== undefined) rtorrentTLS.checked = !!data.rtorrent_tls_verify;
+    if (typeof loadRTorrentMappings === 'function') loadRTorrentMappings();
     applyLibraryImportLoadedState(getLibraryImportFormValues());
   } catch (err) {}
+}
+
+async function loadRTorrentMappings() {
+  const container = document.getElementById('rtorrent-mappings');
+  if (!container) return;
+  try {
+    const data = await apiJson('/api/rtorrent/mappings');
+    const mappings = Array.isArray(data.mappings) ? data.mappings : [];
+    container.querySelector('[data-mapping-list]')?.replaceChildren(...mappings.map((mapping, index) => {
+      const row = document.createElement('div');
+      row.className = 'flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-300';
+      row.innerHTML = `<span>${escapeHtml(mapping.remote_path || '')} → ${escapeHtml(mapping.local_path || '')}</span><button data-action="deleteRTorrentMapping" data-index="${index}" class="text-red-300 hover:text-red-200">Delete</button>`;
+      return row;
+    }));
+  } catch (err) {
+    if (err.message !== 'Unauthorized') showToast('Could not load rTorrent path mappings', 'error');
+  }
+}
+
+async function addRTorrentMapping() {
+  const remote = document.getElementById('setting-rtorrent-remote-path')?.value.trim() || '';
+  const local = document.getElementById('setting-rtorrent-local-path')?.value.trim() || '';
+  if (!remote || !local) { showToast('Remote and local paths are required', 'error'); return; }
+  try {
+    await apiJson('/api/rtorrent/mappings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ client_id: 'rtorrent', remote_path: remote, local_path: local, enabled: true }) });
+    document.getElementById('setting-rtorrent-remote-path').value = '';
+    document.getElementById('setting-rtorrent-local-path').value = '';
+    await loadRTorrentMappings();
+    showToast('rTorrent path mapping added', 'success');
+  } catch (err) { showToast(err.message || 'Could not add mapping', 'error'); }
+}
+
+async function deleteRTorrentMapping(index) {
+  try { await apiJson(`/api/rtorrent/mappings/${encodeURIComponent(index)}`, {method: 'DELETE'}); await loadRTorrentMappings(); showToast('rTorrent path mapping deleted', 'success'); }
+  catch (err) { showToast(err.message || 'Could not delete mapping', 'error'); }
 }
 
 function getLibraryImportFormValues() {
@@ -5695,7 +5736,7 @@ async function saveIntegration(name) {
   for (const key of fields) {
     const el = document.getElementById(`setting-${key}`);
     if (!el) continue;
-    payload[key] = el.value;
+    payload[key] = el.type === 'checkbox' ? el.checked : el.value;
   }
   try {
     const res = await apiJson('/api/settings', {
@@ -5852,6 +5893,17 @@ function diagnosticPayload(service) {
       url: document.getElementById('setting-qb_url')?.value || '',
       username: document.getElementById('setting-qb_user')?.value || '',
       password: document.getElementById('setting-qb_pass')?.value || '',
+    };
+  }
+  if (service === 'rtorrent') {
+    return {
+      name: document.getElementById('setting-rtorrent_name')?.value || '',
+      url: document.getElementById('setting-rtorrent_url')?.value || '',
+      username: document.getElementById('setting-rtorrent_user')?.value || '',
+      password: document.getElementById('setting-rtorrent_pass')?.value || '',
+      timeout_seconds: Number(document.getElementById('setting-rtorrent_timeout_seconds')?.value || 10),
+      label_field: document.getElementById('setting-rtorrent_label_field')?.value || '',
+      tls_verify: document.getElementById('setting-rtorrent_tls_verify')?.checked !== false,
     };
   }
   return {};
@@ -6541,6 +6593,8 @@ const CLICK_ACTIONS = {
   setSortMode: el => setSortMode(el.dataset.arg),
   testConnection: el => testConnection(el.dataset.arg),
   saveIntegration: el => saveIntegration(el.dataset.arg),
+  addRTorrentMapping: () => addRTorrentMapping(),
+  deleteRTorrentMapping: el => deleteRTorrentMapping(Number(el.dataset.index)),
   saveWantedSettings: () => saveWantedSettings(),
   toggleMobileNav: () => toggleMobileNav(),
   showLoginForm: () => showLoginForm(),

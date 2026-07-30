@@ -3311,6 +3311,37 @@ test('diagnosticPayload reads current unsaved Prowlarr form values', () => {
   });
 });
 
+test('rTorrent settings expose read-only diagnostics and remote path mapping controls', () => {
+  assert.match(indexHTML, /rTorrent \/ ruTorrent/);
+  assert.match(indexHTML, /setting-rtorrent_url/);
+  assert.match(indexHTML, /data-action="testConnection" data-arg="rtorrent"/);
+  assert.match(indexHTML, /Remote Path Mappings/);
+  assert.match(indexHTML, /data-action="addRTorrentMapping"/);
+});
+
+test('diagnosticPayload reads current unsaved rTorrent values', () => {
+  const context = createContext({
+    document: { getElementById: id => ({
+      'setting-rtorrent_name': { value: 'Seedbox' },
+      'setting-rtorrent_url': { value: 'https://seedbox.example/rpc' },
+      'setting-rtorrent_user': { value: 'operator' },
+      'setting-rtorrent_pass': { value: 'current-secret' },
+      'setting-rtorrent_timeout_seconds': { value: '15' },
+      'setting-rtorrent_label_field': { value: 'd.custom1=' },
+      'setting-rtorrent_tls_verify': { checked: true },
+    }[id] || null) },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.diagnosticPayload('rtorrent'))), {
+    name: 'Seedbox',
+    url: 'https://seedbox.example/rpc',
+    username: 'operator',
+    password: 'current-secret',
+    timeout_seconds: 15,
+    label_field: 'd.custom1=',
+    tls_verify: true,
+  });
+});
+
 test('loadUsers renders account table with status and management actions', async () => {
   const elements = {
     'user-management': { classList: fakeClassList(['hidden']) },

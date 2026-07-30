@@ -44,6 +44,7 @@ type Server struct {
 	qb                  *download.QBittorrentClient
 	transmission        *download.TransmissionClient
 	sab                 *download.SABnzbdClient
+	rtorrent            *download.RTorrentClient
 	mux                 *http.ServeMux
 	sessions            *SessionStore
 	metrics             *MetricsCollector
@@ -129,6 +130,11 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	seriesDet := scheduler.NewSeriesDetector(database, searchMgr, ws)
 	authorMon := scheduler.NewAuthorMonitor(cfg, database, ws)
 	wantedMon := scheduler.NewWantedMonitor(cfg, database, searchMgr, &http.Client{Timeout: 30 * time.Second})
+	rtorrent := download.NewRTorrentClient(download.RTorrentConfig{
+		Name: cfg.RTorrentName, URL: cfg.RTorrentURL, Username: cfg.RTorrentUser,
+		Password: cfg.RTorrentPass, Timeout: time.Duration(cfg.RTorrentTimeout) * time.Second,
+		LabelField: cfg.RTorrentLabelField, TLSVerify: cfg.RTorrentTLSVerify,
+	})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
 	s := &Server{
@@ -143,6 +149,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		qb:                qb,
 		transmission:      transmission,
 		sab:               sab,
+		rtorrent:          rtorrent,
 		mux:               http.NewServeMux(),
 		sessions:          sessions,
 		metrics:           NewMetricsCollector(),
@@ -525,6 +532,12 @@ func (s *Server) registerAdminRoutes() {
 	s.mux.HandleFunc("POST /api/test/audiobookshelf", requireAdmin(s.handleTestAudiobookshelf))
 	s.mux.HandleFunc("POST /api/test/kavita", requireAdmin(s.handleTestKavita))
 	s.mux.HandleFunc("POST /api/test/sabnzbd", requireAdmin(s.handleTestSABnzbd))
+	s.mux.HandleFunc("POST /api/test/rtorrent", requireAdmin(s.handleTestRTorrent))
+	s.mux.HandleFunc("GET /api/rtorrent", requireAdmin(s.handleGetRTorrent))
+	s.mux.HandleFunc("GET /api/rtorrent/downloads", requireAdmin(s.handleListRTorrentDownloads))
+	s.mux.HandleFunc("GET /api/rtorrent/mappings", requireAdmin(s.handleGetRTorrentMappings))
+	s.mux.HandleFunc("POST /api/rtorrent/mappings", requireAdmin(s.handleAddRTorrentMapping))
+	s.mux.HandleFunc("DELETE /api/rtorrent/mappings/{index}", requireAdmin(s.handleDeleteRTorrentMapping))
 
 	// CSV bulk import (admin only — triggers downloads).
 	s.mux.HandleFunc("POST /api/import/csv", requireAdmin(s.handleCSVImport))

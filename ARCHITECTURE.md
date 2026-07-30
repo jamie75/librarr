@@ -398,6 +398,26 @@ them.
 
 ## Download Client Architecture
 
+Phase 1 also includes a separate read-only inspection contract for clients that
+are not yet safe to use for submission:
+
+```go
+type ReadOnlyDownloadClient interface {
+    ClientID() string
+    Name() string
+    Type() string
+    TestConnection(ctx context.Context) (ClientInfo, error)
+    ListDownloads(ctx context.Context) ([]ClientDownload, error)
+    GetDownload(ctx context.Context, id string) (ClientDownload, error)
+}
+```
+
+rTorrent implements this contract through XML-RPC. It does not implement the
+existing write-oriented `TorrentClient`, so qBittorrent and Transmission
+submission and watcher behavior remain unchanged. The shared Remote Path
+Mapping service is client-scoped, uses the longest matching normalized remote
+prefix, and rejects traversal outside the configured local prefix.
+
 Librarr should support download clients through a common interface modeled after *arr behavior.
 
 Suggested capabilities:
