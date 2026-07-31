@@ -306,6 +306,9 @@ func (s *LibraryService) reconcileAudiobookTracks(ctx context.Context, directory
 		} else if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		// Path is cleaned, symlink-resolved, and verified beneath the configured root.
+		// codeql[go/path-injection]
+
 		info, err := os.Stat(validatedTrackPath)
 		if err != nil {
 			continue
