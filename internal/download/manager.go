@@ -18,6 +18,7 @@ import (
 	"github.com/jamie75/librarr/internal/library"
 	libraryimport "github.com/jamie75/librarr/internal/library/import"
 	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/netutil"
 	"github.com/jamie75/librarr/internal/organize"
 	"github.com/jamie75/librarr/internal/search"
 	"github.com/jamie75/librarr/internal/webhook"
@@ -111,10 +112,58 @@ func (m *Manager) StartAnnasDownload(md5, title string) (*models.DownloadJob, er
 
 // StartTorrentDownload adds a torrent to the active torrent client.
 func (m *Manager) StartTorrentDownload(torrentURL, title, savePath, category, expectedInfoHash string) error {
+	_, err := m.StartTorrentDownloadTracked(torrentURL, title, savePath, category, expectedInfoHash, "ebook", "", "")
+	return err
+}
+
+// StartTorrentDownloadTracked submits a torrent and records the client-bound
+// identity used by the completion watcher. The old method remains available to
+// callers that only need the historical error contract.
+func (m *Manager) StartTorrentDownloadTracked(torrentURL, title, savePath, category, expectedInfoHash, mediaType, source, sourceID string) (models.TrackedDownload, error) {
 	if m.torrent == nil {
-		return fmt.Errorf("no torrent download client configured")
+		return models.TrackedDownload{}, fmt.Errorf("no torrent download client configured")
 	}
-	return m.torrent.AddTorrent(torrentURL, title, savePath, category, expectedInfoHash)
+	var submission TorrentSubmission
+	var err error
+	if writable, ok := m.torrent.(WritableTorrentClient); ok {
+		submission, err = writable.SubmitTorrent(TorrentSubmissionRequest{URL: torrentURL, Title: title, SavePath: savePath, Category: category, ExpectedInfoHash: expectedInfoHash})
+	} else {
+		err = m.torrent.AddTorrent(torrentURL, title, savePath, category, expectedInfoHash)
+		submission = TorrentSubmission{ClientID: m.torrent.Name(), ClientType: m.torrent.Name(), DownloadID: firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL)), InfoHash: firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL)), Name: title, RemoteSavePath: savePath, Category: category}
+	}
+	if err != nil {
+		var verificationWarning *TorrentVerificationWarning
+		if errors.As(err, &verificationWarning) && submission.InfoHash != "" {
+			item, persistErr := m.persistTorrentSubmission(submission, title, mediaType, source, sourceID, category, savePath)
+			if persistErr != nil {
+				return models.TrackedDownload{}, persistErr
+			}
+			return item, err
+		}
+		return models.TrackedDownload{}, err
+	}
+	return m.persistTorrentSubmission(submission, title, mediaType, source, sourceID, category, savePath)
+}
+
+func (m *Manager) persistTorrentSubmission(submission TorrentSubmission, title, mediaType, source, sourceID, category, savePath string) (models.TrackedDownload, error) {
+	if savePath == "" {
+		savePath = submission.RemoteSavePath
+	}
+	if category == "" {
+		category = submission.Category
+	}
+	now := time.Now().UTC()
+	item := models.TrackedDownload{
+		ID:       fmt.Sprintf("%s:%s", submission.ClientID, firstNonEmptyHash(submission.InfoHash, submission.DownloadID, fmt.Sprintf("%d", now.UnixNano()))),
+		ClientID: submission.ClientID, ClientType: submission.ClientType, DownloadID: submission.DownloadID,
+		InfoHash: submission.InfoHash, Title: firstNonEmpty(title, submission.Name), MediaType: firstNonEmpty(mediaType, "ebook"),
+		Source: source, SourceID: sourceID, Category: category, RemoteSavePath: savePath,
+		Status: "submitted", ImportStatus: "pending", CreatedAt: now,
+	}
+	if err := m.db.SaveTrackedDownload(&item); err != nil {
+		return models.TrackedDownload{}, fmt.Errorf("persist torrent tracking: %w", err)
+	}
+	return item, nil
 }
 
 // StartNZBDownload sends an NZB URL to SABnzbd.
@@ -269,7 +318,9 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("anna's archive download failed", "title", job.Title, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("anna's archive download failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 		m.health.RecordFailure("annas", err.Error(), "download")
 		if isAnnasNoMatchError(err) {
 			m.updateJob(job, "dead_letter", "No LibGen match found", err.Error())
@@ -319,7 +370,10 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", "annas", "path", filePath, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safePath := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(filePath, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "path", netutil.SanitizeLogValue(safePath), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -336,7 +390,9 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", job.Title, "source", "annas", "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -349,7 +405,8 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded from Anna's Archive (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", job.Title, "source", "annas", "size", fileSize)
+	safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {
@@ -395,7 +452,9 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("direct download failed", "title", job.Title, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("direct download failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "", err.Error())
 		return
 	}
@@ -412,7 +471,11 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", job.Title, "source", job.Source, "path", filePath, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+		safePath := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(filePath, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "path", netutil.SanitizeLogValue(safePath), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -429,7 +492,10 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", job.Title, "source", job.Source, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -442,7 +508,9 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", job.Title, "source", job.Source, "size", fileSize)
+	safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+	safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {
@@ -458,9 +526,17 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 // GetDownloads returns combined download status from qBittorrent and background jobs.
 func (m *Manager) GetDownloads() []models.DownloadStatus {
 	var downloads []models.DownloadStatus
+	trackedHashes := make(map[string]struct{})
+	if tracked, err := m.db.GetTrackedDownloads(); err == nil {
+		for _, item := range tracked {
+			if key := downloadIdentityKey(item.ClientID, item.InfoHash); key != "" {
+				trackedHashes[key] = struct{}{}
+			}
+		}
+	}
 
 	// Active torrent client (qBittorrent or Transmission).
-	if m.torrent != nil {
+	if m.torrent != nil && !isRTorrentClient(m.torrent) {
 		for _, cat := range []struct {
 			name  string
 			label string
@@ -474,6 +550,9 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 				continue
 			}
 			for _, t := range torrents {
+				if _, tracked := trackedHashes[downloadIdentityKey(m.torrent.Name(), t.Hash)]; tracked {
+					continue
+				}
 				downloads = append(downloads, models.DownloadStatus{
 					Source:   cat.label,
 					Title:    t.Name,
@@ -520,7 +599,68 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 	}
 	m.mu.Unlock()
 
+	// Durable torrent tracking is included even when the client is temporarily
+	// unavailable; this keeps client identity and import state visible after a
+	// restart instead of silently dropping the history row. Imported rows are
+	// retained only for a short recent-history window.
+	if tracked, err := m.db.GetTrackedDownloads(); err == nil {
+		for _, item := range tracked {
+			if item.ImportStatus == "imported" && (item.ImportedAt == nil || time.Since(*item.ImportedAt) > 24*time.Hour) {
+				continue
+			}
+			downloads = append(downloads, models.DownloadStatus{
+				Source: item.ClientType, Title: item.Title, Status: trackedDownloadDisplayStatus(item),
+				Progress: item.Progress * 100, Hash: item.InfoHash, ClientID: item.ClientID,
+				ClientType: item.ClientType, RemotePath: item.RemotePath, LocalPath: item.LocalPath,
+				ImportStatus: item.ImportStatus, Error: item.LastError, CreatedAt: item.CreatedAt,
+				CompletedAt: item.CompletedAt, ImportedAt: item.ImportedAt,
+			})
+		}
+	}
+
 	return downloads
+}
+
+func isRTorrentClient(client TorrentClient) bool {
+	typed, ok := client.(interface{ Type() string })
+	return ok && typed.Type() == "rtorrent"
+}
+
+func downloadIdentityKey(clientID, hash string) string {
+	clientID = strings.ToLower(strings.TrimSpace(clientID))
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if clientID == "" || hash == "" {
+		return ""
+	}
+	return clientID + ":" + hash
+}
+
+func trackedDownloadDisplayStatus(item models.TrackedDownload) string {
+	switch strings.ToLower(strings.TrimSpace(item.ImportStatus)) {
+	case "imported":
+		return "imported"
+	case "importing":
+		return "importing"
+	case "failed":
+		return "failed"
+	}
+
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	if status == "completed" {
+		if item.LocalPath != "" {
+			if _, err := os.Stat(item.LocalPath); err == nil {
+				return "ready_to_import"
+			}
+		}
+		return "waiting"
+	}
+	if status == "submitted" || status == "downloading" || status == "stopped" || status == "paused" {
+		return status
+	}
+	if status == "error" {
+		return "failed"
+	}
+	return status
 }
 
 func mapSABStatus(status string) string {

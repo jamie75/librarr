@@ -51,6 +51,9 @@ Librarr 2.0 currently has:
 - Wanted/library reconciliation so imported Wanted titles move out of the active queue
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
 - rich connection diagnostics for Prowlarr and qBittorrent
+- rTorrent XML-RPC diagnostics, magnet/raw torrent submission, durable
+  client/hash tracking, client-scoped Remote Path Mappings, and normalized
+  completion imports (cleanup/removal remains unsupported)
 - normalized `/api/v1` read endpoints
 - `/api/v1` Wanted and Downloads endpoints for new UI/API consumers
 - OPDS 1.2 catalog browsing and downloads for compatible reader apps
@@ -564,7 +567,7 @@ importing.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `TORRENT_CLIENT` | | Empty auto-selects qBittorrent when configured; otherwise `qbittorrent` or `transmission` |
+| `TORRENT_CLIENT` | | Empty auto-selects qBittorrent when configured; otherwise `qbittorrent`, `transmission`, or configured `rtorrent` |
 | `QB_URL` | | qBittorrent Web UI URL |
 | `QB_USER` | `admin` | qBittorrent username |
 | `QB_PASS` | | qBittorrent password |
@@ -581,6 +584,47 @@ importing.
 | `SABNZBD_URL` | | SABnzbd URL |
 | `SABNZBD_API_KEY` | | SABnzbd API key |
 | `SABNZBD_CATEGORY` | `librarr` | NZB category |
+
+### rTorrent / ruTorrent (Phase 2)
+
+Librarr can validate, submit, and monitor an rTorrent instance through its
+XML-RPC endpoint, including installations managed by ruTorrent. It does not
+scrape the ruTorrent UI. Submitted torrents are tracked by client identity and
+info hash, resolved through client-scoped Remote Path Mappings, and imported
+through the normalized import engine. Torrent removal and data deletion are
+not implemented; completed torrents remain available for seeding.
+
+| Variable | Default | Description |
+|---|---:|---|
+| `RTORRENT_ENABLED` | `false` | Enable rTorrent |
+| `RTORRENT_NAME` | `rTorrent` | Display name |
+| `RTORRENT_URL` | | Legacy full HTTP/HTTPS XML-RPC endpoint; retained for compatibility |
+| `RTORRENT_HOST` | | rTorrent/ruTorrent hostname, preferred with the fields below |
+| `RTORRENT_PORT` | `443` | XML-RPC port; defaults to 80 when TLS is disabled |
+| `RTORRENT_USE_TLS` | `true` | Construct an HTTPS endpoint |
+| `RTORRENT_URL_PATH` | `/rutorrent/plugins/httprpc/action.php` | XML-RPC URL path |
+| `RTORRENT_USER` | | Optional username |
+| `RTORRENT_PASS` | | Optional password |
+| `RTORRENT_AUTH_MODE` | `auto` | `auto`, `basic`, or `digest` HTTP authentication |
+| `RTORRENT_TIMEOUT_SECONDS` | `10` | RPC timeout |
+| `RTORRENT_LABEL_FIELD` | `d.custom1=` | Optional custom-field method |
+| `RTORRENT_TLS_VERIFY` | `true` | Verify HTTPS certificates |
+| `RTORRENT_ALLOW_PRIVATE_NETWORKS` | `false` | Allow private/loopback rTorrent endpoints; metadata and link-local addresses remain blocked |
+
+HTTP/HTTPS Prowlarr torrent URLs are fetched by Librarr, validated within the
+existing bounded torrent limits, and uploaded to rTorrent as raw bytes. Magnets
+are submitted directly. The Prowlarr API key is sent only to the configured
+Prowlarr origin.
+
+Use Settings → Connection Diagnostics to test the current values. For seedbox
+paths, configure a Remote Path Mapping from the path reported by rTorrent to
+the path visible inside Librarr; see [docs/rtorrent.md](docs/rtorrent.md).
+
+ruTorrent installations commonly require HTTP Digest authentication. In
+`auto` mode Librarr accepts the expected initial 401 challenge, negotiates
+MD5/qop=auth Digest authentication, and retries once with a bounded stale-nonce
+retry. The configured seedbox credentials are never sent to another redirect
+origin or returned in diagnostics.
 
 ### Prowlarr
 

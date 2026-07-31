@@ -398,6 +398,37 @@ them.
 
 ## Download Client Architecture
 
+The download layer includes a separate read-only inspection contract plus an
+optional write capability. This keeps polling and submission identity explicit:
+
+```go
+type ReadOnlyDownloadClient interface {
+    ClientID() string
+    Name() string
+    Type() string
+    TestConnection(ctx context.Context) (ClientInfo, error)
+    ListDownloads(ctx context.Context) ([]ClientDownload, error)
+    GetDownload(ctx context.Context, id string) (ClientDownload, error)
+}
+```
+
+rTorrent implements the inspection contract and the optional write capability
+through XML-RPC. Magnet submissions use `load.start`; validated `.torrent`
+bytes use `load.raw_start`. Each accepted submission is recorded in
+`tracked_downloads` with client ID, client type, hash, media type, category,
+and remote path. The watcher resolves that same client/hash and uses the shared
+client-scoped Remote Path Mapping service before invoking normalized import.
+Removal and data deletion remain unsupported, so completed torrents are left
+seeding.
+
+rTorrent XML-RPC calls use one bounded authenticated transport. It supports
+`auto`, `basic`, and `digest` modes; Digest MD5/qop=auth challenges, nonce
+counts, opaque values, and a single stale-nonce retry are handled before the
+XML-RPC response is parsed. Redirects must remain on the configured origin and
+authorization is cleared before following them. Legacy full URLs are converted
+to the normalized host, port, TLS, and path settings at the configuration
+boundary.
+
 Librarr should support download clients through a common interface modeled after *arr behavior.
 
 Suggested capabilities:

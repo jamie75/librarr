@@ -17,6 +17,39 @@ import (
 	"github.com/jamie75/librarr/internal/organize"
 )
 
+type watcherReadOnlyStub struct {
+	downloads []ClientDownload
+}
+
+func (s *watcherReadOnlyStub) AddTorrent(string, string, string, string, string) error { return nil }
+func (s *watcherReadOnlyStub) GetTorrents(string) ([]TorrentInfo, error)               { return nil, nil }
+func (s *watcherReadOnlyStub) GetTorrentFiles(string) ([]TorrentFile, error)           { return nil, nil }
+func (s *watcherReadOnlyStub) DeleteTorrent(string, bool) error                        { return nil }
+func (s *watcherReadOnlyStub) Name() string                                            { return "rtorrent" }
+func (s *watcherReadOnlyStub) ClientID() string                                        { return "rtorrent" }
+func (s *watcherReadOnlyStub) Type() string                                            { return "rtorrent" }
+func (s *watcherReadOnlyStub) TestConnection(context.Context) (ClientInfo, error) {
+	return ClientInfo{}, nil
+}
+func (s *watcherReadOnlyStub) ListDownloads(context.Context) ([]ClientDownload, error) {
+	return s.downloads, nil
+}
+func (s *watcherReadOnlyStub) GetDownload(context.Context, string) (ClientDownload, error) {
+	return ClientDownload{}, errors.New("not found")
+}
+
+func TestPollTrackedTorrentsKeepsRTorrentRowsWithoutCategoryLabel(t *testing.T) {
+	client := &watcherReadOnlyStub{downloads: []ClientDownload{{InfoHash: "ABC123", Label: "", Status: "stopped"}}}
+	w := &Watcher{}
+	result := w.pollTrackedTorrents(client, "librarr")
+	if result.err != nil || result.rowsReturned != 1 || result.rowsAfterCategoryFilter != 1 || len(result.rows) != 1 {
+		t.Fatalf("poll result = %+v", result)
+	}
+	if result.rows[0].Hash != "ABC123" {
+		t.Fatalf("rows = %+v", result.rows)
+	}
+}
+
 func TestRecordTorrentItemIsIdempotentAcrossWatcherPolls(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(filepath.Join(dir, "library.db"))
@@ -44,6 +77,24 @@ func TestRecordTorrentItemIsIdempotentAcrossWatcherPolls(t *testing.T) {
 	count, err := database.CountItems("ebook")
 	if err != nil || count != 1 {
 		t.Fatalf("CountItems = %d, %v; want one row", count, err)
+	}
+}
+
+func TestWatcherPollFailureStateRecoversAfterListingSucceeds(t *testing.T) {
+	w := &Watcher{}
+	err := errors.New(`rTorrent main view is unavailable`)
+
+	w.logTorrentPollFailure("rtorrent/ebook", err)
+	if _, ok := w.pollErrors.Load("rtorrent/ebook"); !ok {
+		t.Fatal("expected first poll failure to be recorded")
+	}
+	w.logTorrentPollFailure("rtorrent/ebook", err)
+	if got, _ := w.pollErrors.Load("rtorrent/ebook"); got != err.Error() {
+		t.Fatalf("repeated failure state = %v, want unchanged signature", got)
+	}
+	w.logTorrentPollRecovery("rtorrent/ebook")
+	if _, ok := w.pollErrors.Load("rtorrent/ebook"); ok {
+		t.Fatal("expected recovery to clear the repeated failure state")
 	}
 }
 

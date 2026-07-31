@@ -84,7 +84,9 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 
 	url, err := s.resolveTorrentURL(r.Context(), req, models.SearchResult{})
 	if err != nil {
-		slog.Warn("torrent URL resolution failed", "title", req.Title, "error", err)
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(req.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(netutil.SanitizeSensitiveText(err.Error()), "\r", ""), "\n", ""), "\x00", "")
+		slog.Warn("torrent URL resolution failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"success": false,
 			"error":   "Failed to resolve download URL",
@@ -121,7 +123,7 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		category = s.cfg.QBMangaCategory
 	}
 
-	err = s.downloadMgr.StartTorrentDownload(url, req.Title, savePath, category, req.InfoHash)
+	_, err = s.downloadMgr.StartTorrentDownloadTracked(url, req.Title, savePath, category, req.InfoHash, req.MediaType, req.Source, extractSourceID(req))
 	var verificationWarning *download.TorrentVerificationWarning
 	if errors.As(err, &verificationWarning) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -132,7 +134,14 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	status := http.StatusOK
+	if err != nil {
+		status = http.StatusBadGateway
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(req.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(errString(err), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("torrent submission failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
+	}
+	writeJSON(w, status, map[string]interface{}{
 		"success": err == nil,
 		"title":   req.Title,
 		"error":   errString(err),
@@ -160,7 +169,9 @@ func (s *Server) handleDirectDownloadReq(w http.ResponseWriter, req models.Downl
 
 		job, err := s.downloadMgr.StartAnnasDownload(req.MD5, req.Title)
 		if err != nil {
-			slog.Error("anna's download start failed", "title", req.Title, "error", err)
+			safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(req.Title, "\r", ""), "\n", ""), "\x00", "")
+			safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+			slog.Error("anna's download start failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"success": false,
 				"error":   "Failed to start download",
@@ -201,7 +212,9 @@ func (s *Server) handleDirectDownloadReq(w http.ResponseWriter, req models.Downl
 
 		job, err := s.downloadMgr.StartDirectDownload(dlURL, req.Title, req.Source, sourceID, req.Author)
 		if err != nil {
-			slog.Error("direct download start failed", "title", req.Title, "error", err)
+			safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(req.Title, "\r", ""), "\n", ""), "\x00", "")
+			safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+			slog.Error("direct download start failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"success": false,
 				"error":   "Failed to start download",

@@ -1,8 +1,12 @@
 package netutil
 
 import (
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateIntegrationURL(t *testing.T) {
@@ -86,6 +90,20 @@ func TestValidateSameOriginHTTPURL(t *testing.T) {
 	}
 }
 
+func TestValidateSameOriginEndpointRebuildsApprovedComponents(t *testing.T) {
+	endpoint, err := ValidateSameOriginEndpoint("HTTPS://PROWLARR.example:443/download/%2Ffile?apikey=secret#fragment", "https://prowlarr.example")
+	if err != nil {
+		t.Fatalf("ValidateSameOriginEndpoint() error = %v", err)
+	}
+	got := endpoint.URL()
+	if got.String() != "https://prowlarr.example:443/download//file" {
+		t.Fatalf("rebuilt URL = %q", got.String())
+	}
+	if got.RawQuery != "" || got.Fragment != "" || got.User != nil {
+		t.Fatalf("rebuilt URL retained unsafe/unapproved components: %#v", got)
+	}
+}
+
 func TestSanitizeSensitiveText(t *testing.T) {
 	input := `fetch http://user:pass@example.com/download?apikey=secret&token=abc&id=1 failed`
 	got := SanitizeSensitiveText(input)
@@ -94,5 +112,47 @@ func TestSanitizeSensitiveText(t *testing.T) {
 	}
 	if !strings.Contains(got, "id=1") {
 		t.Fatalf("SanitizeSensitiveText removed non-secret query: %q", got)
+	}
+}
+
+func TestNewValidatedHTTPClientPrivateNetworkPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	if _, err := NewValidatedHTTPClient(server.URL, EndpointPolicy{}, time.Second, nil); err == nil {
+		t.Fatal("expected private endpoint to be rejected by default")
+	}
+	client, err := NewValidatedHTTPClient(server.URL, EndpointPolicy{AllowPrivateNetworks: true}, time.Second, nil)
+	if err != nil {
+		t.Fatalf("allow private endpoint: %v", err)
+	}
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("validated request: %v", err)
+	}
+	resp.Body.Close()
+}
+
+func TestValidatedTransportAlwaysRejectsInfrastructureAddresses(t *testing.T) {
+	for _, raw := range []string{"169.254.169.254", "fd00:ec2::254", "0.0.0.0", "224.0.0.1"} {
+		t.Run(raw, func(t *testing.T) {
+			if err := validateResolvedAddresses([]net.IP{net.ParseIP(raw)}, EndpointPolicy{AllowPrivateNetworks: true}); err == nil {
+				t.Fatalf("expected infrastructure address %s to be rejected", raw)
+			}
+		})
+	}
+}
+
+func TestSanitizeLogValueRemovesControlsAndBoundsLength(t *testing.T) {
+	got := SanitizeLogValue("prefix\r\n\t\x00\x1b" + strings.Repeat("x", 4096))
+	if len([]rune(got)) != 2048 {
+		t.Fatalf("sanitized length = %d, want 2048", len([]rune(got)))
+	}
+	for _, r := range got {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("control character remained in sanitized value: %q", got)
+		}
 	}
 }

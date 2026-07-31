@@ -229,8 +229,15 @@ func (q *QBittorrentClient) doRequestContext(ctx context.Context, method, path s
 	return resp, nil
 }
 
-// AddTorrent adds a torrent to qBittorrent.
+// AddTorrent adds a torrent to qBittorrent while preserving the historical
+// error-only API. New callers use SubmitTorrent for durable identity.
 func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error {
+	_, err := q.SubmitTorrent(TorrentSubmissionRequest{URL: torrentURL, Title: title, SavePath: savePath, Category: category, ExpectedInfoHash: expectedInfoHash})
+	return err
+}
+
+func (q *QBittorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (TorrentSubmission, error) {
+	torrentURL, title, savePath, category, expectedInfoHash := request.URL, request.Title, request.SavePath, request.Category, request.ExpectedInfoHash
 	if savePath == "" {
 		savePath = q.cfg.QBSavePath
 	}
@@ -266,20 +273,32 @@ func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, ex
 	}
 	if err != nil {
 		slog.Warn("qBittorrent torrent submission failed", "title", logTitle, "category", logCategory, "error", netutil.SanitizeSensitiveText(err.Error()))
-		return err
+		return TorrentSubmission{}, err
 	}
 
 	if err := q.verifyTorrentAdded(expectedInfoHash, ids, title, category); err != nil {
 		slog.Warn("qBittorrent torrent verification failed", "title", logTitle, "category", logCategory, "error", netutil.SanitizeSensitiveText(err.Error()))
 		var timeoutErr torrentVerificationTimeoutError
 		if errors.As(err, &timeoutErr) {
-			return &TorrentVerificationWarning{Err: err}
+			warning := &TorrentVerificationWarning{Err: err}
+			hash := firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL))
+			if hash == "" && len(ids) > 0 {
+				hash = ids[0]
+			}
+			return TorrentSubmission{ClientID: "qbittorrent", ClientType: "qbittorrent", DownloadID: hash, InfoHash: hash, Name: title, RemoteSavePath: savePath, Category: category}, warning
 		}
-		return err
+		return TorrentSubmission{}, err
 	}
 
 	slog.Info("torrent added to qBittorrent", "title", logTitle, "category", logCategory)
-	return nil
+	hash := firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL))
+	if hash == "" && len(ids) > 0 {
+		hash = ids[0]
+	}
+	if hash == "" {
+		return TorrentSubmission{}, fmt.Errorf("qBittorrent accepted the submission but returned no torrent hash")
+	}
+	return TorrentSubmission{ClientID: "qbittorrent", ClientType: "qbittorrent", DownloadID: hash, InfoHash: hash, Name: title, RemoteSavePath: savePath, Category: category}, nil
 }
 
 func (q *QBittorrentClient) addTorrentURL(torrentURL, savePath, category string) ([]string, error) {

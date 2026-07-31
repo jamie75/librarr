@@ -58,6 +58,9 @@ const I18N = {
     dashboard_failed: 'Failed',
     dashboard_importing: 'Importing',
     dashboard_downloading_count: 'Downloading',
+    dashboard_submitted: 'Submitted',
+    dashboard_stopped: 'Paused/Stopped',
+    dashboard_recent_imported: 'Recently imported',
     dashboard_open_opds: 'Open OPDS Catalog',
     library_kicker: 'Bookshelf',
     library_title: 'Your Library',
@@ -98,12 +101,12 @@ const I18N = {
     wanted_release_sort: 'Sort',
     wanted_release_top_match: 'Top match',
     wanted_release_selected: 'Selected',
-    wanted_release_download: 'Download with qBittorrent',
+    wanted_release_download: 'Send to download client',
     wanted_release_sending: 'Sending...',
     wanted_release_unsupported: 'Download unavailable',
-    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to qBittorrent?',
-    wanted_release_download_success: 'Release sent to qBittorrent',
-    wanted_release_download_failed: 'Could not send release to qBittorrent',
+    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to the configured download client?',
+    wanted_release_download_success: 'Release sent to download client',
+    wanted_release_download_failed: 'Could not send release to download client',
     wanted_selected_release: 'Selected release',
     wanted_download_started: 'Download started',
     wanted_last_searched: 'Last searched',
@@ -237,6 +240,13 @@ const I18N = {
     status_searching: 'Searching',
     status_importing: 'Importing',
     status_retry_wait: 'Retry Wait',
+    status_submitted: 'Submitted',
+    status_stopped: 'Paused/Stopped',
+    status_paused: 'Paused/Stopped',
+    status_waiting: 'Waiting for sync',
+    status_ready_to_import: 'Ready to import',
+    status_failed: 'Failed',
+    status_imported: 'Imported',
     // Download actions
     download_started: 'Download started: {title}',
     download_complete: 'Download completed: {title}',
@@ -795,7 +805,14 @@ const COVER_GRADIENTS = [
 ];
 
 const STATUS_STYLES = {
-  downloading: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', label: 'Downloading' },
+	 submitted:   { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Submitted' },
+	 downloading: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', label: 'Downloading' },
+	 stopped:     { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Paused/Stopped' },
+	 paused:      { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Paused/Stopped' },
+	 waiting:     { bg: 'bg-amber-500/20', text: 'text-amber-300', border: 'border-amber-500/30', label: 'Waiting for sync' },
+	 ready_to_import: { bg: 'bg-cyan-500/20', text: 'text-cyan-300', border: 'border-cyan-500/30', label: 'Ready to import' },
+	 imported:    { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Imported' },
+	 failed:      { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', label: 'Failed' },
   completed:   { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Completed' },
   error:       { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', label: 'Error' },
   organizing:  { bg: 'bg-yellow-500/20', text: 'text-yellow-400', border: 'border-yellow-500/30', label: 'Organizing' },
@@ -839,7 +856,10 @@ async function api(path, options = {}) {
 
 async function apiJson(path, options = {}) {
   const resp = await api(path, options);
-  if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || `API error: ${resp.status}`);
+  }
   return resp.json();
 }
 
@@ -1813,7 +1833,7 @@ function isTerminalDownloadStatus(status) {
 }
 
 function isActiveDownloadStatus(status) {
-  return status === 'queued' || status === 'searching' || status === 'downloading' || status === 'organizing' || status === 'importing' || status === 'retry_wait';
+	return ['submitted', 'queued', 'searching', 'downloading', 'paused', 'stopped', 'waiting', 'ready_to_import', 'organizing', 'importing', 'retry_wait'].includes(status);
 }
 
 function trackDownloadJob(downloadKey, jobId, title, source, url = '') {
@@ -1952,8 +1972,8 @@ function renderDownloadJob(job) {
   job = (job && typeof job === 'object') ? job : {};
   const status = String(job.status || 'queued');
   const st = STATUS_STYLES[status] || STATUS_STYLES.queued;
-  const progress = job.progress || 0;
-  const showProgress = status === 'downloading' && progress > 0;
+	const progress = normalizeDownloadProgress(job.progress);
+	const showProgress = ['downloading', 'submitted', 'importing'].includes(status) && progress > 0;
   const retryKey = String(job.job_id);
   const retryPending = state.pendingRetryDownloads.has(retryKey);
 
@@ -1978,6 +1998,10 @@ function renderDownloadJob(job) {
           ${job.source ? `<span class="text-xs text-slate-500">${escapeHtml(job.source)}</span>` : ''}
         </div>
         <h4 class="text-sm font-medium text-white truncate" title="${escapeHtml(job.title || '')}">${escapeHtml(job.title || 'Unknown')}</h4>
+        ${job.client_type ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(job.client_type)}${job.hash ? ` · ${escapeHtml(job.hash)}` : ''}</p>` : ''}
+        ${job.remote_path ? `<p class="text-xs text-slate-500 mt-1 truncate" title="${escapeHtml(job.remote_path)}">Remote: ${escapeHtml(job.remote_path)}</p>` : ''}
+        ${job.local_path ? `<p class="text-xs text-slate-500 truncate" title="${escapeHtml(job.local_path)}">Local: ${escapeHtml(job.local_path)}</p>` : ''}
+        ${job.import_status ? `<p class="text-xs text-slate-400 truncate">Import: ${escapeHtml(job.import_status)}</p>` : ''}
         ${job.detail ? `<p class="text-xs text-slate-400 mt-1 truncate" title="${escapeHtml(job.detail)}">${escapeHtml(job.detail)}</p>` : ''}
         ${job.max_retries > 0 && job.retry_count > 0 ? `<p class="text-xs text-amber-400 mt-1">${escapeHtml(`Attempt ${Math.min(job.retry_count + 1, job.max_retries + 1)}/${job.max_retries + 1}`)}</p>` : ''}
         ${job.error ? `<p class="text-xs text-red-400 mt-1 truncate">${escapeHtml(job.error)}</p>` : ''}
@@ -2561,6 +2585,9 @@ function hasDashboardActivity(summary) {
 		'manualReview',
 		'importing',
 		'failed',
+		'submitted',
+		'stopped',
+		'imported',
 	].some(key => Number(summary[key] || 0) > 0));
 }
 
@@ -2569,12 +2596,15 @@ function renderDashboardActivity(summary, isAdmin) {
 		return `<div class="rounded-2xl border border-dashed border-stone-800 bg-stone-900/30 px-4 py-5 text-sm text-stone-400">${t('dashboard_all_clear')}</div>`;
 	}
 	const chips = [
+		{ key: 'submitted', label: t('dashboard_submitted'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'downloading', label: t('dashboard_downloading_count'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'stopped', label: t('dashboard_stopped'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'waiting', label: t('dashboard_waiting'), action: 'switchTab', arg: 'downloads' },
 		{ key: 'ready', label: t('dashboard_ready_to_import'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'manualReview', label: t('dashboard_manual_review'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'importing', label: t('dashboard_importing'), action: isAdmin ? 'openImportSettings' : '', arg: '' },
 		{ key: 'failed', label: t('dashboard_failed'), action: 'switchTab', arg: 'downloads' },
+		{ key: 'imported', label: t('dashboard_recent_imported'), action: 'switchTab', arg: 'downloads' },
 	];
 	return `<div class="grid grid-cols-2 gap-2">${chips
 		.filter(chip => Number(summary[chip.key] || 0) > 0)
@@ -2630,7 +2660,15 @@ function normalizeDownloadsResponse(value) {
 			...item,
 			status: String(item.status || 'queued'),
 			title: item.title || 'Unknown',
+			progress: normalizeDownloadProgress(item.progress),
 		}));
+}
+
+function normalizeDownloadProgress(value) {
+	const progress = Number(value);
+	if (!Number.isFinite(progress) || progress < 0) return 0;
+	if (progress > 0 && progress <= 1) return Math.min(progress * 100, 100);
+	return Math.min(progress, 100);
 }
 
 function isAdminUser() {
@@ -2651,12 +2689,19 @@ function buildDashboardActivitySummary(downloads, activity) {
 		importing: 0,
 		manualReview: 0,
 		failed: 0,
+		submitted: 0,
+		stopped: 0,
+		imported: 0,
 	};
 	(downloads || []).forEach(item => {
 		const status = String(item.status || '').toLowerCase();
 		if (['downloading', 'queued', 'searching'].includes(status)) summary.downloading++;
+		if (status === 'submitted') summary.submitted++;
+		if (['paused', 'stopped'].includes(status)) summary.stopped++;
 		if (['waiting', 'pending', 'retry_wait', 'sync_wait', 'missing_files'].includes(status)) summary.waiting++;
 		if (['importing', 'organizing'].includes(status)) summary.importing++;
+		if (status === 'ready_to_import') summary.ready++;
+		if (status === 'imported') summary.imported++;
 		if (['error', 'failed', 'dead_letter'].includes(status)) summary.failed++;
 	});
 	(activity || []).forEach(event => {
@@ -4460,6 +4505,7 @@ const INTEGRATION_FIELDS = {
   prowlarr:       ['prowlarr_url', 'prowlarr_api_key'],
   qbittorrent:    ['qb_url', 'qb_user', 'qb_pass', 'qb_save_path', 'qb_category', 'qb_audiobook_save_path', 'qb_audiobook_category', 'qb_manga_save_path', 'qb_manga_category'],
   transmission:   ['transmission_url', 'transmission_user', 'transmission_pass', 'torrent_client'],
+  rtorrent:       ['rtorrent_enabled', 'rtorrent_name', 'rtorrent_url', 'rtorrent_host', 'rtorrent_port', 'rtorrent_use_tls', 'rtorrent_url_path', 'rtorrent_user', 'rtorrent_pass', 'rtorrent_auth_mode', 'rtorrent_timeout_seconds', 'rtorrent_label_field', 'rtorrent_tls_verify', 'rtorrent_allow_private_networks'],
   sabnzbd:        ['sabnzbd_url', 'sabnzbd_api_key', 'sabnzbd_category'],
   audiobookshelf: ['abs_url', 'abs_token'],
   kavita:         ['kavita_url', 'kavita_user', 'kavita_pass'],
@@ -4514,8 +4560,52 @@ async function loadSettingToggles() {
         }
       }
     }
+    const rtorrentEnabled = document.getElementById('setting-rtorrent_enabled');
+    if (rtorrentEnabled && data.rtorrent_enabled !== undefined) rtorrentEnabled.checked = !!data.rtorrent_enabled;
+    const rtorrentTLS = document.getElementById('setting-rtorrent_tls_verify');
+    if (rtorrentTLS && data.rtorrent_tls_verify !== undefined) rtorrentTLS.checked = !!data.rtorrent_tls_verify;
+    const rtorrentPrivate = document.getElementById('setting-rtorrent_allow_private_networks');
+    if (rtorrentPrivate && data.rtorrent_allow_private_networks !== undefined) rtorrentPrivate.checked = !!data.rtorrent_allow_private_networks;
+    const rtorrentUseTLS = document.getElementById('setting-rtorrent_use_tls');
+    if (rtorrentUseTLS && data.rtorrent_use_tls !== undefined) rtorrentUseTLS.checked = !!data.rtorrent_use_tls;
+    if (typeof loadRTorrentMappings === 'function') loadRTorrentMappings();
     applyLibraryImportLoadedState(getLibraryImportFormValues());
   } catch (err) {}
+}
+
+async function loadRTorrentMappings() {
+  const container = document.getElementById('rtorrent-mappings');
+  if (!container) return;
+  try {
+    const data = await apiJson('/api/rtorrent/mappings');
+    const mappings = Array.isArray(data.mappings) ? data.mappings : [];
+    container.querySelector('[data-mapping-list]')?.replaceChildren(...mappings.map((mapping, index) => {
+      const row = document.createElement('div');
+      row.className = 'flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-300';
+      row.innerHTML = `<span>${escapeHtml(mapping.remote_path || '')} → ${escapeHtml(mapping.local_path || '')}</span><button data-action="deleteRTorrentMapping" data-index="${index}" class="text-red-300 hover:text-red-200">Delete</button>`;
+      return row;
+    }));
+  } catch (err) {
+    if (err.message !== 'Unauthorized') showToast('Could not load rTorrent path mappings', 'error');
+  }
+}
+
+async function addRTorrentMapping() {
+  const remote = document.getElementById('setting-rtorrent-remote-path')?.value.trim() || '';
+  const local = document.getElementById('setting-rtorrent-local-path')?.value.trim() || '';
+  if (!remote || !local) { showToast('Remote and local paths are required', 'error'); return; }
+  try {
+    await apiJson('/api/rtorrent/mappings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ client_id: 'rtorrent', remote_path: remote, local_path: local, enabled: true }) });
+    document.getElementById('setting-rtorrent-remote-path').value = '';
+    document.getElementById('setting-rtorrent-local-path').value = '';
+    await loadRTorrentMappings();
+    showToast('rTorrent path mapping added', 'success');
+  } catch (err) { showToast(err.message || 'Could not add mapping', 'error'); }
+}
+
+async function deleteRTorrentMapping(index) {
+  try { await apiJson(`/api/rtorrent/mappings/${encodeURIComponent(index)}`, {method: 'DELETE'}); await loadRTorrentMappings(); showToast('rTorrent path mapping deleted', 'success'); }
+  catch (err) { showToast(err.message || 'Could not delete mapping', 'error'); }
 }
 
 function getLibraryImportFormValues() {
@@ -5695,7 +5785,7 @@ async function saveIntegration(name) {
   for (const key of fields) {
     const el = document.getElementById(`setting-${key}`);
     if (!el) continue;
-    payload[key] = el.value;
+    payload[key] = el.type === 'checkbox' ? el.checked : el.value;
   }
   try {
     const res = await apiJson('/api/settings', {
@@ -5852,6 +5942,23 @@ function diagnosticPayload(service) {
       url: document.getElementById('setting-qb_url')?.value || '',
       username: document.getElementById('setting-qb_user')?.value || '',
       password: document.getElementById('setting-qb_pass')?.value || '',
+    };
+  }
+  if (service === 'rtorrent') {
+    return {
+      name: document.getElementById('setting-rtorrent_name')?.value || '',
+      url: document.getElementById('setting-rtorrent_url')?.value || '',
+      host: document.getElementById('setting-rtorrent_host')?.value || '',
+      port: Number(document.getElementById('setting-rtorrent_port')?.value || 0),
+      use_tls: document.getElementById('setting-rtorrent_use_tls')?.checked !== false,
+      url_path: document.getElementById('setting-rtorrent_url_path')?.value || '',
+      username: document.getElementById('setting-rtorrent_user')?.value || '',
+      password: document.getElementById('setting-rtorrent_pass')?.value || '',
+      auth_mode: document.getElementById('setting-rtorrent_auth_mode')?.value || 'auto',
+      timeout_seconds: Number(document.getElementById('setting-rtorrent_timeout_seconds')?.value || 10),
+      label_field: document.getElementById('setting-rtorrent_label_field')?.value || '',
+      tls_verify: document.getElementById('setting-rtorrent_tls_verify')?.checked !== false,
+      allow_private_networks: document.getElementById('setting-rtorrent_allow_private_networks')?.checked === true,
     };
   }
   return {};
@@ -6541,6 +6648,8 @@ const CLICK_ACTIONS = {
   setSortMode: el => setSortMode(el.dataset.arg),
   testConnection: el => testConnection(el.dataset.arg),
   saveIntegration: el => saveIntegration(el.dataset.arg),
+  addRTorrentMapping: () => addRTorrentMapping(),
+  deleteRTorrentMapping: el => deleteRTorrentMapping(Number(el.dataset.index)),
   saveWantedSettings: () => saveWantedSettings(),
   toggleMobileNav: () => toggleMobileNav(),
   showLoginForm: () => showLoginForm(),

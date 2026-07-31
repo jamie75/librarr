@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jamie75/librarr/internal/diagnostics"
+	"github.com/jamie75/librarr/internal/download"
 	"github.com/jamie75/librarr/internal/netutil"
 	"github.com/jamie75/librarr/internal/sources"
 )
@@ -27,12 +28,20 @@ var sensitiveKeys = map[string]bool{
 	"komga_pass":               true,
 	"sabnzbd_api_key":          true,
 	"transmission_pass":        true,
+	"rtorrent_pass":            true,
 	"annas_archive_secret_key": true,
 	"annas_secret_key":         true,
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	settings := s.loadSettings()
+	rtorrentHost, rtorrentPort, rtorrentUseTLS, rtorrentPath, _ := download.RTorrentEndpointFields(download.RTorrentConfig{
+		URL: s.cfg.RTorrentURL, Host: s.cfg.RTorrentHost, Port: s.cfg.RTorrentPort,
+		UseTLS: s.cfg.RTorrentUseTLS, URLPath: s.cfg.RTorrentURLPath,
+	})
+	if rtorrentHost == "" {
+		rtorrentHost, rtorrentPort, rtorrentUseTLS, rtorrentPath = s.cfg.RTorrentHost, s.cfg.RTorrentPort, s.cfg.RTorrentUseTLS, s.cfg.RTorrentURLPath
+	}
 
 	// Inject current config values as defaults so the UI can render fields
 	// even when nothing has been saved to settings.json yet.
@@ -60,34 +69,48 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"wanted_max_results_keep":     s.cfg.WantedMaxResultsKeep,
 
 		// Integration URLs and credentials (sensitive ones are masked below).
-		"qb_url":                 s.cfg.QBUrl,
-		"qb_user":                s.cfg.QBUser,
-		"qb_pass":                s.cfg.QBPass,
-		"qb_save_path":           s.cfg.QBSavePath,
-		"qb_category":            s.cfg.QBCategory,
-		"qb_audiobook_save_path": s.cfg.QBAudiobookSavePath,
-		"qb_audiobook_category":  s.cfg.QBAudiobookCategory,
-		"qb_manga_save_path":     s.cfg.QBMangaSavePath,
-		"qb_manga_category":      s.cfg.QBMangaCategory,
-		"transmission_url":       s.cfg.TransmissionURL,
-		"transmission_user":      s.cfg.TransmissionUser,
-		"transmission_pass":      s.cfg.TransmissionPass,
-		"torrent_client":         s.cfg.TorrentClient,
-		"prowlarr_url":           s.cfg.ProwlarrURL,
-		"prowlarr_api_key":       s.cfg.ProwlarrAPIKey,
-		"sabnzbd_url":            s.cfg.SABnzbdURL,
-		"sabnzbd_api_key":        s.cfg.SABnzbdAPIKey,
-		"sabnzbd_category":       s.cfg.SABnzbdCategory,
-		"abs_url":                s.cfg.ABSURL,
-		"abs_token":              s.cfg.ABSToken,
-		"kavita_url":             s.cfg.KavitaURL,
-		"kavita_user":            s.cfg.KavitaUser,
-		"kavita_pass":            s.cfg.KavitaPass,
-		"komga_url":              s.cfg.KomgaURL,
-		"komga_user":             s.cfg.KomgaUser,
-		"komga_pass":             s.cfg.KomgaPass,
-		"calibre_url":            s.cfg.CalibreURL,
-		"calibre_library_path":   s.cfg.CalibreLibraryPath,
+		"qb_url":                          s.cfg.QBUrl,
+		"qb_user":                         s.cfg.QBUser,
+		"qb_pass":                         s.cfg.QBPass,
+		"qb_save_path":                    s.cfg.QBSavePath,
+		"qb_category":                     s.cfg.QBCategory,
+		"qb_audiobook_save_path":          s.cfg.QBAudiobookSavePath,
+		"qb_audiobook_category":           s.cfg.QBAudiobookCategory,
+		"qb_manga_save_path":              s.cfg.QBMangaSavePath,
+		"qb_manga_category":               s.cfg.QBMangaCategory,
+		"transmission_url":                s.cfg.TransmissionURL,
+		"transmission_user":               s.cfg.TransmissionUser,
+		"transmission_pass":               s.cfg.TransmissionPass,
+		"torrent_client":                  s.cfg.TorrentClient,
+		"rtorrent_enabled":                s.cfg.RTorrentEnabled,
+		"rtorrent_name":                   s.cfg.RTorrentName,
+		"rtorrent_url":                    s.cfg.RTorrentURL,
+		"rtorrent_host":                   rtorrentHost,
+		"rtorrent_port":                   rtorrentPort,
+		"rtorrent_use_tls":                rtorrentUseTLS,
+		"rtorrent_url_path":               rtorrentPath,
+		"rtorrent_user":                   s.cfg.RTorrentUser,
+		"rtorrent_pass":                   s.cfg.RTorrentPass,
+		"rtorrent_auth_mode":              s.cfg.RTorrentAuthMode,
+		"rtorrent_timeout_seconds":        s.cfg.RTorrentTimeout,
+		"rtorrent_label_field":            s.cfg.RTorrentLabelField,
+		"rtorrent_tls_verify":             s.cfg.RTorrentTLSVerify,
+		"rtorrent_allow_private_networks": s.cfg.RTorrentAllowPrivateNetworks,
+		"prowlarr_url":                    s.cfg.ProwlarrURL,
+		"prowlarr_api_key":                s.cfg.ProwlarrAPIKey,
+		"sabnzbd_url":                     s.cfg.SABnzbdURL,
+		"sabnzbd_api_key":                 s.cfg.SABnzbdAPIKey,
+		"sabnzbd_category":                s.cfg.SABnzbdCategory,
+		"abs_url":                         s.cfg.ABSURL,
+		"abs_token":                       s.cfg.ABSToken,
+		"kavita_url":                      s.cfg.KavitaURL,
+		"kavita_user":                     s.cfg.KavitaUser,
+		"kavita_pass":                     s.cfg.KavitaPass,
+		"komga_url":                       s.cfg.KomgaURL,
+		"komga_user":                      s.cfg.KomgaUser,
+		"komga_pass":                      s.cfg.KomgaPass,
+		"calibre_url":                     s.cfg.CalibreURL,
+		"calibre_library_path":            s.cfg.CalibreLibraryPath,
 	}
 
 	// Merge defaults under settings (settings override).
@@ -123,6 +146,24 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 			"success": false, "error": "No data provided",
 		})
 		return
+	}
+	if selected, ok := data["torrent_client"].(string); ok && strings.EqualFold(strings.TrimSpace(selected), "rtorrent") {
+		enabled := s.cfg.RTorrentEnabled
+		if value, ok := data["rtorrent_enabled"].(bool); ok {
+			enabled = value
+		}
+		urlValue := s.cfg.RTorrentURL
+		if value, ok := data["rtorrent_url"].(string); ok {
+			urlValue = value
+		}
+		hostValue := s.cfg.RTorrentHost
+		if value, ok := data["rtorrent_host"].(string); ok {
+			hostValue = value
+		}
+		if !enabled || (strings.TrimSpace(urlValue) == "" && strings.TrimSpace(hostValue) == "") {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "rTorrent must be enabled and configured before it can be selected"})
+			return
+		}
 	}
 	if value, ok := data["annas_archive_domain"].(string); ok && value != "" {
 		data["annas_archive_domain"] = sources.NormalizeDomain(value)
@@ -234,6 +275,32 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	s.applyStringSetting(data, "ebook_dir", &s.cfg.EbookDir)
 	s.applyStringSetting(data, "audiobook_dir", &s.cfg.AudiobookDir)
 	s.applyStringSetting(data, "manga_dir", &s.cfg.MangaDir)
+	s.applyStringSetting(data, "rtorrent_name", &s.cfg.RTorrentName)
+	s.applyStringSetting(data, "rtorrent_url", &s.cfg.RTorrentURL)
+	s.applyStringSetting(data, "rtorrent_host", &s.cfg.RTorrentHost)
+	s.applyStringSetting(data, "rtorrent_url_path", &s.cfg.RTorrentURLPath)
+	s.applyStringSetting(data, "rtorrent_user", &s.cfg.RTorrentUser)
+	s.applyStringSetting(data, "rtorrent_pass", &s.cfg.RTorrentPass)
+	s.applyStringSetting(data, "rtorrent_auth_mode", &s.cfg.RTorrentAuthMode)
+	s.applyStringSetting(data, "rtorrent_label_field", &s.cfg.RTorrentLabelField)
+	if v, ok := data["rtorrent_enabled"].(bool); ok {
+		s.cfg.RTorrentEnabled = v
+	}
+	if v, ok := data["rtorrent_tls_verify"].(bool); ok {
+		s.cfg.RTorrentTLSVerify = v
+	}
+	if v, ok := data["rtorrent_allow_private_networks"].(bool); ok {
+		s.cfg.RTorrentAllowPrivateNetworks = v
+	}
+	if v, ok := data["rtorrent_use_tls"].(bool); ok {
+		s.cfg.RTorrentUseTLS = v
+	}
+	if v, ok := data["rtorrent_timeout_seconds"].(float64); ok && v >= 1 {
+		s.cfg.RTorrentTimeout = int(v)
+	}
+	if v, ok := data["rtorrent_port"].(float64); ok && v >= 1 && v <= 65535 {
+		s.cfg.RTorrentPort = int(v)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

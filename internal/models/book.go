@@ -258,16 +258,51 @@ type DownloadRequest struct {
 
 // DownloadStatus is an entry in the GET /api/downloads response.
 type DownloadStatus struct {
-	Source     string  `json:"source"`
-	Title      string  `json:"title"`
-	Status     string  `json:"status"`
-	Progress   float64 `json:"progress,omitempty"`
-	Size       string  `json:"size,omitempty"`
-	Speed      string  `json:"speed,omitempty"`
-	Hash       string  `json:"hash,omitempty"`
-	JobID      string  `json:"job_id,omitempty"`
-	Error      string  `json:"error,omitempty"`
-	Detail     string  `json:"detail,omitempty"`
-	RetryCount int     `json:"retry_count,omitempty"`
-	MaxRetries int     `json:"max_retries,omitempty"`
+	Source       string     `json:"source"`
+	Title        string     `json:"title"`
+	Status       string     `json:"status"`
+	Progress     float64    `json:"progress,omitempty"`
+	Size         string     `json:"size,omitempty"`
+	Speed        string     `json:"speed,omitempty"`
+	Hash         string     `json:"hash,omitempty"`
+	JobID        string     `json:"job_id,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Detail       string     `json:"detail,omitempty"`
+	RetryCount   int        `json:"retry_count,omitempty"`
+	MaxRetries   int        `json:"max_retries,omitempty"`
+	ClientID     string     `json:"client_id,omitempty"`
+	ClientType   string     `json:"client_type,omitempty"`
+	RemotePath   string     `json:"remote_path,omitempty"`
+	LocalPath    string     `json:"local_path,omitempty"`
+	ImportStatus string     `json:"import_status,omitempty"`
+	CreatedAt    time.Time  `json:"created_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ImportedAt   *time.Time `json:"imported_at,omitempty"`
+}
+
+// TrackedDownload is the durable identity of a torrent submitted by Librarr.
+// The client ID is stored with the hash so later polling never depends on the
+// current global client setting.
+type TrackedDownload struct {
+	ID                 string     `json:"id"`
+	ClientID           string     `json:"client_id"`
+	ClientType         string     `json:"client_type"`
+	DownloadID         string     `json:"download_id"`
+	InfoHash           string     `json:"info_hash,omitempty"`
+	Title              string     `json:"title"`
+	MediaType          string     `json:"media_type"`
+	Source             string     `json:"source,omitempty"`
+	SourceID           string     `json:"source_id,omitempty"`
+	Category           string     `json:"category,omitempty"`
+	RemoteSavePath     string     `json:"remote_save_path,omitempty"`
+	Status             string     `json:"status"`
+	LastObservedStatus string     `json:"last_observed_status,omitempty"`
+	Progress           float64    `json:"progress"`
+	RemotePath         string     `json:"remote_path,omitempty"`
+	LocalPath          string     `json:"local_path,omitempty"`
+	ImportStatus       string     `json:"import_status,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	ImportedAt         *time.Time `json:"imported_at,omitempty"`
 }

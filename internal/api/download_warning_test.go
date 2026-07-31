@@ -172,18 +172,21 @@ func TestHandleTorrentDownloadReturnsWarningAsAccepted(t *testing.T) {
 	}
 }
 
-func TestHandleTorrentDownloadKeepsQBitFailureAsFailure(t *testing.T) {
-	server := newDownloadWarningTestServer(t, downloadWarningTorrentClient{err: errors.New("qBittorrent API failure")})
+func TestHandleTorrentDownloadReturnsXMLRPCFaultAsBadGateway(t *testing.T) {
+	server := newDownloadWarningTestServer(t, downloadWarningTorrentClient{err: &download.RPCFaultError{Code: "17", FaultString: "Could not create directory"}})
 	req := models.DownloadRequest{Title: "Test Book", Source: "torrent", DownloadURL: "magnet:?xt=urn:btih:abc"}
 	r := httptest.NewRequest("POST", "/api/download", nil)
 	rr := httptest.NewRecorder()
 
 	server.handleTorrentDownload(rr, r, req)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadGateway)
+	}
 	var response map[string]interface{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response["success"] != false || response["error"] != "qBittorrent API failure" {
+	if response["success"] != false || response["error"] != "rTorrent XML-RPC fault code 17: Could not create directory" {
 		t.Fatalf("response = %s, want hard failure", rr.Body.String())
 	}
 }

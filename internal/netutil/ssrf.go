@@ -3,12 +3,153 @@
 package netutil
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
+
+// EndpointPolicy controls outbound integration endpoint validation. Private
+// networks are a supported self-hosted deployment target, but metadata and
+// infrastructure-only address ranges are never allowed.
+type EndpointPolicy struct {
+	AllowPrivateNetworks bool
+}
+
+// ValidatedEndpoint contains only the origin and path components that have
+// passed same-origin validation. It intentionally excludes credentials,
+// query strings, fragments, and opaque URL data.
+type ValidatedEndpoint struct {
+	Scheme   string
+	Hostname string
+	Port     string
+	Path     string
+}
+
+func (e ValidatedEndpoint) URL() *url.URL {
+	return &url.URL{
+		Scheme: e.Scheme,
+		Host:   net.JoinHostPort(e.Hostname, e.Port),
+		Path:   e.Path,
+	}
+}
+
+type validatedResolver struct {
+	policy EndpointPolicy
+	mu     sync.Mutex
+	ips    map[string][]net.IP
+}
+
+// NewValidatedHTTPClient creates an HTTP client whose dialer connects only to
+// addresses validated for endpoint. The URL hostname is retained for TLS
+// verification while the dial target is a previously validated IP, avoiding a
+// second DNS lookup that could enable rebinding.
+func NewValidatedHTTPClient(endpoint string, policy EndpointPolicy, timeout time.Duration, redirect func(*http.Request, []*http.Request) error) (*http.Client, error) {
+	u, err := parseStrictHTTPURL(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	resolver := &validatedResolver{policy: policy, ips: make(map[string][]net.IP)}
+	lookupTimeout := timeout
+	if lookupTimeout <= 0 {
+		lookupTimeout = 10 * time.Second
+	}
+	lookupContext, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	defer cancel()
+	if _, err := resolver.resolve(lookupContext, u.Hostname()); err != nil {
+		return nil, err
+	}
+	if redirect == nil {
+		redirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 8 {
+				return fmt.Errorf("too many redirects")
+			}
+			if _, err := ValidateSameOriginHTTPURL(req.URL.String(), endpoint); err != nil {
+				return fmt.Errorf("redirect rejected: %w", err)
+			}
+			return nil
+		}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = resolver.dialContext
+	client := &http.Client{Timeout: lookupTimeout, Transport: transport, CheckRedirect: redirect}
+	return client, nil
+}
+
+func (r *validatedResolver) resolve(ctx context.Context, host string) ([]net.IP, error) {
+	key := strings.ToLower(strings.TrimSuffix(host, "."))
+	r.mu.Lock()
+	if ips, ok := r.ips[key]; ok {
+		r.mu.Unlock()
+		return ips, nil
+	}
+	r.mu.Unlock()
+
+	if ip := net.ParseIP(host); ip != nil {
+		if err := validateResolvedAddresses([]net.IP{ip}, r.policy); err != nil {
+			return nil, err
+		}
+		r.mu.Lock()
+		r.ips[key] = []net.IP{ip}
+		r.mu.Unlock()
+		return []net.IP{ip}, nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("endpoint host could not be resolved")
+	}
+	if err := validateResolvedAddresses(ips, r.policy); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	r.ips[key] = ips
+	r.mu.Unlock()
+	return ips, nil
+}
+
+func (r *validatedResolver) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid outbound endpoint address")
+	}
+	ips, err := r.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{}
+	var lastErr error
+	for _, ip := range ips {
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("endpoint has no validated addresses")
+}
+
+func validateResolvedAddresses(ips []net.IP, policy EndpointPolicy) error {
+	if len(ips) == 0 {
+		return fmt.Errorf("endpoint host has no addresses")
+	}
+	for _, ip := range ips {
+		if isInfrastructureBlockedIP(ip) {
+			return fmt.Errorf("URL resolves to a restricted address")
+		}
+		if isRestrictedIP(ip) && !policy.AllowPrivateNetworks {
+			return fmt.Errorf("URL resolves to a private address")
+		}
+	}
+	return nil
+}
 
 func parseHTTPURL(rawURL string) (*url.URL, error) {
 	if rawURL == "" {
@@ -129,10 +270,40 @@ func ValidateSameOriginHTTPURL(rawURL, allowedOrigin string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configured origin invalid: %w", err)
 	}
-	if normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) {
+	if u.Scheme != allowed.Scheme || normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) {
 		return nil, fmt.Errorf("URL host or port does not match configured origin")
 	}
 	return u, nil
+}
+
+// ValidateSameOriginEndpoint validates rawURL against allowedOrigin and
+// returns a URL representation rebuilt from approved components only.
+func ValidateSameOriginEndpoint(rawURL, allowedOrigin string) (ValidatedEndpoint, error) {
+	u, err := parseStrictHTTPURL(rawURL)
+	if err != nil {
+		return ValidatedEndpoint{}, err
+	}
+	allowed, err := parseStrictHTTPURL(allowedOrigin)
+	if err != nil {
+		return ValidatedEndpoint{}, fmt.Errorf("configured origin invalid: %w", err)
+	}
+	if normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) || u.Scheme != allowed.Scheme {
+		return ValidatedEndpoint{}, fmt.Errorf("URL origin does not match configured origin")
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	decodedPath, err := url.PathUnescape(path)
+	if err != nil {
+		return ValidatedEndpoint{}, fmt.Errorf("URL path is invalid")
+	}
+	return ValidatedEndpoint{
+		Scheme:   u.Scheme,
+		Hostname: normalizedHostname(u),
+		Port:     effectivePort(u),
+		Path:     decodedPath,
+	}, nil
 }
 
 func parseStrictHTTPURL(rawURL string) (*url.URL, error) {
@@ -178,13 +349,23 @@ func strictEffectivePort(u *url.URL) (string, error) {
 	}
 }
 
-// SanitizeLogValue strips line breaks from remote-derived values before they
-// reach structured logs, so a crafted value cannot forge additional log
-// entries.
+// SanitizeLogValue strips control characters and bounds remote-derived values
+// before they reach structured logs, so crafted input cannot forge entries or
+// create unbounded log records.
 func SanitizeLogValue(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	return s
+	const maxLogValue = 2048
+	cleaned := make([]rune, 0, min(len(s), maxLogValue))
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			cleaned = append(cleaned, ' ')
+		} else {
+			cleaned = append(cleaned, r)
+		}
+		if len(cleaned) >= maxLogValue {
+			return string(cleaned[:maxLogValue])
+		}
+	}
+	return string(cleaned)
 }
 
 // SanitizeSensitiveText redacts credentials and common secret query parameters
@@ -213,7 +394,10 @@ func SanitizeSensitiveText(text string) string {
 
 func isCloudMetadataIP(ip net.IP) bool {
 	ip4 := ip.To4()
-	return ip4 != nil && ip4[0] == 169 && ip4[1] == 254
+	if ip4 != nil && ip4[0] == 169 && ip4[1] == 254 {
+		return true
+	}
+	return ip.Equal(net.ParseIP("fd00:ec2::254"))
 }
 
 func isRestrictedIP(ip net.IP) bool {
@@ -222,4 +406,8 @@ func isRestrictedIP(ip net.IP) bool {
 		return true
 	}
 	return isCloudMetadataIP(ip)
+}
+
+func isInfrastructureBlockedIP(ip net.IP) bool {
+	return isCloudMetadataIP(ip) || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.Equal(net.IPv4bcast)
 }

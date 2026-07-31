@@ -183,6 +183,23 @@ type Config struct {
 	// ("qbittorrent" or "transmission"). Empty means auto-detect.
 	TorrentClient string
 
+	// rTorrent is an opt-in torrent client. Cleanup/removal remains disabled;
+	// completed downloads are left available for seeding.
+	RTorrentEnabled              bool
+	RTorrentName                 string
+	RTorrentURL                  string
+	RTorrentHost                 string
+	RTorrentPort                 int
+	RTorrentUseTLS               bool
+	RTorrentURLPath              string
+	RTorrentUser                 string
+	RTorrentPass                 string
+	RTorrentAuthMode             string
+	RTorrentTimeout              int
+	RTorrentLabelField           string
+	RTorrentTLSVerify            bool
+	RTorrentAllowPrivateNetworks bool
+
 	// User Agent
 	UserAgent string
 
@@ -419,6 +436,21 @@ func buildFromEnv() *Config {
 
 		TorrentClient: getEnv("TORRENT_CLIENT", ""),
 
+		RTorrentEnabled:              getEnvBool("RTORRENT_ENABLED", false),
+		RTorrentName:                 getEnv("RTORRENT_NAME", "rTorrent"),
+		RTorrentURL:                  getEnv("RTORRENT_URL", ""),
+		RTorrentHost:                 getEnv("RTORRENT_HOST", ""),
+		RTorrentPort:                 getEnvInt("RTORRENT_PORT", 0),
+		RTorrentUseTLS:               getEnvBool("RTORRENT_USE_TLS", true),
+		RTorrentURLPath:              getEnv("RTORRENT_URL_PATH", "/rutorrent/plugins/httprpc/action.php"),
+		RTorrentUser:                 getEnv("RTORRENT_USER", ""),
+		RTorrentPass:                 getEnv("RTORRENT_PASS", ""),
+		RTorrentAuthMode:             getEnv("RTORRENT_AUTH_MODE", "auto"),
+		RTorrentTimeout:              getEnvInt("RTORRENT_TIMEOUT_SECONDS", 10),
+		RTorrentLabelField:           getEnv("RTORRENT_LABEL_FIELD", "d.custom1="),
+		RTorrentTLSVerify:            getEnvBool("RTORRENT_TLS_VERIFY", true),
+		RTorrentAllowPrivateNetworks: getEnvBool("RTORRENT_ALLOW_PRIVATE_NETWORKS", false),
+
 		UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 
 		WebhookURL:  getEnv("WEBHOOK_URL", ""),
@@ -515,14 +547,18 @@ func (c *Config) HasTransmission() bool {
 
 // HasTorrentClient returns true if any torrent download backend is configured.
 func (c *Config) HasTorrentClient() bool {
-	return c.HasQBittorrent() || c.HasTransmission()
+	return c.HasQBittorrent() || c.HasTransmission() || c.HasRTorrent()
+}
+
+func (c *Config) HasRTorrent() bool {
+	return c.RTorrentEnabled && (strings.TrimSpace(c.RTorrentURL) != "" || strings.TrimSpace(c.RTorrentHost) != "")
 }
 
 // ActiveTorrentClient resolves which torrent backend handles torrents:
 //   - an explicit, configured TORRENT_CLIENT wins ("qbittorrent"/"qbit"/"qb"
 //     or "transmission");
 //   - otherwise qBittorrent is preferred for backward compatibility;
-//   - otherwise Transmission if it alone is configured;
+//   - otherwise Transmission or rTorrent if configured;
 //   - else "" (no torrent client).
 func (c *Config) ActiveTorrentClient() string {
 	switch strings.ToLower(strings.TrimSpace(c.TorrentClient)) {
@@ -534,12 +570,19 @@ func (c *Config) ActiveTorrentClient() string {
 		if c.HasTransmission() {
 			return "transmission"
 		}
+	case "rtorrent":
+		if c.HasRTorrent() {
+			return "rtorrent"
+		}
 	}
 	if c.HasQBittorrent() {
 		return "qbittorrent"
 	}
 	if c.HasTransmission() {
 		return "transmission"
+	}
+	if c.HasRTorrent() {
+		return "rtorrent"
 	}
 	return ""
 }
@@ -590,6 +633,14 @@ func (c *Config) applySettingsFileOverrides() {
 		"transmission_user":         &c.TransmissionUser,
 		"transmission_pass":         &c.TransmissionPass,
 		"torrent_client":            &c.TorrentClient,
+		"rtorrent_name":             &c.RTorrentName,
+		"rtorrent_url":              &c.RTorrentURL,
+		"rtorrent_host":             &c.RTorrentHost,
+		"rtorrent_url_path":         &c.RTorrentURLPath,
+		"rtorrent_user":             &c.RTorrentUser,
+		"rtorrent_pass":             &c.RTorrentPass,
+		"rtorrent_auth_mode":        &c.RTorrentAuthMode,
+		"rtorrent_label_field":      &c.RTorrentLabelField,
 		"prowlarr_url":              &c.ProwlarrURL,
 		"prowlarr_api_key":          &c.ProwlarrAPIKey,
 		"sabnzbd_url":               &c.SABnzbdURL,
@@ -644,19 +695,23 @@ func (c *Config) applySettingsFileOverrides() {
 	}
 
 	boolPtrs := map[string]*bool{
-		"file_org_enabled":            &c.FileOrgEnabled,
-		"rate_limit_enabled":          &c.RateLimitEnabled,
-		"metrics_enabled":             &c.MetricsEnabled,
-		"webnovel_enabled":            &c.WebNovelEnabled,
-		"mangadex_enabled":            &c.MangaDexEnabled,
-		"flibusta_enabled":            &c.FlibustaEnabled,
-		"zlibrary_enabled":            &c.ZLibraryEnabled,
-		"remove_torrent_after_import": &c.RemoveTorrentAfterImport,
-		"foreign_lang_filter":         &c.ForeignLangFilter,
-		"wishlist_cleanup_enabled":    &c.WishlistCleanupEnabled,
-		"wishlist_cleanup_dry_run":    &c.WishlistCleanupDryRun,
-		"wanted_monitor_enabled":      &c.WantedMonitorEnabled,
-		"wanted_retry_failures":       &c.WantedRetryFailures,
+		"file_org_enabled":                &c.FileOrgEnabled,
+		"rate_limit_enabled":              &c.RateLimitEnabled,
+		"metrics_enabled":                 &c.MetricsEnabled,
+		"webnovel_enabled":                &c.WebNovelEnabled,
+		"mangadex_enabled":                &c.MangaDexEnabled,
+		"flibusta_enabled":                &c.FlibustaEnabled,
+		"zlibrary_enabled":                &c.ZLibraryEnabled,
+		"remove_torrent_after_import":     &c.RemoveTorrentAfterImport,
+		"foreign_lang_filter":             &c.ForeignLangFilter,
+		"wishlist_cleanup_enabled":        &c.WishlistCleanupEnabled,
+		"wishlist_cleanup_dry_run":        &c.WishlistCleanupDryRun,
+		"wanted_monitor_enabled":          &c.WantedMonitorEnabled,
+		"wanted_retry_failures":           &c.WantedRetryFailures,
+		"rtorrent_enabled":                &c.RTorrentEnabled,
+		"rtorrent_tls_verify":             &c.RTorrentTLSVerify,
+		"rtorrent_allow_private_networks": &c.RTorrentAllowPrivateNetworks,
+		"rtorrent_use_tls":                &c.RTorrentUseTLS,
 	}
 	for key, fieldPtr := range boolPtrs {
 		v, ok := raw[key]
@@ -673,6 +728,8 @@ func (c *Config) applySettingsFileOverrides() {
 	intPtrs := map[string]*int{
 		"wishlist_cleanup_interval_hours": &c.WishlistCleanupIntervalHours,
 		"wanted_max_results_keep":         &c.WantedMaxResultsKeep,
+		"rtorrent_timeout_seconds":        &c.RTorrentTimeout,
+		"rtorrent_port":                   &c.RTorrentPort,
 	}
 	for key, fieldPtr := range intPtrs {
 		v, ok := raw[key]
