@@ -1,14 +1,18 @@
 package organize
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // AudioMeta holds extracted audio metadata.
@@ -75,6 +79,7 @@ func ExtractAudioMeta(path string) *AudioMeta {
 
 	// Fallback: parse from filename.
 	meta := parseAudioFilename(path)
+	slog.Debug("audio metadata fallback", "file", filepath.Base(path), "reason", "no supported embedded metadata", "title_found", meta != nil && meta.Title != "", "artist_found", meta != nil && meta.Artist != "", "abridged", meta != nil && meta.Abridged)
 	if strings.HasSuffix(strings.ToLower(path), ".mp3") {
 		meta.DurationSeconds = estimateMP3Duration(path)
 	}
@@ -91,7 +96,9 @@ func extractEmbeddedAudioMeta(path string) *AudioMeta {
 	return nil
 }
 
-// readID3v2Tags reads basic ID3v2.3/2.4 tags from an MP3 file.
+const maxID3TagBytes = 16 << 20
+
+// readID3v2Tags reads bounded ID3v2.2, 2.3, and 2.4 tags from an MP3 file.
 func readID3v2Tags(path string) *AudioMeta {
 	f, err := os.Open(path)
 	if err != nil {
@@ -101,7 +108,7 @@ func readID3v2Tags(path string) *AudioMeta {
 
 	// Check for ID3v2 header.
 	header := make([]byte, 10)
-	if _, err := f.Read(header); err != nil {
+	if _, err := io.ReadFull(f, header); err != nil {
 		return nil
 	}
 
@@ -109,96 +116,98 @@ func readID3v2Tags(path string) *AudioMeta {
 		return nil
 	}
 
-	// Parse header size (syncsafe integer).
-	size := int(header[6])<<21 | int(header[7])<<14 | int(header[8])<<7 | int(header[9])
-	if size <= 0 || size > 1024*1024 { // limit to 1MB header
+	version := header[3]
+	if version < 2 || version > 4 {
+		return nil
+	}
+	size, ok := decodeSyncSafe(header[6:10])
+	if !ok || size <= 0 || size > maxID3TagBytes {
+		slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "id3 tag is missing, invalid, or oversized", "id3_version", version)
 		return nil
 	}
 
 	tagData := make([]byte, size)
-	if _, err := f.Read(tagData); err != nil {
+	if _, err := io.ReadFull(f, tagData); err != nil {
 		return nil
+	}
+	flags := header[5]
+	if flags&0x80 != 0 {
+		tagData = removeUnsynchronization(tagData)
+	}
+	if flags&0x40 != 0 {
+		skip, valid := id3ExtendedHeaderLength(version, tagData)
+		if !valid || skip > len(tagData) {
+			slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "invalid id3 extended header", "id3_version", version)
+			return nil
+		}
+		tagData = tagData[skip:]
 	}
 
 	meta := &AudioMeta{}
+	frameIDs := make([]string, 0, 16)
+	var selectedCoverRank = 0
 	pos := 0
-	for pos+10 < len(tagData) {
-		frameID := string(tagData[pos : pos+4])
-		if frameID[0] == 0 {
+	for {
+		frameID, frameSize, frameHeaderSize, frameFlags, ok := nextID3Frame(tagData[pos:], version)
+		if !ok {
 			break
 		}
-
-		frameSize := int(tagData[pos+4])<<24 | int(tagData[pos+5])<<16 | int(tagData[pos+6])<<8 | int(tagData[pos+7])
-		if frameSize <= 0 || pos+10+frameSize > len(tagData) {
+		if frameSize <= 0 || frameSize > len(tagData)-pos-frameHeaderSize {
 			break
 		}
-
-		frameData := tagData[pos+10 : pos+10+frameSize]
-
-		// Skip encoding byte.
-		text := ""
-		if len(frameData) > 1 {
-			encoding := frameData[0]
-			switch encoding {
-			case 0, 3: // ISO-8859-1 or UTF-8
-				text = strings.TrimRight(string(frameData[1:]), "\x00")
-			case 1, 2: // UTF-16
-				// Simple extraction: skip BOM and null bytes.
-				var b []byte
-				for i := 1; i < len(frameData); i++ {
-					if frameData[i] != 0 {
-						b = append(b, frameData[i])
-					}
-				}
-				text = string(b)
-			}
+		frameData := append([]byte(nil), tagData[pos+frameHeaderSize:pos+frameHeaderSize+frameSize]...)
+		if version >= 3 && frameFlags&0x0002 != 0 {
+			frameData = removeUnsynchronization(frameData)
 		}
-
-		text = strings.TrimSpace(text)
+		if version == 4 && frameFlags&0x0001 != 0 && len(frameData) >= 4 {
+			frameData = frameData[4:]
+		}
+		if version == 3 && frameFlags&0x00c0 != 0 || version == 4 && frameFlags&0x000c != 0 {
+			pos += frameHeaderSize + frameSize
+			continue
+		}
+		frameIDs = append(frameIDs, frameID)
 
 		switch frameID {
-		case "TPE1": // Artist
-			if meta.Artist == "" {
-				meta.Artist = text
-			}
-		case "TALB": // Album
-			if meta.Album == "" {
-				meta.Album = text
-			}
-		case "TIT2": // Title
-			if meta.Title == "" {
-				meta.Title = text
-			}
-		case "TPE2": // Album artist
-			if meta.Artist == "" {
-				meta.Artist = text
-			}
-		case "TCOM":
-			meta.Composer = text
-		case "TDRC", "TYER":
-			meta.Year = text
-		case "TCON":
-			meta.Genre = text
-		case "COMM":
-			meta.Comment = text
-		case "TRCK":
-			meta.TrackNumber = parseTrackNumber(text)
-		case "TPOS":
-			meta.DiscNumber = parseTrackNumber(text)
+		case "TPE1", "TP1":
+			meta.Artist = firstString(meta.Artist, decodeID3TextFrame(frameData))
+		case "TALB", "TAL":
+			meta.Album = firstString(meta.Album, decodeID3TextFrame(frameData))
+		case "TIT2", "TT2":
+			meta.Title = firstString(meta.Title, decodeID3TextFrame(frameData))
+		case "TPE2", "TP2":
+			meta.Artist = firstString(meta.Artist, decodeID3TextFrame(frameData))
+		case "TCOM", "TCM":
+			meta.Composer = decodeID3TextFrame(frameData)
+		case "TDRC", "TYER", "TYE":
+			meta.Year = firstString(meta.Year, decodeID3TextFrame(frameData))
+		case "TCON", "TCO":
+			meta.Genre = decodeID3TextFrame(frameData)
+		case "COMM", "COM":
+			meta.Comment = decodeID3Comment(frameData)
+		case "TRCK", "TRK":
+			meta.TrackNumber = parseTrackNumber(decodeID3TextFrame(frameData))
+		case "TPOS", "TPA":
+			meta.DiscNumber = parseTrackNumber(decodeID3TextFrame(frameData))
 		case "APIC":
-			if cover := parseID3Cover(frameData); cover != nil {
-				meta.Cover = cover
+			if cover, rank := parseID3APIC(frameData); cover != nil && rank > selectedCoverRank {
+				meta.Cover, selectedCoverRank = cover, rank
+			}
+		case "PIC":
+			if cover, rank := parseID3PIC(frameData); cover != nil && rank > selectedCoverRank {
+				meta.Cover, selectedCoverRank = cover, rank
 			}
 		}
-
-		pos += 10 + frameSize
+		pos += frameHeaderSize + frameSize
 	}
 
-	if meta.Artist != "" || meta.Album != "" || meta.Title != "" || meta.Cover != nil {
+	slog.Debug("mp3 metadata extraction", "file", filepath.Base(path), "id3_version", version, "frame_ids", frameIDs, "title_found", meta.Title != "", "artist_found", meta.Artist != "", "cover_found", meta.Cover != nil, "cover_mime", coverMime(meta.Cover), "cover_bytes", coverBytes(meta.Cover))
+	if meta.Artist != "" || meta.Album != "" || meta.Title != "" || meta.Cover != nil || meta.Comment != "" || meta.Year != "" {
 		meta.Embedded = true
 		meta.DurationSeconds = estimateMP3Duration(path)
 		return meta
 	}
+	slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "no supported id3 metadata found", "id3_version", version)
 	return nil
 }
 
@@ -255,38 +264,267 @@ func parseTrackNumber(value string) int {
 	return n
 }
 
-func parseID3Cover(data []byte) *ExtractedCover {
+func decodeSyncSafe(data []byte) (int, bool) {
+	if len(data) < 4 || data[0]&0x80 != 0 || data[1]&0x80 != 0 || data[2]&0x80 != 0 || data[3]&0x80 != 0 {
+		return 0, false
+	}
+	return int(data[0])<<21 | int(data[1])<<14 | int(data[2])<<7 | int(data[3]), true
+}
+
+func id3ExtendedHeaderLength(version byte, data []byte) (int, bool) {
+	if len(data) < 4 {
+		return 0, false
+	}
+	var size int
+	var ok bool
+	if version == 4 {
+		size, ok = decodeSyncSafe(data[:4])
+	} else {
+		size = int(binary.BigEndian.Uint32(data[:4]))
+		ok = true
+	}
+	if !ok || size < 0 || size > len(data)-4 {
+		return 0, false
+	}
+	return size + 4, true
+}
+
+func nextID3Frame(data []byte, version byte) (string, int, int, uint16, bool) {
+	headerSize := 10
+	idSize := 4
+	if version == 2 {
+		headerSize = 6
+		idSize = 3
+	}
+	if len(data) < headerSize || data[0] == 0 {
+		return "", 0, 0, 0, false
+	}
+	id := string(data[:idSize])
+	for _, r := range id {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return "", 0, 0, 0, false
+		}
+	}
+	var size int
+	if version == 2 {
+		size = int(data[3])<<16 | int(data[4])<<8 | int(data[5])
+	} else if version == 4 {
+		var ok bool
+		size, ok = decodeSyncSafe(data[4:8])
+		if !ok {
+			return "", 0, 0, 0, false
+		}
+	} else {
+		size = int(binary.BigEndian.Uint32(data[4:8]))
+	}
+	var flags uint16
+	if version >= 3 {
+		flags = binary.BigEndian.Uint16(data[8:10])
+	}
+	return id, size, headerSize, flags, true
+}
+
+func removeUnsynchronization(data []byte) []byte {
+	if !bytes.Contains(data, []byte{0xff, 0x00}) {
+		return data
+	}
+	result := make([]byte, 0, len(data))
+	for i := 0; i < len(data); i++ {
+		result = append(result, data[i])
+		if data[i] == 0xff && i+1 < len(data) && data[i+1] == 0x00 {
+			i++
+		}
+	}
+	return result
+}
+
+func decodeID3TextFrame(data []byte) string {
+	if len(data) < 2 {
+		return ""
+	}
+	return cleanID3Text(decodeID3String(data[0], data[1:]))
+}
+
+func decodeID3Comment(data []byte) string {
 	if len(data) < 5 {
-		return nil
+		return ""
 	}
+	encoding := data[0]
+	pos := 4
+	if encoding == 1 || encoding == 2 {
+		pos = skipID3Terminated(data, pos, true)
+	} else {
+		pos = skipID3Terminated(data, pos, false)
+	}
+	if pos > len(data) {
+		return ""
+	}
+	return cleanID3Text(decodeID3String(encoding, data[pos:]))
+}
+
+func decodeID3String(encoding byte, data []byte) string {
+	switch encoding {
+	case 0:
+		data = bytes.TrimRight(data, "\x00")
+		runes := make([]rune, len(data))
+		for i, value := range data {
+			runes[i] = rune(value)
+		}
+		return string(runes)
+	case 1:
+		data = trimUTF16Terminator(data)
+		if len(data) < 2 {
+			return ""
+		}
+		littleEndian := data[0] != 0xfe || data[1] != 0xff
+		if data[0] == 0xff && data[1] == 0xfe {
+			littleEndian = true
+		} else if data[0] == 0xfe && data[1] == 0xff {
+			littleEndian = false
+		}
+		data = data[2:]
+		return decodeUTF16(data, littleEndian)
+	case 2:
+		data = trimUTF16Terminator(data)
+		if len(data) >= 2 && data[0] == 0xfe && data[1] == 0xff {
+			data = data[2:]
+		}
+		return decodeUTF16(data, false)
+	case 3:
+		data = bytes.TrimRight(data, "\x00")
+		if !utf8.Valid(data) {
+			return string(bytes.ToValidUTF8(data, []byte("�")))
+		}
+		return string(data)
+	default:
+		return ""
+	}
+}
+
+func trimUTF16Terminator(data []byte) []byte {
+	if len(data) >= 2 && data[len(data)-1] == 0 && data[len(data)-2] == 0 {
+		return data[:len(data)-2]
+	}
+	return data
+}
+
+func decodeUTF16(data []byte, littleEndian bool) string {
+	if len(data)%2 != 0 {
+		data = data[:len(data)-1]
+	}
+	units := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		if littleEndian {
+			units = append(units, binary.LittleEndian.Uint16(data[i:i+2]))
+		} else {
+			units = append(units, binary.BigEndian.Uint16(data[i:i+2]))
+		}
+	}
+	return string(utf16.Decode(units))
+}
+
+func skipID3Terminated(data []byte, pos int, utf16Encoded bool) int {
+	if utf16Encoded {
+		for pos+1 < len(data) {
+			if data[pos] == 0 && data[pos+1] == 0 {
+				return pos + 2
+			}
+			pos += 2
+		}
+		return len(data)
+	}
+	for pos < len(data) && data[pos] != 0 {
+		pos++
+	}
+	if pos < len(data) {
+		pos++
+	}
+	return pos
+}
+
+func cleanID3Text(value string) string {
+	return strings.TrimSpace(strings.TrimRight(value, "\x00"))
+}
+
+func parseID3APIC(data []byte) (*ExtractedCover, int) {
+	if len(data) < 4 {
+		return nil, 0
+	}
+	encoding := data[0]
 	pos := 1
-	for pos < len(data) && data[pos] != 0 {
-		pos++
+	mimeEnd := bytes.IndexByte(data[pos:], 0)
+	if mimeEnd < 0 {
+		return nil, 0
 	}
-	if pos+2 >= len(data) {
-		return nil
+	mimeType := strings.ToLower(strings.TrimSpace(string(data[pos : pos+mimeEnd])))
+	pos += mimeEnd + 1
+	if pos >= len(data) {
+		return nil, 0
 	}
+	pictureType := data[pos]
 	pos++
-	pos++ // picture type
-	for pos < len(data) && data[pos] != 0 {
-		pos++
+	pos = skipID3Terminated(data, pos, encoding == 1 || encoding == 2)
+	return makeID3Cover(data[pos:], mimeType, pictureType)
+}
+
+func parseID3PIC(data []byte) (*ExtractedCover, int) {
+	if len(data) < 6 {
+		return nil, 0
 	}
+	encoding := data[0]
+	format := strings.ToLower(strings.TrimSpace(string(data[1:4])))
+	pos := 4
 	if pos >= len(data) {
-		return nil
+		return nil, 0
 	}
+	pictureType := data[pos]
 	pos++
-	if pos >= len(data) {
-		return nil
+	pos = skipID3Terminated(data, pos, encoding == 1 || encoding == 2)
+	mimeType := "image/" + format
+	if format == "jpg" {
+		mimeType = "image/jpeg"
 	}
-	if pos >= len(data) {
-		return nil
+	return makeID3Cover(data[pos:], mimeType, pictureType)
+}
+
+func makeID3Cover(data []byte, mimeType string, pictureType byte) (*ExtractedCover, int) {
+	if len(data) == 0 || len(data) > maxEmbeddedCoverBytes {
+		return nil, 0
 	}
-	imageData := append([]byte(nil), data[pos:]...)
-	mimeType := "image/jpeg"
-	if strings.HasPrefix(string(imageData), "\x89PNG") {
-		mimeType = "image/png"
+	if mimeType != "image/jpeg" && mimeType != "image/png" {
+		if bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff}) {
+			mimeType = "image/jpeg"
+		} else if bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
+			mimeType = "image/png"
+		} else {
+			return nil, 0
+		}
 	}
-	return &ExtractedCover{Data: imageData, MimeType: mimeType, Ext: extensionForMime(mimeType), Source: "embedded_audiobook"}
+	if mimeType == "image/jpeg" && !bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff}) {
+		return nil, 0
+	}
+	if mimeType == "image/png" && !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
+		return nil, 0
+	}
+	rank := 1
+	if pictureType == 3 {
+		rank = 2
+	}
+	return &ExtractedCover{Data: append([]byte(nil), data...), MimeType: mimeType, Ext: extensionForMime(mimeType), Source: "embedded_audiobook"}, rank
+}
+
+func coverMime(cover *ExtractedCover) string {
+	if cover == nil {
+		return ""
+	}
+	return cover.MimeType
+}
+
+func coverBytes(cover *ExtractedCover) int {
+	if cover == nil {
+		return 0
+	}
+	return len(cover.Data)
 }
 
 // readM4BMetadata reads common iTunes/MP4 metadata atoms without decoding
@@ -396,8 +634,9 @@ func parseAudioFilename(path string) *AudioMeta {
 	name := filepath.Base(path)
 	ext := filepath.Ext(name)
 	name = strings.TrimSuffix(name, ext)
+	name, abridged := cleanAudiobookFilenameStem(name)
 
-	meta := &AudioMeta{}
+	meta := &AudioMeta{Abridged: abridged}
 
 	// Common pattern: "Artist - Title" or "Artist - Album - Title"
 	dashRe := regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
@@ -440,15 +679,13 @@ func ExtractAudiobookPathMetadata(path string) *AudioMeta {
 
 func isGenericAudioParent(value string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(value))
-	return normalized == "" || normalized == "incoming" || normalized == "downloads" || normalized == "audiobook" || normalized == "audiobooks" || normalized == "audio" || regexp.MustCompile(`^\d+$`).MatchString(normalized)
+	return normalized == "" || normalized == "incoming" || normalized == "downloads" || normalized == "unknown" || normalized == "unknown author" || normalized == "audiobook" || normalized == "audiobooks" || normalized == "audio" || regexp.MustCompile(`^\d+$`).MatchString(normalized)
 }
 
 func parseAudiobookFilename(path string) *AudioMeta {
 	name := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	name = regexp.MustCompile(`(?i)\s*\[[^]]*(?:mp3|m4b|m4a|kbps|eng|english)[^]]*\]\s*$`).ReplaceAllString(name, "")
-	name = regexp.MustCompile(`(?i)\s*\((?:audiobook|unabridged|abridged|retail)[^)]*\)\s*[eE]?$`).ReplaceAllString(name, "")
-	name = strings.TrimSpace(name)
-	meta := &AudioMeta{}
+	name, abridged := cleanAudiobookFilenameStem(name)
+	meta := &AudioMeta{Abridged: abridged}
 	if match := regexp.MustCompile(`(?i)^(.+?)\s+by\s+(.+)$`).FindStringSubmatch(name); len(match) == 3 {
 		meta.Title, meta.Artist = strings.TrimSpace(match[1]), strings.TrimSpace(match[2])
 		return meta
@@ -463,6 +700,20 @@ func parseAudiobookFilename(path string) *AudioMeta {
 	}
 	meta.Title = name
 	return meta
+}
+
+func cleanAudiobookFilenameStem(name string) (string, bool) {
+	name = regexp.MustCompile(`(?i)\s*\[[^]]*(?:mp3|m4b|m4a|kbps|eng|english)[^]]*\]\s*$`).ReplaceAllString(name, "")
+	abridged := false
+	if regexp.MustCompile(`(?i)\(unabridged\)`).MatchString(name) {
+		name = regexp.MustCompile(`(?i)\s*\(unabridged\)\s*[eE]?$`).ReplaceAllString(name, "")
+	} else if regexp.MustCompile(`(?i)\(abridged\)`).MatchString(name) {
+		abridged = true
+		name = regexp.MustCompile(`(?i)\s*\(abridged\)\s*[eE]?$`).ReplaceAllString(name, "")
+	}
+	name = regexp.MustCompile(`(?i)\s*\((?:audiobook|retail)[^)]*\)\s*[eE]?$`).ReplaceAllString(name, "")
+	name = strings.TrimSpace(strings.Trim(name, " ._-\t"))
+	return name, abridged
 }
 
 func looksLikeAudioPerson(value string) bool {
@@ -547,6 +798,24 @@ func ExtractAudiobookMetadata(path string) *AudiobookMeta {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+	return aggregateAudiobookMetadata(paths)
+}
+
+// ExtractAudiobookMetadataFromFiles aggregates known physical audiobook files
+// without walking their parent directory. This is used when a legacy directory
+// record has already been reconciled into individual normalized file rows.
+func ExtractAudiobookMetadataFromFiles(paths []string) *AudiobookMeta {
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if isAudiobookExtension(filepath.Ext(path)) {
+			filtered = append(filtered, path)
+		}
+	}
+	sort.Strings(filtered)
+	return aggregateAudiobookMetadata(filtered)
+}
+
+func aggregateAudiobookMetadata(paths []string) *AudiobookMeta {
 	if len(paths) == 0 {
 		return nil
 	}

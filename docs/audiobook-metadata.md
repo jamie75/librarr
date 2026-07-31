@@ -35,3 +35,20 @@ No online metadata provider, cover download, embedded-tag writer, or audio
 decoder is used. Duration is best-effort for local MP3/M4B metadata; files
 that cannot be parsed continue to use filename/path fallback and may require
 manual review.
+
+## Refreshing existing records
+
+Normalized installations can reread existing local files without importing
+them again:
+
+- `POST /api/v1/books/{id}/metadata/refresh` refreshes one book.
+- `POST /api/v1/library/metadata/refresh` refreshes the library and returns
+  counts for refreshed books, changed records, covers, and manual review.
+
+Refresh updates the existing file row in place, so book, edition, file, and
+user-owned state identifiers remain stable. It converts legacy audiobook
+directory displays to the detected format, updates track/duration/chapter
+summaries, and uses the existing CoverCache only when the book has no usable
+cover. Manual title overrides are retained and reported as conflicts instead
+of being silently replaced. The ordinary scan continues to skip already
+cataloged files; refresh is an explicit operation.

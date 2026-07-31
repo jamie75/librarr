@@ -148,7 +148,7 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 			}},
 		}, nil
 	}
-	if author == "" && len(exactTitleMatches) == 1 {
+	if len(exactTitleMatches) == 1 && (author == "" || isUnknownAuthor(primaryContributorName(&exactTitleMatches[0]))) {
 		book := exactTitleMatches[0]
 		return ResolvedBook{
 			Action:     BookActionReuse,
@@ -159,7 +159,7 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 				Value:       title,
 				Source:      "catalog",
 				Confidence:  library.ConfidenceMedium,
-				Explanation: "Existing book matched by exact title with no incoming author",
+				Explanation: "Existing book matched by exact title with no reliable existing author",
 			}},
 		}, nil
 	}
@@ -457,6 +457,15 @@ func (d *DuplicateDetector) Detect(ctx context.Context, candidate ImportCandidat
 		return &DuplicateMatch{File: file, Reason: "path"}, nil
 	} else if err != nil && !errors.Is(err, library.ErrNotFound) {
 		return nil, err
+	}
+	if finder, ok := d.catalog.(interface {
+		FindFileBySourceID(context.Context, string) (*library.BookFile, error)
+	}); ok && strings.TrimSpace(candidate.RelativePath) != "" {
+		if file, err := finder.FindFileBySourceID(ctx, candidate.RelativePath); err == nil && file != nil {
+			return &DuplicateMatch{File: file, Reason: "source_id"}, nil
+		} else if err != nil && !errors.Is(err, library.ErrNotFound) {
+			return nil, err
+		}
 	}
 	if candidate.ContentHash != "" {
 		files, err := d.catalog.FindFilesByContentHash(ctx, candidate.ContentHash)

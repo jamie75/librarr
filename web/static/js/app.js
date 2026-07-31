@@ -2974,6 +2974,7 @@ async function openBookDetails(index, collection = 'libraryBooks') {
             ${detailBook.id && normalizedLibraryMode() ? `
               <div class="flex flex-wrap gap-2">
                 <button data-action="openLibraryMetadataEditor" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">${t('metadata_edit')}</button>
+                <button data-action="refreshBookMetadata" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Refresh Metadata</button>
                 <button data-action="extractBookMetadataFromFile" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Extract from File</button>
                 <button data-action="matchBookMetadataOnline" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Match Online</button>
               </div>` : ''}
@@ -3328,6 +3329,32 @@ function openLibraryMetadataEditor() {
   };
   const context = state.activeDetailContext || {};
   openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+async function refreshBookMetadata() {
+  const book = state.activeDetailBook;
+  if (!book?.id) return;
+  try {
+    const response = await apiJson(`/api/v1/books/${book.id}/metadata/refresh`, { method: 'POST', body: JSON.stringify({}) });
+    await loadLibrary();
+    const context = state.activeDetailContext || {};
+    const index = state.libraryBooks.findIndex(item => item.id === book.id);
+    await openBookDetails(index >= 0 ? index : (context.index || 0), 'libraryBooks');
+    showToast(response.result?.manual_review ? 'Metadata refreshed; manual review is needed' : 'Metadata refreshed', response.result?.manual_review ? 'warning' : 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to refresh metadata', 'error');
+  }
+}
+
+async function refreshAllBookMetadata() {
+  try {
+    const response = await apiJson('/api/v1/library/metadata/refresh', { method: 'POST', body: JSON.stringify({}) });
+    const report = response.report || {};
+    await loadLibrary();
+    showToast(`${report.books_refreshed || 0} books refreshed; ${report.books_updated || 0} updated; ${report.covers_updated || 0} covers updated${report.manual_review ? `; ${report.manual_review} need review` : ''}`, report.manual_review ? 'warning' : 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to refresh library metadata', 'error');
+  }
 }
 
 function closeLibraryMetadataEditor() {
@@ -6692,6 +6719,8 @@ const CLICK_ACTIONS = {
   openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),
   closeBookDetails: () => closeBookDetails(),
   openLibraryMetadataEditor: () => openLibraryMetadataEditor(),
+  refreshBookMetadata: () => refreshBookMetadata(),
+  refreshAllBookMetadata: () => refreshAllBookMetadata(),
   cancelLibraryMetadataEditor: () => closeLibraryMetadataEditor(),
   resetLibraryMetadataEditor: () => resetLibraryMetadataEditor(),
   saveLibraryMetadataEditor: () => saveLibraryMetadataEditor(),

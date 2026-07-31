@@ -64,6 +64,10 @@ type LibraryService struct {
 	legacy       LegacyCompatibilityRepository
 }
 
+type fileMetadataUpdater interface {
+	UpdateFileMetadata(context.Context, int64, string, map[string]string) (*BookFile, error)
+}
+
 func NewLibraryService(opts ServiceOptions) (*LibraryService, error) {
 	if opts.BookRepository == nil {
 		return nil, fmt.Errorf("book repository is required")
@@ -312,6 +316,18 @@ func (s *LibraryService) FindIdentifierMatches(ctx context.Context, identifier I
 
 func (s *LibraryService) SaveEmbeddedMetadata(ctx context.Context, fileID int64, metadata map[string]string) error {
 	return translateLibraryError(s.metadata.SaveEmbeddedMetadata(ctx, fileID, metadata))
+}
+
+// UpdateFileMetadata refreshes catalog metadata for an existing file without
+// changing its path, identity, or edition association. Older repositories may
+// not support this normalized operation and return a clear unsupported error.
+func (s *LibraryService) UpdateFileMetadata(ctx context.Context, fileID int64, format string, metadata map[string]string) (*BookFile, error) {
+	updater, ok := s.files.(fileMetadataUpdater)
+	if !ok {
+		return nil, ErrUnsupportedOperation
+	}
+	file, err := updater.UpdateFileMetadata(ctx, fileID, format, metadata)
+	return file, translateLibraryError(err)
 }
 
 func (s *LibraryService) GetBookMetadata(ctx context.Context, bookID int64) (*BookMetadata, error) {

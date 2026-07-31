@@ -334,6 +334,9 @@ func previewDestination(candidate Candidate) string {
 	dir = collapseRepeatedLibrarySegment(dir)
 	title := safePathSegment(firstNonBlank(candidate.Title, candidate.Metadata.Title, candidate.Filename, "Untitled"))
 	author := safePathSegment(firstNonBlank(candidate.Author, candidate.Metadata.Author))
+	if candidate.MediaType == library.MediaTypeAudiobook && author != "" {
+		dir = replaceUnknownAudiobookAuthor(dir, author)
+	}
 	format := strings.Trim(strings.ToLower(firstNonBlank(candidate.Format, strings.TrimPrefix(filepath.Ext(candidate.Path), "."))), ".")
 	if format == "" {
 		format = "book"
@@ -346,6 +349,35 @@ func previewDestination(candidate Candidate) string {
 		return name
 	}
 	return filepath.Join(dir, name)
+}
+
+func replaceUnknownAudiobookAuthor(dir, author string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(dir))
+	if cleaned == "." || cleaned == "" {
+		return dir
+	}
+	absolute := filepath.IsAbs(cleaned)
+	parts := strings.Split(cleaned, string(filepath.Separator))
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], "audiobooks") && isUnknownPathSegment(parts[i+1]) {
+			parts[i+1] = author
+			joined := filepath.Join(parts...)
+			if absolute && !filepath.IsAbs(joined) {
+				joined = string(filepath.Separator) + joined
+			}
+			return joined
+		}
+	}
+	return dir
+}
+
+func isUnknownPathSegment(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ".", "unknown", "unknown author":
+		return true
+	default:
+		return false
+	}
 }
 
 func collapseRepeatedLibrarySegment(dir string) string {

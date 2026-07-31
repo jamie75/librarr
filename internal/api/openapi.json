@@ -1385,6 +1385,26 @@
         ]
       }
     },
+    "/api/v1/books/{id}/metadata/refresh": {
+      "post": {
+        "summary": "Refresh metadata for an existing normalized book",
+        "description": "Rereads supported local files, preserves manual metadata, and does not create catalog records.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Refresh result" },
+          "422": { "description": "No supported metadata found" }
+        }
+      }
+    },
     "/api/v1/books/{id}/metadata/extract": {
       "post": {
         "summary": "Build a review proposal from a managed local ebook file",
@@ -1705,6 +1725,16 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/library/metadata/refresh": {
+      "post": {
+        "summary": "Refresh metadata for existing normalized library books",
+        "description": "Rereads supported local files without creating duplicate books, editions, or files.",
+        "responses": {
+          "200": { "description": "Refresh report" },
+          "503": { "description": "Normalized repository is not enabled" }
         }
       }
     },

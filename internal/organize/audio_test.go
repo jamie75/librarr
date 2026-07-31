@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/jamie75/librarr/internal/config"
 )
@@ -194,6 +195,77 @@ func TestExtractAudioMetaReadsAPICCover(t *testing.T) {
 	}
 }
 
+func TestExtractAudioMetaSupportsID3v22PIC(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.mp3")
+	image := []byte{0xff, 0xd8, 0xff, 0xd9}
+	frames := append(id3v22Frame("TT2", append([]byte{3}, []byte("Legacy title")...)), id3v22Frame("TP1", append([]byte{3}, []byte("Legacy author")...))...)
+	pic := append([]byte{3}, []byte("JPG")...)
+	pic = append(pic, 3, 0)
+	pic = append(pic, image...)
+	frames = append(frames, id3v22Frame("PIC", pic)...)
+	if err := os.WriteFile(path, id3Tag(2, 0, frames), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Title != "Legacy title" || meta.Artist != "Legacy author" || meta.Cover == nil || meta.Cover.MimeType != "image/jpeg" {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestExtractAudioMetaSupportsUTF16ExtendedAndUnsynchronizedID3v23(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "utf16.mp3")
+	frames := append(id3Frame("TIT2", append([]byte{1}, utf16LE("UTF title")...)), id3Frame("TPE1", append([]byte{2}, utf16BE("UTF author")...))...)
+	apic := append([]byte{3}, []byte("image/jpeg\x00\x03\x00")...)
+	apic = append(apic, 0xff, 0xd8, 0xff, 0xd9)
+	frames = append(frames, id3Frame("APIC", apic)...)
+	frames = unsynchronize(frames)
+	extended := make([]byte, 10)
+	binary.BigEndian.PutUint32(extended[:4], 6)
+	data := append(extended, frames...)
+	if err := os.WriteFile(path, id3Tag(3, 0xC0, data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Title != "UTF title" || meta.Artist != "UTF author" || meta.Cover == nil {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestExtractAudioMetaPrefersFrontCoverAndSupportsID3v24(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "covers.mp3")
+	other := []byte{0xff, 0xd8, 0xff, 0xd9}
+	front := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	frames := id3Frame("TIT2", append([]byte{3}, []byte("Cover title")...))
+	firstAPIC := append([]byte{3}, []byte("image/jpeg\x00\x00\x00")...)
+	firstAPIC = append(firstAPIC, other...)
+	frames = append(frames, id3Frame("APIC", firstAPIC)...)
+	frontAPIC := append([]byte{3}, []byte("image/png\x00\x03\x00")...)
+	frontAPIC = append(frontAPIC, front...)
+	frames = append(frames, id3Frame("APIC", frontAPIC)...)
+	if err := os.WriteFile(path, id3Tag(4, 0, frames), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Cover == nil || meta.Cover.MimeType != "image/png" || !bytes.Equal(meta.Cover.Data, front) {
+		t.Fatalf("cover = %+v", meta)
+	}
+	cover, err := ExtractEmbeddedCover(path)
+	if err != nil || cover == nil || cover.MimeType != "image/png" || !bytes.Equal(cover.Data, front) {
+		t.Fatalf("embedded cover = %+v, err=%v", cover, err)
+	}
+}
+
+func TestExtractAudioMetaNeverCopiesFilenameTitleIntoAuthor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Unfreedom of the Press(Unabridged)e.mp3")
+	if err := os.WriteFile(path, []byte("not an mp3"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Title != "Unfreedom of the Press" || meta.Artist != "" || meta.Abridged {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
 func writeTaggedMP3(t *testing.T, path, album, artist string, track int) {
 	t.Helper()
 	frames := append(id3TextFrame("TALB", album), id3TextFrame("TPE1", artist)...)
@@ -227,6 +299,52 @@ func id3Frame(name string, payload []byte) []byte {
 	binary.BigEndian.PutUint32(frame[4:8], uint32(len(payload)))
 	copy(frame[10:], payload)
 	return frame
+}
+
+func id3Tag(version, flags byte, frames []byte) []byte {
+	header := append([]byte{'I', 'D', '3', version, 0, flags}, syncSafe(len(frames))...)
+	return append(header, frames...)
+}
+
+func id3v22Frame(name string, payload []byte) []byte {
+	frame := make([]byte, 6+len(payload))
+	copy(frame, name)
+	frame[3] = byte(len(payload) >> 16)
+	frame[4] = byte(len(payload) >> 8)
+	frame[5] = byte(len(payload))
+	copy(frame[6:], payload)
+	return frame
+}
+
+func utf16LE(value string) []byte {
+	units := utf16.Encode([]rune(value))
+	data := make([]byte, 2+len(units)*2)
+	data[0], data[1] = 0xff, 0xfe
+	for i, unit := range units {
+		binary.LittleEndian.PutUint16(data[2+i*2:], unit)
+	}
+	return append(data, 0, 0)
+}
+
+func utf16BE(value string) []byte {
+	units := utf16.Encode([]rune(value))
+	data := make([]byte, 2+len(units)*2)
+	data[0], data[1] = 0xfe, 0xff
+	for i, unit := range units {
+		binary.BigEndian.PutUint16(data[2+i*2:], unit)
+	}
+	return append(data, 0, 0)
+}
+
+func unsynchronize(data []byte) []byte {
+	result := make([]byte, 0, len(data)+4)
+	for i, value := range data {
+		result = append(result, value)
+		if value == 0xff && i+1 < len(data) {
+			result = append(result, 0)
+		}
+	}
+	return result
 }
 func syncSafe(value int) []byte {
 	return []byte{byte(value >> 21), byte(value >> 14), byte(value >> 7), byte(value)}

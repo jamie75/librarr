@@ -162,6 +162,23 @@ func TestPreviewDestinationDoesNotDuplicateLibrarySegment(t *testing.T) {
 	}
 }
 
+func TestPreviewDestinationUsesKnownAudiobookAuthorInsteadOfUnknown(t *testing.T) {
+	candidate := Candidate{
+		Title:           "The MAGA Doctrine The Only Ideas That Will Win the Future",
+		Author:          "Charlie Kirk",
+		MediaType:       library.MediaTypeAudiobook,
+		Format:          "mp3",
+		Path:            filepath.Join("/books", "audiobooks", "Unknown", "The MAGA Doctrine The Only Ideas That Will Win the Future", "source.mp3"),
+		DestinationPath: filepath.Join("/books", "audiobooks", "Unknown", "The MAGA Doctrine The Only Ideas That Will Win the Future", "source.mp3"),
+	}
+
+	got := previewDestination(candidate)
+	want := filepath.Join("/books", "audiobooks", "Charlie Kirk", "The MAGA Doctrine The Only Ideas That Will Win the Future", "Charlie Kirk - The MAGA Doctrine The Only Ideas That Will Win the Future.mp3")
+	if got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
 func TestApplyPlanDoesNotExposeDuplicatedLibrarySegment(t *testing.T) {
 	candidate := Candidate{
 		Title:     "Ameritopia-The Unmaking of America",

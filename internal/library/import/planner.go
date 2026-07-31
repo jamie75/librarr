@@ -64,6 +64,34 @@ func (p *ImportPlanner) planCandidate(ctx context.Context, pc PlanningContext, c
 	if err := p.metadataResolver.Resolve(ctx, &candidate); err != nil {
 		return ImportPlan{}, err
 	}
+	// Physical identity is stronger than metadata identity. Check it before
+	// book resolution so an already-imported file cannot be reclassified as a
+	// title/author conflict on a later scan.
+	duplicate, err := p.duplicateDetector.Detect(ctx, candidate)
+	if err != nil {
+		return ImportPlan{}, err
+	}
+	if duplicate != nil {
+		plan := ImportPlan{Candidate: candidate, File: FileDecision{
+			Action:     FileActionIgnoreDuplicate,
+			Existing:   duplicate.File,
+			Confidence: library.ConfidenceExact,
+			Evidence: []PlanningEvidence{{
+				Signal:      "duplicate_" + duplicate.Reason,
+				Value:       candidate.Path,
+				Source:      "catalog",
+				Confidence:  library.ConfidenceExact,
+				Explanation: "Existing file already matches this candidate",
+			}},
+		}}
+		plan.Disposition = DispositionIgnoreDuplicate
+		if duplicate.File != nil && duplicate.File.BookID != 0 {
+			if book, lookupErr := p.catalog.GetBook(ctx, duplicate.File.BookID); lookupErr == nil {
+				plan.Book = ResolvedBook{Action: BookActionReuse, Existing: book, Confidence: library.ConfidenceExact}
+			}
+		}
+		return plan, nil
+	}
 
 	book, err := p.bookResolver.Resolve(ctx, pc, candidate, state)
 	if err != nil {
@@ -111,10 +139,6 @@ func (p *ImportPlanner) planCandidate(ctx context.Context, pc PlanningContext, c
 		plan.Evidence = append(plan.Evidence, contributor.Evidence...)
 	}
 
-	duplicate, err := p.duplicateDetector.Detect(ctx, candidate)
-	if err != nil {
-		return ImportPlan{}, err
-	}
 	fileDecision, err := p.filePlanner.Resolve(ctx, candidate, book, edition, duplicate, state)
 	if err != nil {
 		return ImportPlan{}, err
@@ -150,11 +174,42 @@ func primaryContributorName(book *library.Book) string {
 		return ""
 	}
 	for _, contributor := range book.Contributors {
-		if strings.TrimSpace(contributor.Name) != "" {
+		if isAuthorContributor(contributor) && !isUnknownAuthor(contributor.Name) {
+			return contributor.Name
+		}
+	}
+	for _, contributor := range book.Contributors {
+		if isAuthorContributor(contributor) && strings.TrimSpace(contributor.Name) != "" {
+			return contributor.Name
+		}
+	}
+	for _, contributor := range book.Contributors {
+		if strings.TrimSpace(contributor.Name) != "" && !isUnknownAuthor(contributor.Name) {
 			return contributor.Name
 		}
 	}
 	return ""
+}
+
+func isAuthorContributor(contributor library.Contributor) bool {
+	if len(contributor.Roles) == 0 {
+		return true
+	}
+	for _, role := range contributor.Roles {
+		if role == library.RoleAuthor {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnknownAuthor(value string) bool {
+	switch library.ContributorMatchKey(value) {
+	case "", "unknown", "unknown author", "n a", "na", "none":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *batchState) findPlannedBook(candidate ImportCandidate) *ImportPlan {

@@ -50,6 +50,9 @@ Librarr 2.0 currently has:
 - local audiobook metadata extraction for MP3/M4B, multi-track grouping,
   embedded artwork caching, duration/track summaries, and conservative path
   fallback
+- explicit metadata refresh for existing normalized books, including legacy
+  audiobook directory conversion, idempotent summaries, and manual-override
+  conflict reporting
 - Wanted Books with monitored Prowlarr searches, search history, release inspection, and manual qBittorrent handoff
 - Wanted/library reconciliation so imported Wanted titles move out of the active queue
 - expanded User Management with local accounts, roles, status, password resets, and invite codes
