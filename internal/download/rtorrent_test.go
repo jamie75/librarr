@@ -772,6 +772,9 @@ func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
 		if r.Header.Get("X-Api-Key") != "prowlarr-secret" {
 			t.Fatalf("missing Prowlarr API key")
 		}
+		if r.URL.Query().Get("release") != "abc/123" || r.URL.Query().Get("indexer") != "7" || r.URL.Query().Get("token") != "a+b" {
+			t.Fatalf("missing or altered Prowlarr query: %q", r.URL.RawQuery)
+		}
 		w.Header().Set("Content-Type", "application/x-bittorrent")
 		_, _ = w.Write(validTorrentBytes())
 	}))
@@ -784,8 +787,55 @@ func TestRTorrentFetchesProwlarrTorrentWithAPIKey(t *testing.T) {
 	})
 	defer rpc.Close()
 	client := newTestRTorrentClient(RTorrentConfig{URL: rpc.URL, ProwlarrURL: prowlarr.URL, ProwlarrAPIKey: "prowlarr-secret", Timeout: time.Second})
-	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: prowlarr.URL + "/download.torrent", Title: "Book"}); err != nil {
+	if _, err := client.SubmitTorrent(TorrentSubmissionRequest{URL: prowlarr.URL + "/download.torrent?release=abc%2F123&indexer=7&token=a%2Bb", Title: "Book"}); err != nil {
 		t.Fatalf("SubmitTorrent error: %v", err)
+	}
+}
+
+func TestRTorrentProwlarrFetchMissingQueryReturnsUpstreamError(t *testing.T) {
+	prowlarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("release") == "" {
+			http.Error(w, "release identity required", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(validTorrentBytes())
+	}))
+	defer prowlarr.Close()
+	_, err := fetchRTorrentTorrent(prowlarr.URL+"/download.torrent?api_key=secret", RTorrentConfig{ProwlarrURL: prowlarr.URL, Timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "fetch torrent from Prowlarr HTTP 500") {
+		t.Fatalf("error = %v, want Prowlarr HTTP 500", err)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error leaked query secret: %v", err)
+	}
+}
+
+func TestRTorrentProwlarrFetchRedirectPolicy(t *testing.T) {
+	sameOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/download.torrent" {
+			http.Redirect(w, r, "/download-final?release=abc", http.StatusFound)
+			return
+		}
+		if r.URL.Query().Get("release") != "abc" {
+			t.Fatalf("same-origin redirect lost query: %q", r.URL.RawQuery)
+		}
+		_, _ = w.Write(validTorrentBytes())
+	}))
+	defer sameOrigin.Close()
+	if _, err := fetchRTorrentTorrent(sameOrigin.URL+"/download.torrent?release=abc", RTorrentConfig{ProwlarrURL: sameOrigin.URL, Timeout: time.Second}); err != nil {
+		t.Fatalf("same-origin redirect failed: %v", err)
+	}
+
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(validTorrentBytes())
+	}))
+	defer foreign.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, foreign.URL+"/download.torrent?release=abc", http.StatusFound)
+	}))
+	defer redirector.Close()
+	if _, err := fetchRTorrentTorrent(redirector.URL+"/download.torrent?release=abc", RTorrentConfig{ProwlarrURL: redirector.URL, Timeout: time.Second}); err == nil || !strings.Contains(err.Error(), "redirect rejected") {
+		t.Fatalf("cross-origin redirect error = %v", err)
 	}
 }
 

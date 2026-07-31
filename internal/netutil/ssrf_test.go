@@ -91,16 +91,33 @@ func TestValidateSameOriginHTTPURL(t *testing.T) {
 }
 
 func TestValidateSameOriginEndpointRebuildsApprovedComponents(t *testing.T) {
-	endpoint, err := ValidateSameOriginEndpoint("HTTPS://PROWLARR.example:443/download/%2Ffile?apikey=secret#fragment", "https://prowlarr.example")
+	endpoint, err := ValidateSameOriginEndpoint("HTTPS://PROWLARR.example:443/download/%2Ffile?release=abc%2F123&indexer=7", "https://prowlarr.example")
 	if err != nil {
 		t.Fatalf("ValidateSameOriginEndpoint() error = %v", err)
 	}
 	got := endpoint.URL()
-	if got.String() != "https://prowlarr.example:443/download//file" {
+	if got.String() != "https://prowlarr.example:443/download//file?release=abc%2F123&indexer=7" {
 		t.Fatalf("rebuilt URL = %q", got.String())
 	}
-	if got.RawQuery != "" || got.Fragment != "" || got.User != nil {
+	if got.RawQuery != "release=abc%2F123&indexer=7" || got.Fragment != "" || got.User != nil {
 		t.Fatalf("rebuilt URL retained unsafe/unapproved components: %#v", got)
+	}
+}
+
+func TestValidateSameOriginEndpointRejectsFragmentsCredentialsAndForeignOrigins(t *testing.T) {
+	tests := []string{
+		"https://prowlarr.example/download#fragment",
+		"https://user:pass@prowlarr.example/download?release=1",
+		"https://other.example/download?release=1",
+		"https://prowlarr.example:9443/download?release=1",
+		"https:opaque-data",
+	}
+	for _, raw := range tests {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := ValidateSameOriginEndpoint(raw, "https://prowlarr.example"); err == nil {
+				t.Fatalf("expected %q to be rejected", raw)
+			}
+		})
 	}
 }
 
