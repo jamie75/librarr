@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/jamie75/librarr/internal/config"
@@ -49,6 +50,16 @@ func TestParseAudioMetadataCountRejectsOverflow(t *testing.T) {
 	}
 	if got := parseAudioMetadataCount("-1"); got != 0 {
 		t.Fatalf("negative count = %d, want 0", got)
+	}
+	maxInt := int(^uint(0) >> 1)
+	if got := parseAudioMetadataCount(strconv.Itoa(maxInt)); got != maxInt {
+		t.Fatalf("max int count = %d, want %d", got, maxInt)
+	}
+	if got := parseAudioMetadataCount(strconv.FormatUint(uint64(maxInt)+1, 10)); got != 0 {
+		t.Fatalf("above-max count = %d, want 0", got)
+	}
+	if got := parseAudioMetadataCount("999999999999999999999999999999999999"); got != 0 {
+		t.Fatalf("huge count = %d, want 0", got)
 	}
 }
 

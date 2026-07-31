@@ -86,6 +86,42 @@ func TestRefreshBookMetadataConvertsLegacyAudiobookDirectory(t *testing.T) {
 	}
 }
 
+func TestRefreshBookMetadataSkipsStoredPathOutsideConfiguredRoots(t *testing.T) {
+	repo, cleanup := newNormalizedRepo(t)
+	defer cleanup()
+	service, err := NewLibraryService(ServiceOptions{
+		BookRepository: repo, EditionRepository: repo, FileRepository: repo,
+		MetadataRepository: repo, SeriesRepository: repo, ContributorRepository: repo,
+		IdentifierRepository: repo, CoverRepository: repo, TransactionManager: repo,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedRoot := t.TempDir()
+	outsideRoot := t.TempDir()
+	outsidePath := filepath.Join(outsideRoot, "outside.mp3")
+	if err := os.WriteFile(outsidePath, []byte("not audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service.SetAllowedFileRoots(allowedRoot)
+	ctx := context.Background()
+	book, err := service.CreateBook(ctx, Book{Title: "Outside", MediaType: MediaTypeAudiobook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edition, err := service.CreateEdition(ctx, Edition{BookID: book.ID, Title: "Outside"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AttachFile(ctx, BookFile{EditionID: edition.ID, BookID: book.ID, MediaType: MediaTypeAudiobook, Format: "mp3", Path: outsidePath}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.RefreshBookMetadata(ctx, book.ID)
+	if err == nil || result.Refreshed || result.Updated {
+		t.Fatalf("unsafe refresh result = %+v, err = %v", result, err)
+	}
+}
+
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {

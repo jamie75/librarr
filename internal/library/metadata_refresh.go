@@ -280,6 +280,27 @@ func (s *LibraryService) reconcileAudiobookTracks(ctx context.Context, directory
 		if pathErr != nil {
 			continue
 		}
+		cleanCandidate := filepath.Clean(validatedTrackPath)
+		resolvedCandidate, candidateErr := filepath.EvalSymlinks(cleanCandidate)
+		safeCandidate := false
+		for _, configuredRoot := range s.allowedRoots {
+			cleanRoot := filepath.Clean(configuredRoot)
+			resolvedRoot, rootErr := filepath.EvalSymlinks(cleanRoot)
+			rel, relErr := filepath.Rel(resolvedRoot, resolvedCandidate)
+			if rootErr == nil && candidateErr == nil && relErr == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+				safeCandidate = true
+				break
+			}
+		}
+		if len(s.allowedRoots) == 0 {
+			approvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(filepath.Dir(trackPath)))
+			rel, relErr := filepath.Rel(approvedRoot, resolvedCandidate)
+			safeCandidate = rootErr == nil && candidateErr == nil && relErr == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !strings.ContainsAny(cleanCandidate, "\x00\r\n")
+		}
+		if !safeCandidate {
+			continue
+		}
+		validatedTrackPath = resolvedCandidate
 		if _, err := s.FindFileByPath(ctx, validatedTrackPath); err == nil {
 			continue
 		} else if !errors.Is(err, ErrNotFound) {

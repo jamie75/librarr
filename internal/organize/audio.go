@@ -109,6 +109,14 @@ func readID3v2Tags(path string) *AudioMeta {
 	if err != nil {
 		return nil
 	}
+	approvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(filepath.Dir(path)))
+	cleanCandidate := filepath.Clean(validatedPath)
+	resolvedCandidate, candidateErr := filepath.EvalSymlinks(cleanCandidate)
+	rel, relErr := filepath.Rel(approvedRoot, resolvedCandidate)
+	if rootErr != nil || candidateErr != nil || relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+		return nil
+	}
+	validatedPath = resolvedCandidate
 	f, err := os.Open(validatedPath)
 	if err != nil {
 		return nil
@@ -240,6 +248,14 @@ func estimateMP3Duration(path string) int64 {
 	if err != nil {
 		return 0
 	}
+	approvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(filepath.Dir(path)))
+	cleanCandidate := filepath.Clean(validatedPath)
+	resolvedCandidate, candidateErr := filepath.EvalSymlinks(cleanCandidate)
+	rel, relErr := filepath.Rel(approvedRoot, resolvedCandidate)
+	if rootErr != nil || candidateErr != nil || relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+		return 0
+	}
+	validatedPath = resolvedCandidate
 	info, err := os.Stat(validatedPath)
 	if err != nil || info.Size() <= 0 {
 		return 0
@@ -595,6 +611,14 @@ func readM4BMetadata(path string) *AudioMeta {
 	if err != nil {
 		return nil
 	}
+	approvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(filepath.Dir(path)))
+	cleanCandidate := filepath.Clean(validatedPath)
+	resolvedCandidate, candidateErr := filepath.EvalSymlinks(cleanCandidate)
+	rel, relErr := filepath.Rel(approvedRoot, resolvedCandidate)
+	if rootErr != nil || candidateErr != nil || relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+		return nil
+	}
+	validatedPath = resolvedCandidate
 	f, err := os.Open(validatedPath)
 	if err != nil {
 		return nil
@@ -859,6 +883,14 @@ func ExtractAudiobookMetadata(path string) *AudiobookMeta {
 	if err != nil {
 		return nil
 	}
+	approvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(filepath.Dir(path)))
+	cleanCandidate := filepath.Clean(validatedPath)
+	resolvedCandidate, candidateErr := filepath.EvalSymlinks(cleanCandidate)
+	rel, relErr := filepath.Rel(approvedRoot, resolvedCandidate)
+	if rootErr != nil || candidateErr != nil || relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+		return nil
+	}
+	validatedPath = resolvedCandidate
 	info, err := os.Stat(validatedPath)
 	if err != nil {
 		return nil

@@ -729,12 +729,11 @@ func parseAudioMetadataInt(value string) int64 {
 }
 
 func parseAudioMetadataCount(value string) int {
-	n := parseAudioMetadataInt(value)
-	maxInt := int64(^uint(0) >> 1)
-	if n <= 0 || n > maxInt {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
 		return 0
 	}
-	return int(n)
+	return n
 }
 
 func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1BookDetailResponse, error) {
