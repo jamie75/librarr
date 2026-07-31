@@ -36,6 +36,11 @@ func ExtractEmbeddedCover(filePath string) (*ExtractedCover, error) {
 	switch strings.ToLower(filepath.Ext(filePath)) {
 	case ".epub":
 		return ExtractEPUBCover(filePath)
+	case ".mp3", ".m4b":
+		if meta := extractEmbeddedAudioMeta(filePath); meta != nil {
+			return meta.Cover, nil
+		}
+		return nil, nil
 	default:
 		return nil, nil
 	}

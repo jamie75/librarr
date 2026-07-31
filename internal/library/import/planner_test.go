@@ -115,6 +115,55 @@ func TestImportPlannerSameTitleDifferentAuthorNeedsManualReview(t *testing.T) {
 	}
 }
 
+func TestImportPlannerMatchesAlreadyImportedAudiobookBeforeAuthorReview(t *testing.T) {
+	catalog := newFakeCatalog()
+	path := "/books/audiobooks/Charlie Kirk/The MAGA Doctrine.mp3"
+	catalog.addBookWithEditionAndFile("The MAGA Doctrine", "Charlie Kirk", library.MediaTypeAudiobook, "mp3", path, "maga-hash")
+	planner := NewImportPlanner(catalog)
+	result, err := planner.PlanCandidates(context.Background(), PlanningContext{}, []ImportCandidate{{
+		Path: path, RelativePath: "Charlie Kirk/The MAGA Doctrine.mp3", MediaType: library.MediaTypeAudiobook, Format: "mp3", ContentHash: "maga-hash",
+		Metadata: CandidateMetadata{SelectedTitle: "The MAGA Doctrine The Only Ideas That Will Win the Future", SelectedAuthor: "Charlie Kirk", EmbeddedTitle: "The MAGA Doctrine The Only Ideas That Will Win the Future", EmbeddedAuthor: "Charlie Kirk"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Plans[0].Disposition; got != DispositionIgnoreDuplicate {
+		t.Fatalf("disposition = %s, want %s", got, DispositionIgnoreDuplicate)
+	}
+}
+
+func TestImportPlannerUsesContentHashWhenAudiobookPathMoved(t *testing.T) {
+	catalog := newFakeCatalog()
+	catalog.addBookWithEditionAndFile("The MAGA Doctrine", "Charlie Kirk", library.MediaTypeAudiobook, "mp3", "/old/location/maga.mp3", "moved-hash")
+	planner := NewImportPlanner(catalog)
+	result, err := planner.PlanCandidates(context.Background(), PlanningContext{}, []ImportCandidate{{
+		Path: "/new/location/maga.mp3", RelativePath: "maga.mp3", MediaType: library.MediaTypeAudiobook, Format: "mp3", ContentHash: "moved-hash",
+		Metadata: CandidateMetadata{SelectedTitle: "The MAGA Doctrine", SelectedAuthor: "Charlie Kirk"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Plans[0].Disposition; got != DispositionIgnoreDuplicate {
+		t.Fatalf("disposition = %s, want %s", got, DispositionIgnoreDuplicate)
+	}
+}
+
+func TestImportPlannerUpgradesUnknownAuthorInsteadOfRequestingReview(t *testing.T) {
+	catalog := newFakeCatalog()
+	catalog.addBookWithEditionAndFile("The MAGA Doctrine The Only Ideas That Will Win the Future", "Unknown", library.MediaTypeAudiobook, "mp3", "/books/audiobooks/Unknown/maga.mp3", "old-hash")
+	planner := NewImportPlanner(catalog)
+	result, err := planner.PlanCandidates(context.Background(), PlanningContext{}, []ImportCandidate{{
+		Path: "/incoming/maga.mp3", RelativePath: "maga.mp3", MediaType: library.MediaTypeAudiobook, Format: "mp3", ContentHash: "new-hash",
+		Metadata: CandidateMetadata{SelectedTitle: "The MAGA Doctrine The Only Ideas That Will Win the Future", SelectedAuthor: "Charlie Kirk", EmbeddedTitle: "The MAGA Doctrine The Only Ideas That Will Win the Future", EmbeddedAuthor: "Charlie Kirk"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Plans[0].Disposition; got == DispositionNeedsManualReview {
+		t.Fatalf("unexpected manual review for unknown existing author: %+v", result.Plans[0])
+	}
+}
+
 func TestImportPlannerSameAuthorDifferentTitleCreatesNewBook(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Jane Doe - Second Book.azw3")
@@ -280,6 +329,9 @@ func TestImportPlannerAudiobookDirectory(t *testing.T) {
 	}
 	if plan.Candidate.Metadata.SelectedTitle != "The Guardian's Path" || plan.Candidate.Metadata.SelectedAuthor != "Jane Doe" {
 		t.Fatalf("audiobook metadata = %+v", plan.Candidate.Metadata)
+	}
+	if len(plan.Candidate.PhysicalFiles) != 1 || plan.Candidate.Format != "mp3" {
+		t.Fatalf("physical audiobook files = %#v format=%q", plan.Candidate.PhysicalFiles, plan.Candidate.Format)
 	}
 }
 

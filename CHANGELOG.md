@@ -7,6 +7,10 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 
 ### Added
 
+- Local audiobook metadata support for MP3/M4B imports, including conservative
+  filename fallback, multi-track grouping, embedded artwork, and normalized
+  duration/track summaries. Online audiobook metadata remains future work.
+
 - rTorrent/ruTorrent HTTP Digest authentication with bounded challenge and
   stale-nonce handling, normalized Host/Port/TLS/URL Path settings, legacy URL
   migration, and diagnostics that distinguish the expected initial 401 from a

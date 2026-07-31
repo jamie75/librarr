@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/models"
+	"github.com/jamie75/librarr/internal/safepath"
 )
 
 type TransactionManager interface {
@@ -62,6 +65,11 @@ type LibraryService struct {
 	fileService  FileService
 	transactions TransactionManager
 	legacy       LegacyCompatibilityRepository
+	allowedRoots []string
+}
+
+type fileMetadataUpdater interface {
+	UpdateFileMetadata(context.Context, int64, string, map[string]string) (*BookFile, error)
 }
 
 func NewLibraryService(opts ServiceOptions) (*LibraryService, error) {
@@ -134,6 +142,31 @@ func (s *LibraryService) WithinTransaction(ctx context.Context, fn func(context.
 		return NoopTransactionManager{}.WithinTransaction(ctx, fn)
 	}
 	return s.transactions.WithinTransaction(ctx, fn)
+}
+
+// SetAllowedFileRoots configures the roots against which stored file paths
+// are checked before metadata refresh reads them. It is called during server
+// startup after the runtime configuration is available.
+func (s *LibraryService) SetAllowedFileRoots(roots ...string) {
+	if s == nil {
+		return
+	}
+	s.allowedRoots = append([]string(nil), roots...)
+}
+
+func (s *LibraryService) validateStoredFilePath(path string) (string, error) {
+	for _, root := range s.allowedRoots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		if resolved, err := safepath.ExistingUnderRoot(root, path); err == nil {
+			return resolved, nil
+		}
+	}
+	if len(s.allowedRoots) == 0 {
+		return safepath.ExistingUnderRoot(filepath.Dir(path), path)
+	}
+	return "", ErrUnsafePath
 }
 
 func (s *LibraryService) CreateBook(ctx context.Context, book Book) (*Book, error) {
@@ -312,6 +345,18 @@ func (s *LibraryService) FindIdentifierMatches(ctx context.Context, identifier I
 
 func (s *LibraryService) SaveEmbeddedMetadata(ctx context.Context, fileID int64, metadata map[string]string) error {
 	return translateLibraryError(s.metadata.SaveEmbeddedMetadata(ctx, fileID, metadata))
+}
+
+// UpdateFileMetadata refreshes catalog metadata for an existing file without
+// changing its path, identity, or edition association. Older repositories may
+// not support this normalized operation and return a clear unsupported error.
+func (s *LibraryService) UpdateFileMetadata(ctx context.Context, fileID int64, format string, metadata map[string]string) (*BookFile, error) {
+	updater, ok := s.files.(fileMetadataUpdater)
+	if !ok {
+		return nil, ErrUnsupportedOperation
+	}
+	file, err := updater.UpdateFileMetadata(ctx, fileID, format, metadata)
+	return file, translateLibraryError(err)
 }
 
 func (s *LibraryService) GetBookMetadata(ctx context.Context, bookID int64) (*BookMetadata, error) {

@@ -33,6 +33,8 @@ The current codebase already provides a useful foundation, including:
 - metadata editor with live import-location preview
 - Wanted Books with canonical release normalization, monitored Prowlarr searches, stored release inspection, manual qBittorrent handoff, and library reconciliation
 - staged connection diagnostics for Prowlarr and qBittorrent
+- local audiobook metadata extraction and multi-track normalized import
+- metadata refresh for existing normalized audiobook records
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
 

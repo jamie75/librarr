@@ -2297,6 +2297,10 @@ function groupLibraryItems(items, tab) {
         pages: item.pages || 0,
         durationHours: item.duration_hours || 0,
         numFiles: item.num_files || 0,
+        narrator: item.audio?.narrator || item.narrator || '',
+        durationSeconds: item.audio?.duration_seconds || 0,
+        trackCount: item.audio?.track_count || 0,
+        chapterCount: item.audio?.chapter_count || 0,
         placeholderIndex: index,
       });
     }
@@ -2328,6 +2332,12 @@ function renderLibraryBookCard(book, index) {
   const meta = [];
   if (book.series) meta.push(book.series);
   if (book.size) meta.push(formatSize(book.size));
+  if (book.mediaType === 'audiobook' || book.narrator) {
+    if (book.narrator && book.narrator !== book.author) meta.push(`Narrator: ${book.narrator}`);
+    if (book.trackCount > 1) meta.push(`${book.trackCount} tracks`);
+    if (book.durationSeconds > 0) meta.push(formatDurationSeconds(book.durationSeconds));
+    if (book.chapterCount > 0) meta.push(`${book.chapterCount} chapters`);
+  }
 
   return `
     <article class="shelf-card group overflow-hidden rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
@@ -2964,6 +2974,7 @@ async function openBookDetails(index, collection = 'libraryBooks') {
             ${detailBook.id && normalizedLibraryMode() ? `
               <div class="flex flex-wrap gap-2">
                 <button data-action="openLibraryMetadataEditor" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">${t('metadata_edit')}</button>
+                <button data-action="refreshBookMetadata" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Refresh Metadata</button>
                 <button data-action="extractBookMetadataFromFile" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Extract from File</button>
                 <button data-action="matchBookMetadataOnline" class="rounded-full border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Match Online</button>
               </div>` : ''}
@@ -3318,6 +3329,32 @@ function openLibraryMetadataEditor() {
   };
   const context = state.activeDetailContext || {};
   openBookDetails(context.index || 0, context.collection || 'libraryBooks');
+}
+
+async function refreshBookMetadata() {
+  const book = state.activeDetailBook;
+  if (!book?.id) return;
+  try {
+    const response = await apiJson(`/api/v1/books/${book.id}/metadata/refresh`, { method: 'POST', body: JSON.stringify({}) });
+    await loadLibrary();
+    const context = state.activeDetailContext || {};
+    const index = state.libraryBooks.findIndex(item => item.id === book.id);
+    await openBookDetails(index >= 0 ? index : (context.index || 0), 'libraryBooks');
+    showToast(response.result?.manual_review ? 'Metadata refreshed; manual review is needed' : 'Metadata refreshed', response.result?.manual_review ? 'warning' : 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to refresh metadata', 'error');
+  }
+}
+
+async function refreshAllBookMetadata() {
+  try {
+    const response = await apiJson('/api/v1/library/metadata/refresh', { method: 'POST', body: JSON.stringify({}) });
+    const report = response.report || {};
+    await loadLibrary();
+    showToast(`${report.books_refreshed || 0} books refreshed; ${report.books_updated || 0} updated; ${report.covers_updated || 0} covers updated${report.manual_review ? `; ${report.manual_review} need review` : ''}`, report.manual_review ? 'warning' : 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to refresh library metadata', 'error');
+  }
 }
 
 function closeLibraryMetadataEditor() {
@@ -6682,6 +6719,8 @@ const CLICK_ACTIONS = {
   openHomeBookDetails: el => openHomeBookDetails(+el.dataset.index),
   closeBookDetails: () => closeBookDetails(),
   openLibraryMetadataEditor: () => openLibraryMetadataEditor(),
+  refreshBookMetadata: () => refreshBookMetadata(),
+  refreshAllBookMetadata: () => refreshAllBookMetadata(),
   cancelLibraryMetadataEditor: () => closeLibraryMetadataEditor(),
   resetLibraryMetadataEditor: () => resetLibraryMetadataEditor(),
   saveLibraryMetadataEditor: () => saveLibraryMetadataEditor(),

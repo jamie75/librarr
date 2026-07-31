@@ -81,6 +81,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	if librarySvc == nil {
 		panic("api.NewServerWithLibraryService requires an explicit LibraryService")
 	}
+	librarySvc.SetAllowedFileRoots(cfg.IncomingDir, cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir, cfg.MangaIncomingDir)
 	sessions := NewSessionStore()
 
 	// Configure which reverse proxies may set forwarded headers we honor.
@@ -140,6 +141,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
+	coverCache.SetSourceRoots(cfg.IncomingDir, cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir, cfg.MangaIncomingDir)
 	s := &Server{
 		cfg:               cfg,
 		db:                database,
@@ -412,6 +414,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/books/{id}/metadata", s.handleV1BookMetadata)
 	s.mux.HandleFunc("PATCH /api/v1/books/{id}/metadata", s.handleV1BookMetadataPatch)
 	s.mux.HandleFunc("POST /api/v1/books/{id}/metadata/extract", s.handleV1BookMetadataExtract)
+	s.mux.HandleFunc("POST /api/v1/books/{id}/metadata/refresh", s.handleV1BookMetadataRefresh)
 	s.mux.HandleFunc("POST /api/v1/books/{id}/metadata/matches", s.handleV1BookMetadataMatches)
 	s.mux.HandleFunc("POST /api/v1/books/{id}/metadata/apply", s.handleV1BookMetadataApply)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/provenance", s.handleV1BookProvenance)
@@ -424,6 +427,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}", requireAdmin(s.handleV1LibraryScanJob))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/results", requireAdmin(s.handleV1LibraryScanResults))
 	s.mux.HandleFunc("GET /api/v1/library/scan/{job_id}/cover/{candidate_id}", requireAdmin(s.handleV1LibraryScanCover))
+	s.mux.HandleFunc("POST /api/v1/library/metadata/refresh", s.handleV1LibraryMetadataRefresh)
 	s.mux.HandleFunc("POST /api/v1/library/scan/{job_id}/resolve", requireAdmin(s.handleV1LibraryScanResolve))
 	s.mux.HandleFunc("POST /api/v1/library/import", requireAdmin(s.handleV1LibraryImportStart))
 	s.mux.HandleFunc("GET /api/v1/library/import/{job_id}", requireAdmin(s.handleV1LibraryImportJob))

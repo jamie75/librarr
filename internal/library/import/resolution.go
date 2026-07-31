@@ -3,6 +3,7 @@ package libraryimport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jamie75/librarr/internal/library"
@@ -147,7 +148,7 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 			}},
 		}, nil
 	}
-	if author == "" && len(exactTitleMatches) == 1 {
+	if len(exactTitleMatches) == 1 && (author == "" || isUnknownAuthor(primaryContributorName(&exactTitleMatches[0]))) {
 		book := exactTitleMatches[0]
 		return ResolvedBook{
 			Action:     BookActionReuse,
@@ -158,7 +159,7 @@ func (r *BookResolver) Resolve(ctx context.Context, _ PlanningContext, candidate
 				Value:       title,
 				Source:      "catalog",
 				Confidence:  library.ConfidenceMedium,
-				Explanation: "Existing book matched by exact title with no incoming author",
+				Explanation: "Existing book matched by exact title with no reliable existing author",
 			}},
 		}, nil
 	}
@@ -387,8 +388,12 @@ type ContributorResolver struct {
 
 func (r *ContributorResolver) Resolve(ctx context.Context, candidate ImportCandidate, _ ResolvedBook, edition ResolvedEdition) ([]ResolvedContributor, error) {
 	author := strings.TrimSpace(candidate.Metadata.SelectedAuthor)
-	if author == "" {
+	narrator := strings.TrimSpace(candidate.Metadata.Narrator)
+	if author == "" && narrator == "" {
 		return nil, nil
+	}
+	if author == "" {
+		return []ResolvedContributor{{Action: ContributorActionCreate, Proposed: &library.Contributor{Name: narrator, SortName: library.NormalizeKey(narrator), Roles: []library.ContributorRole{library.RoleNarrator}}, Role: library.RoleNarrator, Confidence: library.ConfidenceMedium}}, nil
 	}
 	proposed := library.Contributor{Name: author, SortName: library.NormalizeKey(author), Roles: []library.ContributorRole{library.RoleAuthor}}
 	if edition.Existing != nil {
@@ -399,7 +404,7 @@ func (r *ContributorResolver) Resolve(ctx context.Context, candidate ImportCandi
 		for _, contributor := range contributors {
 			if library.NormalizeKey(contributor.Name) == library.NormalizeKey(author) {
 				match := contributor
-				return []ResolvedContributor{{
+				result := []ResolvedContributor{{
 					Action:     ContributorActionReuse,
 					Existing:   &match,
 					Role:       library.RoleAuthor,
@@ -411,11 +416,15 @@ func (r *ContributorResolver) Resolve(ctx context.Context, candidate ImportCandi
 						Confidence:  library.ConfidenceHigh,
 						Explanation: "Existing edition already has the selected author contributor",
 					}},
-				}}, nil
+				}}
+				if narrator != "" && !strings.EqualFold(narrator, author) {
+					result = append(result, ResolvedContributor{Action: ContributorActionCreate, Proposed: &library.Contributor{Name: narrator, SortName: library.NormalizeKey(narrator), Roles: []library.ContributorRole{library.RoleNarrator}}, Role: library.RoleNarrator, Confidence: library.ConfidenceMedium})
+				}
+				return result, nil
 			}
 		}
 	}
-	return []ResolvedContributor{{
+	result := []ResolvedContributor{{
 		Action:     ContributorActionCreate,
 		Proposed:   &proposed,
 		Role:       library.RoleAuthor,
@@ -427,7 +436,11 @@ func (r *ContributorResolver) Resolve(ctx context.Context, candidate ImportCandi
 			Confidence:  library.ConfidenceMedium,
 			Explanation: "Planner would create or attach an author contributor",
 		}},
-	}}, nil
+	}}
+	if narrator != "" && !strings.EqualFold(narrator, author) {
+		result = append(result, ResolvedContributor{Action: ContributorActionCreate, Proposed: &library.Contributor{Name: narrator, SortName: library.NormalizeKey(narrator), Roles: []library.ContributorRole{library.RoleNarrator}}, Role: library.RoleNarrator, Confidence: library.ConfidenceMedium})
+	}
+	return result, nil
 }
 
 type DuplicateMatch struct {
@@ -444,6 +457,15 @@ func (d *DuplicateDetector) Detect(ctx context.Context, candidate ImportCandidat
 		return &DuplicateMatch{File: file, Reason: "path"}, nil
 	} else if err != nil && !errors.Is(err, library.ErrNotFound) {
 		return nil, err
+	}
+	if finder, ok := d.catalog.(interface {
+		FindFileBySourceID(context.Context, string) (*library.BookFile, error)
+	}); ok && strings.TrimSpace(candidate.RelativePath) != "" {
+		if file, err := finder.FindFileBySourceID(ctx, candidate.RelativePath); err == nil && file != nil {
+			return &DuplicateMatch{File: file, Reason: "source_id"}, nil
+		} else if err != nil && !errors.Is(err, library.ErrNotFound) {
+			return nil, err
+		}
 	}
 	if candidate.ContentHash != "" {
 		files, err := d.catalog.FindFilesByContentHash(ctx, candidate.ContentHash)
@@ -563,6 +585,26 @@ func (p *FilePlanner) Resolve(ctx context.Context, candidate ImportCandidate, bo
 			"title":  candidate.Metadata.SelectedTitle,
 			"author": candidate.Metadata.SelectedAuthor,
 		},
+	}
+	addEmbeddedMetadata(file.EmbeddedMetadata, "narrator", candidate.Metadata.Narrator)
+	if candidate.MediaType == library.MediaTypeAudiobook {
+		source := "filename_fallback"
+		if candidate.Metadata.EmbeddedTitle != "" || candidate.Metadata.EmbeddedAuthor != "" {
+			source = "embedded_audiobook_metadata"
+		}
+		addEmbeddedMetadata(file.EmbeddedMetadata, "metadata_source", source)
+	}
+	if candidate.Metadata.DurationSeconds > 0 {
+		addEmbeddedMetadata(file.EmbeddedMetadata, "duration_seconds", fmt.Sprint(candidate.Metadata.DurationSeconds))
+	}
+	if candidate.Metadata.TrackCount > 0 {
+		addEmbeddedMetadata(file.EmbeddedMetadata, "track_count", fmt.Sprint(candidate.Metadata.TrackCount))
+	}
+	if candidate.Metadata.ChapterCount > 0 {
+		addEmbeddedMetadata(file.EmbeddedMetadata, "chapter_count", fmt.Sprint(candidate.Metadata.ChapterCount))
+	}
+	if candidate.Metadata.Abridged {
+		addEmbeddedMetadata(file.EmbeddedMetadata, "abridged", "true")
 	}
 	action := FileActionCreate
 	explanation := "Planner would create a first managed file for this logical book"

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jamie75/librarr/internal/library"
+	"github.com/jamie75/librarr/internal/organize"
 )
 
 var supportedFormats = map[string]library.MediaType{
@@ -134,12 +135,12 @@ func newDirectoryCandidate(path, relative string, hinted library.MediaType, orig
 	if !mediaType.Valid() {
 		mediaType = library.MediaTypeAudiobook
 	}
-	return ImportCandidate{
+	candidate := ImportCandidate{
 		Path:         path,
 		RelativePath: relative,
 		OriginalPath: originalPath,
 		MediaType:    mediaType,
-		Format:       "directory",
+		Format:       "audio",
 		Size:         size,
 		IsDirectory:  true,
 		Evidence: []PlanningEvidence{{
@@ -149,7 +150,15 @@ func newDirectoryCandidate(path, relative string, hinted library.MediaType, orig
 			Confidence:  library.ConfidenceHigh,
 			Explanation: "Planner discovered an audiobook directory candidate",
 		}},
-	}, nil
+	}
+	if audiobook := organize.ExtractAudiobookMetadata(path); audiobook != nil {
+		candidate.Format = audiobook.Format
+		candidate.PhysicalFiles = make([]string, 0, len(audiobook.Tracks))
+		for _, track := range audiobook.Tracks {
+			candidate.PhysicalFiles = append(candidate.PhysicalFiles, track.Path)
+		}
+	}
+	return candidate, nil
 }
 
 func fileSHA256(path string) (string, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -144,14 +145,51 @@ func (e *ImportExecutor) executeWritablePlan(ctx context.Context, plan ImportPla
 		}
 	}
 
-	file, err := e.attachFile(ctx, plan, edition.ID, state.now)
+	files, err := e.attachPlannedFiles(ctx, plan, edition.ID, state.now)
 	if err != nil {
 		return err
 	}
-	state.fileID = file.ID
+	if len(files) == 0 {
+		state.status = ExecutionStatusDuplicate
+		state.reason = "all audiobook files are already attached"
+		return nil
+	}
+	state.fileID = files[0].ID
 	state.status = ExecutionStatusSuccess
 	state.reason = "import plan executed"
 	return nil
+}
+
+func (e *ImportExecutor) attachPlannedFiles(ctx context.Context, plan ImportPlan, editionID int64, now time.Time) ([]*library.BookFile, error) {
+	paths := plan.Candidate.PhysicalFiles
+	if len(paths) == 0 {
+		file, err := e.attachFile(ctx, plan, editionID, now)
+		if err != nil {
+			return nil, err
+		}
+		return []*library.BookFile{file}, nil
+	}
+	attached := make([]*library.BookFile, 0, len(paths))
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		trackPlan := plan
+		trackPlan.Candidate.Path = path
+		trackPlan.Candidate.IsDirectory = false
+		trackPlan.Candidate.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+		if existing, err := e.findDuplicateFile(ctx, trackPlan); err != nil {
+			return nil, err
+		} else if existing != nil {
+			continue
+		}
+		file, err := e.attachFile(ctx, trackPlan, editionID, now)
+		if err != nil {
+			return nil, err
+		}
+		attached = append(attached, file)
+	}
+	return attached, nil
 }
 
 func (e *ImportExecutor) resolveBook(ctx context.Context, plan ImportPlan) (*library.Book, error) {
@@ -399,6 +437,19 @@ func (e *ImportExecutor) attachFile(ctx context.Context, plan ImportPlan, editio
 	addEmbeddedMetadata(copy.EmbeddedMetadata, "isbn", plan.Candidate.Metadata.ISBN)
 	addEmbeddedMetadata(copy.EmbeddedMetadata, "language", plan.Candidate.Metadata.Language)
 	addEmbeddedMetadata(copy.EmbeddedMetadata, "description", plan.Candidate.Metadata.Description)
+	addEmbeddedMetadata(copy.EmbeddedMetadata, "narrator", plan.Candidate.Metadata.Narrator)
+	if plan.Candidate.Metadata.DurationSeconds > 0 {
+		addEmbeddedMetadata(copy.EmbeddedMetadata, "duration_seconds", strconv.FormatInt(plan.Candidate.Metadata.DurationSeconds, 10))
+	}
+	if plan.Candidate.Metadata.TrackCount > 0 {
+		addEmbeddedMetadata(copy.EmbeddedMetadata, "track_count", strconv.Itoa(plan.Candidate.Metadata.TrackCount))
+	}
+	if plan.Candidate.Metadata.ChapterCount > 0 {
+		addEmbeddedMetadata(copy.EmbeddedMetadata, "chapter_count", strconv.Itoa(plan.Candidate.Metadata.ChapterCount))
+	}
+	if plan.Candidate.Metadata.Abridged {
+		addEmbeddedMetadata(copy.EmbeddedMetadata, "abridged", "true")
+	}
 	if len(plan.Candidate.Metadata.Tags) > 0 {
 		addEmbeddedMetadata(copy.EmbeddedMetadata, "tags", strings.Join(plan.Candidate.Metadata.Tags, ", "))
 	}

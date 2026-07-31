@@ -210,7 +210,10 @@
           <button data-action="switchLibraryTab" data-arg="audiobooks" class="lib-tab px-4 py-1.5 text-sm font-medium rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" data-ltab="audiobooks">Audiobooks</button>
           <button data-action="switchLibraryTab" data-arg="manga" class="lib-tab px-4 py-1.5 text-sm font-medium rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" data-ltab="manga">Manga</button>
         </div>
-        <input type="text" id="library-search" class="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500" placeholder="Filter library..." data-i18n-placeholder="library_filter_placeholder">
+        <div class="flex items-center gap-2">
+          <input type="text" id="library-search" class="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500" placeholder="Filter library..." data-i18n-placeholder="library_filter_placeholder">
+          <button data-action="refreshAllBookMetadata" class="rounded-lg border border-stone-700 px-3 py-2 text-xs font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200">Refresh All Metadata</button>
+        </div>
       </div>
       <div id="library-empty" class="hidden text-center py-16">
         <h2 class="text-2xl font-bold text-white mb-2" data-i18n="library_empty">Your library is empty</h2>

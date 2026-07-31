@@ -1122,6 +1122,18 @@ func (r *NormalizedRepository) SaveEmbeddedMetadata(ctx context.Context, fileID 
 	return nil
 }
 
+func (r *NormalizedRepository) UpdateFileMetadata(ctx context.Context, fileID int64, format string, metadata map[string]string) (*BookFile, error) {
+	res, err := r.exec(ctx).ExecContext(ctx, `UPDATE files SET format = ?, embedded_metadata_json = ?, updated_at = datetime('now') WHERE id = ?`,
+		strings.ToLower(strings.TrimSpace(format)), metadataJSON(metadata), fileID)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetFile(ctx, fileID)
+}
+
 func (r *NormalizedRepository) GetBookMetadata(ctx context.Context, bookID int64) (*BookMetadata, error) {
 	book, err := r.GetBook(ctx, bookID)
 	if err != nil {
