@@ -40,6 +40,11 @@ type CandidateMetadata struct {
 	ISBN            string               `json:"isbn,omitempty"`
 	Language        string               `json:"language,omitempty"`
 	Description     string               `json:"description,omitempty"`
+	Narrator        string               `json:"narrator,omitempty"`
+	DurationSeconds int64                `json:"duration_seconds,omitempty"`
+	TrackCount      int                  `json:"track_count,omitempty"`
+	ChapterCount    int                  `json:"chapter_count,omitempty"`
+	Abridged        bool                 `json:"abridged,omitempty"`
 	Tags            []string             `json:"tags,omitempty"`
 	Library         string               `json:"library,omitempty"`
 	Identifiers     []library.Identifier `json:"identifiers,omitempty"`
@@ -57,6 +62,7 @@ type ImportCandidate struct {
 	Size             int64              `json:"size"`
 	ContentHash      string             `json:"content_hash,omitempty"`
 	IsDirectory      bool               `json:"is_directory,omitempty"`
+	PhysicalFiles    []string           `json:"physical_files,omitempty"`
 	Metadata         CandidateMetadata  `json:"metadata"`
 	Evidence         []PlanningEvidence `json:"evidence,omitempty"`
 }

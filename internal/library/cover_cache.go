@@ -34,7 +34,7 @@ func (c *CoverCache) ExtractForScan(jobID, candidateID, sourcePath string) (stri
 	if c == nil || strings.TrimSpace(c.dir) == "" {
 		return "", nil
 	}
-	cover, err := organize.ExtractEmbeddedCover(sourcePath)
+	cover, err := extractLocalCover(sourcePath)
 	if err != nil || cover == nil {
 		return "", err
 	}
@@ -46,6 +46,17 @@ func (c *CoverCache) ExtractForScan(jobID, candidateID, sourcePath string) (stri
 	return targetPath, nil
 }
 
+func extractLocalCover(sourcePath string) (*organize.ExtractedCover, error) {
+	if info, err := os.Stat(sourcePath); err == nil && info.IsDir() {
+		meta := organize.ExtractAudiobookMetadata(sourcePath)
+		if meta != nil && meta.Cover != nil {
+			return meta.Cover, nil
+		}
+		return nil, nil
+	}
+	return organize.ExtractEmbeddedCover(sourcePath)
+}
+
 func (c *CoverCache) AttachBookCover(ctx context.Context, svc *LibraryService, bookID int64, sourcePath string) (*Cover, error) {
 	if c == nil || svc == nil || bookID == 0 || strings.TrimSpace(c.dir) == "" {
 		return nil, nil
@@ -53,7 +64,7 @@ func (c *CoverCache) AttachBookCover(ctx context.Context, svc *LibraryService, b
 	if existing, err := svc.GetPrimaryCover(ctx, bookID); err == nil && usableCover(existing) {
 		return existing, nil
 	}
-	cover, err := organize.ExtractEmbeddedCover(sourcePath)
+	cover, err := extractLocalCover(sourcePath)
 	if err != nil {
 		return nil, err
 	}

@@ -47,6 +47,9 @@ Librarr 2.0 currently has:
 - logical book cards that group available formats such as EPUB and MOBI
 - safe library removal with separate catalog-only and delete-files actions
 - embedded EPUB cover extraction with local cover caching
+- local audiobook metadata extraction for MP3/M4B, multi-track grouping,
+  embedded artwork caching, duration/track summaries, and conservative path
+  fallback
 - Wanted Books with monitored Prowlarr searches, search history, release inspection, and manual qBittorrent handoff
 - Wanted/library reconciliation so imported Wanted titles move out of the active queue
 - expanded User Management with local accounts, roles, status, password resets, and invite codes

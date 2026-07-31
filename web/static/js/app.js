@@ -2297,6 +2297,10 @@ function groupLibraryItems(items, tab) {
         pages: item.pages || 0,
         durationHours: item.duration_hours || 0,
         numFiles: item.num_files || 0,
+        narrator: item.audio?.narrator || item.narrator || '',
+        durationSeconds: item.audio?.duration_seconds || 0,
+        trackCount: item.audio?.track_count || 0,
+        chapterCount: item.audio?.chapter_count || 0,
         placeholderIndex: index,
       });
     }
@@ -2328,6 +2332,12 @@ function renderLibraryBookCard(book, index) {
   const meta = [];
   if (book.series) meta.push(book.series);
   if (book.size) meta.push(formatSize(book.size));
+  if (book.mediaType === 'audiobook' || book.narrator) {
+    if (book.narrator && book.narrator !== book.author) meta.push(`Narrator: ${book.narrator}`);
+    if (book.trackCount > 1) meta.push(`${book.trackCount} tracks`);
+    if (book.durationSeconds > 0) meta.push(formatDurationSeconds(book.durationSeconds));
+    if (book.chapterCount > 0) meta.push(`${book.chapterCount} chapters`);
+  }
 
   return `
     <article class="shelf-card group overflow-hidden rounded-[1.75rem] border border-stone-800 bg-[#1b1715]/95 shadow-[0_12px_40px_rgba(0,0,0,0.22)]">

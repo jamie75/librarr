@@ -281,6 +281,9 @@ func TestImportPlannerAudiobookDirectory(t *testing.T) {
 	if plan.Candidate.Metadata.SelectedTitle != "The Guardian's Path" || plan.Candidate.Metadata.SelectedAuthor != "Jane Doe" {
 		t.Fatalf("audiobook metadata = %+v", plan.Candidate.Metadata)
 	}
+	if len(plan.Candidate.PhysicalFiles) != 1 || plan.Candidate.Format != "mp3" {
+		t.Fatalf("physical audiobook files = %#v format=%q", plan.Candidate.PhysicalFiles, plan.Candidate.Format)
+	}
 }
 
 func TestImportPlannerDuplicateContentHashIgnored(t *testing.T) {

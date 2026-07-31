@@ -86,21 +86,34 @@ func (r *MetadataResolver) resolveFilenameOnly(candidate *ImportCandidate) {
 }
 
 func (r *MetadataResolver) resolveAudiobookFile(candidate *ImportCandidate) {
-	meta := organize.ExtractAudiobookPathMetadata(candidate.Path)
+	meta := organize.ExtractAudioMeta(candidate.Path)
+	pathMeta := organize.ExtractAudiobookPathMetadata(candidate.Path)
 	selectedTitle := ""
 	selectedAuthor := ""
-	if meta != nil {
-		selectedTitle = strings.TrimSpace(meta.Title)
+	if meta != nil && meta.Embedded {
+		selectedTitle = strings.TrimSpace(firstNonEmptyString(meta.Album, meta.Title))
 		selectedAuthor = strings.TrimSpace(meta.Artist)
+	}
+	if selectedTitle == "" {
+		selectedTitle = pathMeta.Title
+	}
+	if selectedAuthor == "" {
+		selectedAuthor = pathMeta.Artist
 	}
 	if selectedTitle == "" {
 		selectedTitle = strings.TrimSpace(strings.TrimSuffix(filepath.Base(candidate.Path), filepath.Ext(candidate.Path)))
 	}
 	candidate.Metadata = CandidateMetadata{
-		FilenameTitle:  selectedTitle,
-		FilenameAuthor: selectedAuthor,
-		SelectedTitle:  selectedTitle,
-		SelectedAuthor: selectedAuthor,
+		EmbeddedTitle:   strings.TrimSpace(firstAudioEmbeddedTitle(meta)),
+		EmbeddedAuthor:  strings.TrimSpace(firstAudioEmbeddedAuthor(meta)),
+		FilenameTitle:   selectedTitle,
+		FilenameAuthor:  selectedAuthor,
+		SelectedTitle:   selectedTitle,
+		SelectedAuthor:  selectedAuthor,
+		Narrator:        strings.TrimSpace(audioNarrator(meta)),
+		DurationSeconds: audioDuration(meta),
+		TrackCount:      1,
+		Abridged:        audioAbridged(meta),
 	}
 	r.applyHints(candidate)
 	r.applyOverrides(candidate)
@@ -114,22 +127,36 @@ func (r *MetadataResolver) resolveAudiobookFile(candidate *ImportCandidate) {
 
 func (r *MetadataResolver) resolveAudiobookDirectory(candidate *ImportCandidate) {
 	folderName := strings.TrimSpace(filepath.Base(candidate.Path))
-	meta := organize.ExtractAudioMetaFromDir(candidate.Path)
+	aggregate := organize.ExtractAudiobookMetadata(candidate.Path)
 	selectedTitle := folderName
 	selectedAuthor := ""
-	if meta != nil {
-		if strings.TrimSpace(meta.Album) != "" {
-			selectedTitle = strings.TrimSpace(meta.Album)
-		} else if strings.TrimSpace(meta.Title) != "" {
-			selectedTitle = strings.TrimSpace(meta.Title)
+	if aggregate != nil {
+		if aggregate.Embedded && strings.TrimSpace(aggregate.Title) != "" {
+			selectedTitle = strings.TrimSpace(aggregate.Title)
 		}
-		selectedAuthor = strings.TrimSpace(meta.Artist)
+		if strings.TrimSpace(aggregate.Author) != "" {
+			selectedAuthor = strings.TrimSpace(aggregate.Author)
+		}
+		candidate.PhysicalFiles = make([]string, 0, len(aggregate.Tracks))
+		for _, track := range aggregate.Tracks {
+			candidate.PhysicalFiles = append(candidate.PhysicalFiles, track.Path)
+		}
+	}
+	if selectedAuthor == "" {
+		selectedAuthor = strings.TrimSpace(filepath.Base(filepath.Dir(candidate.Path)))
 	}
 	candidate.Metadata = CandidateMetadata{
-		FilenameTitle:  folderName,
-		FilenameAuthor: selectedAuthor,
-		SelectedTitle:  selectedTitle,
-		SelectedAuthor: selectedAuthor,
+		EmbeddedTitle:   embeddedAudioTitle(aggregate),
+		EmbeddedAuthor:  embeddedAudioAuthor(aggregate),
+		FilenameTitle:   folderName,
+		FilenameAuthor:  selectedAuthor,
+		SelectedTitle:   selectedTitle,
+		SelectedAuthor:  selectedAuthor,
+		Narrator:        selectedAuthor,
+		DurationSeconds: aggregateDuration(aggregate),
+		TrackCount:      aggregateTrackCount(aggregate),
+		ChapterCount:    aggregateChapterCount(aggregate),
+		Abridged:        aggregateAbridged(aggregate),
 	}
 	r.applyHints(candidate)
 	r.applyOverrides(candidate)
@@ -139,6 +166,65 @@ func (r *MetadataResolver) resolveAudiobookDirectory(candidate *ImportCandidate)
 		metadataEvidence("selected_author", candidate.Metadata.SelectedAuthor, "audio_metadata", "selected audiobook author for planning"),
 	)
 }
+
+func embeddedAudioTitle(meta *organize.AudiobookMeta) string {
+	if meta == nil || !meta.Embedded {
+		return ""
+	}
+	return meta.Title
+}
+
+func embeddedAudioAuthor(meta *organize.AudiobookMeta) string {
+	if meta == nil || !meta.Embedded {
+		return ""
+	}
+	return meta.Author
+}
+
+func firstAudioEmbeddedTitle(meta *organize.AudioMeta) string {
+	if meta == nil || !meta.Embedded {
+		return ""
+	}
+	return firstNonEmptyString(meta.Album, meta.Title)
+}
+func firstAudioEmbeddedAuthor(meta *organize.AudioMeta) string {
+	if meta == nil || !meta.Embedded {
+		return ""
+	}
+	return meta.Artist
+}
+func audioNarrator(meta *organize.AudioMeta) string {
+	if meta == nil {
+		return ""
+	}
+	return firstNonEmptyString(meta.Narrator, meta.Artist)
+}
+func audioDuration(meta *organize.AudioMeta) int64 {
+	if meta == nil {
+		return 0
+	}
+	return meta.DurationSeconds
+}
+func audioAbridged(meta *organize.AudioMeta) bool { return meta != nil && meta.Abridged }
+func aggregateDuration(meta *organize.AudiobookMeta) int64 {
+	if meta == nil {
+		return 0
+	}
+	return meta.DurationSeconds
+}
+func aggregateTrackCount(meta *organize.AudiobookMeta) int {
+	if meta == nil {
+		return 0
+	}
+	return meta.TrackCount
+}
+func aggregateChapterCount(meta *organize.AudiobookMeta) int {
+	if meta == nil {
+		return 0
+	}
+	return meta.ChapterCount
+}
+func aggregateAbridged(meta *organize.AudiobookMeta) bool { return meta != nil && meta.Abridged }
 
 func isEbookFormat(format string) bool {
 	switch strings.ToLower(format) {

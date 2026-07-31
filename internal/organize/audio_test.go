@@ -1,6 +1,8 @@
 package organize
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -116,11 +118,118 @@ func TestExtractAudiobookPathMetadataStripsAuthorPrefix(t *testing.T) {
 	}
 }
 
+func TestAudiobookFilenameFallbackCleansKnownReleaseNoise(t *testing.T) {
+	tests := []struct{ name, title, author string }{
+		{"Unfreedom of the Press(Unabridged)e.mp3", "Unfreedom of the Press", ""},
+		{"American Marxism by Mark R Levin [ENG M4B].m4b", "American Marxism", "Mark R Levin"},
+		{"Title - Author Name - Narrator Name - Unabridged.mp3", "Title", "Author Name"},
+		{"Title [MP3 64kbps].mp3", "Title", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := ExtractAudiobookPathMetadata(filepath.Join(t.TempDir(), "incoming", tt.name))
+			if meta.Title != tt.title || meta.Artist != tt.author {
+				t.Fatalf("metadata = %+v, want title=%q author=%q", meta, tt.title, tt.author)
+			}
+		})
+	}
+}
+
+func TestExtractM4BMetadataReadsDurationAndChapters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.m4b")
+	// mvhd version 0: version/flags, creation, modification, timescale, duration.
+	mvhd := make([]byte, 20)
+	binary.BigEndian.PutUint32(mvhd[12:16], 1000)
+	binary.BigEndian.PutUint32(mvhd[16:20], 125000)
+	chpl := make([]byte, 9)
+	chpl[8] = 12
+	text := make([]byte, 8)
+	text = append(text, []byte("Recorded Book")...)
+	data := append(mp4Atom("mvhd", mvhd), mp4Atom("chpl", chpl)...)
+	data = append(data, mp4Atom(string([]byte{0xa9, 'n', 'a', 'm'}), mp4Atom("data", text))...)
+	file := mp4Atom("moov", data)
+	if err := os.WriteFile(path, file, 0600); err != nil {
+		t.Fatal(err)
+	}
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Title != "Recorded Book" || meta.DurationSeconds != 125 || meta.ChapterCount != 12 {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func mp4Atom(name string, body []byte) []byte {
+	data := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint32(data[:4], uint32(len(data)))
+	copy(data[4:8], []byte(name))
+	copy(data[8:], body)
+	return data
+}
+
 func TestExtractAudioMetaFromDir_NonexistentDir(t *testing.T) {
 	meta := ExtractAudioMetaFromDir("/nonexistent/path")
 	if meta != nil {
 		t.Error("expected nil for nonexistent directory")
 	}
+}
+
+func TestExtractAudiobookMetadataGroupsTaggedMP3Tracks(t *testing.T) {
+	dir := t.TempDir()
+	writeTaggedMP3(t, filepath.Join(dir, "01.mp3"), "The Audio Book", "Jane Author", 1)
+	writeTaggedMP3(t, filepath.Join(dir, "02.mp3"), "The Audio Book", "Jane Author", 2)
+	meta := ExtractAudiobookMetadata(dir)
+	if meta == nil || meta.Title != "The Audio Book" || meta.Author != "Jane Author" {
+		t.Fatalf("aggregate = %+v", meta)
+	}
+	if meta.TrackCount != 2 || len(meta.Tracks) != 2 || !meta.Embedded {
+		t.Fatalf("tracks = %+v", meta)
+	}
+}
+
+func TestExtractAudioMetaReadsAPICCover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "covered.mp3")
+	writeTaggedMP3WithCover(t, path)
+	meta := ExtractAudioMeta(path)
+	if meta == nil || meta.Cover == nil || meta.Cover.Source != "embedded_audiobook" {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func writeTaggedMP3(t *testing.T, path, album, artist string, track int) {
+	t.Helper()
+	frames := append(id3TextFrame("TALB", album), id3TextFrame("TPE1", artist)...)
+	frames = append(frames, id3TextFrame("TRCK", string(rune('0'+track)))...)
+	data := append([]byte("ID3\x04\x00\x00"), syncSafe(len(frames))...)
+	data = append(data, frames...)
+	data = append(data, bytes.Repeat([]byte{0}, 32)...)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTaggedMP3WithCover(t *testing.T, path string) {
+	t.Helper()
+	image := []byte("\x89PNG\r\n\x1a\ncover")
+	frame := append([]byte{0, 'i', 'm', 'a', 'g', 'e', '/', 'p', 'n', 'g', 0, 3, 0}, image...)
+	frames := id3Frame("APIC", frame)
+	data := append([]byte("ID3\x04\x00\x00"), syncSafe(len(frames))...)
+	data = append(data, frames...)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func id3TextFrame(name, value string) []byte {
+	return id3Frame(name, append([]byte{3}, []byte(value)...))
+}
+func id3Frame(name string, payload []byte) []byte {
+	frame := make([]byte, 10+len(payload))
+	copy(frame, name)
+	binary.BigEndian.PutUint32(frame[4:8], uint32(len(payload)))
+	copy(frame[10:], payload)
+	return frame
+}
+func syncSafe(value int) []byte {
+	return []byte{byte(value >> 21), byte(value >> 14), byte(value >> 7), byte(value)}
 }
 
 func TestOrganizeAudiobookMissingSourceDoesNotCreateDestDir(t *testing.T) {

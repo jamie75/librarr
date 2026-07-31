@@ -67,6 +67,11 @@ type Metadata struct {
 	ISBN            string             `json:"isbn,omitempty"`
 	Language        string             `json:"language,omitempty"`
 	Description     string             `json:"description,omitempty"`
+	Narrator        string             `json:"narrator,omitempty"`
+	DurationSeconds int64              `json:"duration_seconds,omitempty"`
+	TrackCount      int                `json:"track_count,omitempty"`
+	ChapterCount    int                `json:"chapter_count,omitempty"`
+	Abridged        bool               `json:"abridged,omitempty"`
 	Tags            []string           `json:"tags,omitempty"`
 	Library         string             `json:"library,omitempty"`
 	Source          string             `json:"source,omitempty"`

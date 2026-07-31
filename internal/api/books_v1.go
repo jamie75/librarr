@@ -69,6 +69,7 @@ type v1BookSummary struct {
 	EditionCount  int                     `json:"edition_count"`
 	FileCount     int                     `json:"file_count"`
 	Cover         v1CoverSummary          `json:"cover"`
+	Audio         *v1AudioSummary         `json:"audio,omitempty"`
 	CreatedAt     string                  `json:"created_at"`
 	UpdatedAt     string                  `json:"updated_at"`
 }
@@ -90,8 +91,19 @@ type v1BookDetailResponse struct {
 	EditionCount    int                     `json:"edition_count"`
 	Editions        []v1EditionSummary      `json:"editions"`
 	Cover           v1CoverSummary          `json:"cover"`
+	Audio           *v1AudioSummary         `json:"audio,omitempty"`
 	CreatedAt       string                  `json:"created_at"`
 	UpdatedAt       string                  `json:"updated_at"`
+}
+
+type v1AudioSummary struct {
+	MetadataSource  string   `json:"metadata_source,omitempty"`
+	Narrator        string   `json:"narrator,omitempty"`
+	DurationSeconds int64    `json:"duration_seconds,omitempty"`
+	TrackCount      int      `json:"track_count,omitempty"`
+	ChapterCount    int      `json:"chapter_count,omitempty"`
+	Abridged        bool     `json:"abridged,omitempty"`
+	Formats         []string `json:"formats,omitempty"`
 }
 
 type v1EditionSummary struct {
@@ -233,7 +245,14 @@ func (s *Server) handleV1Books(w http.ResponseWriter, r *http.Request) {
 
 	responseItems := make([]v1BookSummary, 0, len(items))
 	for _, item := range items {
-		responseItems = append(responseItems, buildV1BookSummary(item))
+		summary := buildV1BookSummary(item)
+		files, fileErr := s.library().GetBookFiles(r.Context(), item.Book.ID)
+		if fileErr != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to load book files", fileErr)
+			return
+		}
+		summary.Audio = audiobookSummary(files)
+		responseItems = append(responseItems, summary)
 	}
 
 	writeJSON(w, http.StatusOK, v1BookListResponse{
@@ -646,6 +665,69 @@ func buildV1BookSummary(item library.BookReadModel) v1BookSummary {
 	}
 }
 
+func audiobookSummary(files []library.BookFile) *v1AudioSummary {
+	summary := &v1AudioSummary{}
+	formats := map[string]struct{}{}
+	for _, file := range files {
+		if file.MediaType != library.MediaTypeAudiobook {
+			continue
+		}
+		if format := strings.ToUpper(strings.TrimSpace(file.Format)); format != "" {
+			formats[format] = struct{}{}
+		}
+		if summary.Narrator == "" {
+			summary.Narrator = file.EmbeddedMetadata["narrator"]
+		}
+		if summary.MetadataSource == "" {
+			summary.MetadataSource = file.EmbeddedMetadata["metadata_source"]
+		}
+		duration := parseAudioMetadataInt(file.EmbeddedMetadata["duration_seconds"])
+		trackCount := int(parseAudioMetadataInt(file.EmbeddedMetadata["track_count"]))
+		chapterCount := int(parseAudioMetadataInt(file.EmbeddedMetadata["chapter_count"]))
+		if trackCount > 1 {
+			if duration > summary.DurationSeconds {
+				summary.DurationSeconds = duration
+			}
+			if trackCount > summary.TrackCount {
+				summary.TrackCount = trackCount
+			}
+			if chapterCount > summary.ChapterCount {
+				summary.ChapterCount = chapterCount
+			}
+		} else {
+			summary.DurationSeconds += duration
+			summary.TrackCount += trackCount
+			summary.ChapterCount += chapterCount
+		}
+		if file.EmbeddedMetadata["abridged"] == "true" {
+			summary.Abridged = true
+		}
+	}
+	for format := range formats {
+		summary.Formats = append(summary.Formats, format)
+	}
+	slices.Sort(summary.Formats)
+	if len(summary.Formats) == 0 && summary.Narrator == "" && summary.DurationSeconds == 0 {
+		return nil
+	}
+	if summary.TrackCount == 0 {
+		for _, file := range files {
+			if file.MediaType == library.MediaTypeAudiobook {
+				summary.TrackCount++
+			}
+		}
+	}
+	return summary
+}
+
+func parseAudioMetadataInt(value string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1BookDetailResponse, error) {
 	editions, err := s.buildV1Editions(ctx, book.ID)
 	if err != nil {
@@ -674,6 +756,7 @@ func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1Bo
 		EditionCount:    len(editions),
 		Editions:        editions,
 		Cover:           mapBookCover(book.ID, primaryLocalBookCover(book.Covers)),
+		Audio:           audiobookSummary(files),
 		CreatedAt:       formatAPITime(book.CreatedAt),
 		UpdatedAt:       formatAPITime(book.UpdatedAt),
 	}, nil
