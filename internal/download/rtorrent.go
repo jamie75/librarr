@@ -380,6 +380,7 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 	// The endpoint was parsed, normalized, DNS-resolved, IP-policy validated,
 	// pinned to validated addresses, and protected by same-origin redirects.
 	// codeql[go/request-forgery]
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch rTorrent torrent: %s", netutil.SanitizeSensitiveText(err.Error()))

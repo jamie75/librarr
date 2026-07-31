@@ -163,6 +163,7 @@ func md5Hex(value string) string {
 	// HTTP Digest MD5 is protocol-mandated and is not used for password storage.
 	// The output is used only to construct the RFC-compatible Digest response.
 	// codeql[go/weak-sensitive-data-hashing]
+
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
