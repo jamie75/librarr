@@ -90,6 +90,20 @@ func TestValidateSameOriginHTTPURL(t *testing.T) {
 	}
 }
 
+func TestValidateSameOriginEndpointRebuildsApprovedComponents(t *testing.T) {
+	endpoint, err := ValidateSameOriginEndpoint("HTTPS://PROWLARR.example:443/download/%2Ffile?apikey=secret#fragment", "https://prowlarr.example")
+	if err != nil {
+		t.Fatalf("ValidateSameOriginEndpoint() error = %v", err)
+	}
+	got := endpoint.URL()
+	if got.String() != "https://prowlarr.example:443/download//file" {
+		t.Fatalf("rebuilt URL = %q", got.String())
+	}
+	if got.RawQuery != "" || got.Fragment != "" || got.User != nil {
+		t.Fatalf("rebuilt URL retained unsafe/unapproved components: %#v", got)
+	}
+}
+
 func TestSanitizeSensitiveText(t *testing.T) {
 	input := `fetch http://user:pass@example.com/download?apikey=secret&token=abc&id=1 failed`
 	got := SanitizeSensitiveText(input)

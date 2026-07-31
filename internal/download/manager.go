@@ -318,7 +318,9 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("anna's archive download failed", "title", netutil.SanitizeLogValue(job.Title), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("anna's archive download failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 		m.health.RecordFailure("annas", err.Error(), "download")
 		if isAnnasNoMatchError(err) {
 			m.updateJob(job, "dead_letter", "No LibGen match found", err.Error())
@@ -368,7 +370,10 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "path", netutil.SanitizeLogValue(filePath), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safePath := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(filePath, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "path", netutil.SanitizeLogValue(safePath), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -385,7 +390,9 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -398,7 +405,8 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded from Anna's Archive (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", netutil.SanitizeLogValue(job.Title), "source", "annas", "size", fileSize)
+	safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(safeTitle), "source", "annas", "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {
@@ -444,7 +452,9 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		m.setJobProgress(job, detail)
 	})
 	if err != nil {
-		slog.Error("direct download failed", "title", netutil.SanitizeLogValue(job.Title), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("direct download failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "", err.Error())
 		return
 	}
@@ -461,7 +471,11 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 
 	destPath, err := m.organizer.OrganizeEbook(filePath, job.Title, author)
 	if err != nil {
-		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "path", netutil.SanitizeLogValue(filePath), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+		safePath := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(filePath, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("file organization failed; library import deferred", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "path", netutil.SanitizeLogValue(safePath), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "File organization failed", err.Error())
 		return
 	}
@@ -478,7 +492,10 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		AuthorHint:   author,
 	})
 	if err != nil {
-		slog.Error("library import failed", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Error("library import failed", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "error", netutil.SanitizeLogValue(safeError))
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
@@ -491,7 +508,9 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 	_ = m.db.LogEvent("download_complete", job.Title, fmt.Sprintf("Downloaded (%s)", search.HumanSize(fileSize)), nil, job.ID)
 
 	m.updateJob(job, "completed", fmt.Sprintf("Done (%s)", search.HumanSize(fileSize)), "")
-	slog.Info("download completed", "title", netutil.SanitizeLogValue(job.Title), "source", netutil.SanitizeLogValue(job.Source), "size", fileSize)
+	safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Title, "\r", ""), "\n", ""), "\x00", "")
+	safeSource := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(job.Source, "\r", ""), "\n", ""), "\x00", "")
+	slog.Info("download completed", "title", netutil.SanitizeLogValue(safeTitle), "source", netutil.SanitizeLogValue(safeSource), "size", fileSize)
 
 	// Send webhook notification.
 	if m.webhookSender != nil {

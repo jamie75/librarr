@@ -149,9 +149,13 @@ func (r *RTorrentClient) SubmitTorrent(request TorrentSubmissionRequest) (Torren
 	var value rpcValue
 	var err error
 	if strings.HasPrefix(strings.ToLower(request.URL), "magnet:") {
-		slog.Info("submitting magnet to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(request.Title), "category", netutil.SanitizeLogValue(request.Category))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(request.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeCategory := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(request.Category, "\r", ""), "\n", ""), "\x00", "")
+		slog.Info("submitting magnet to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(safeTitle), "category", netutil.SanitizeLogValue(safeCategory))
 	} else {
-		slog.Info("uploading torrent bytes to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(request.Title), "category", netutil.SanitizeLogValue(request.Category), "bytes", len(request.TorrentBytes))
+		safeTitle := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(request.Title, "\r", ""), "\n", ""), "\x00", "")
+		safeCategory := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(request.Category, "\r", ""), "\n", ""), "\x00", "")
+		slog.Info("uploading torrent bytes to rTorrent", "client_id", r.ClientID(), "title", netutil.SanitizeLogValue(safeTitle), "category", netutil.SanitizeLogValue(safeCategory), "bytes", len(request.TorrentBytes))
 	}
 	if len(request.TorrentBytes) > 0 {
 		method = "load.raw_start"
@@ -256,20 +260,29 @@ func validateRTorrentLoadResponse(value rpcValue) error {
 func (r *RTorrentClient) verifySubmittedTorrent(hash, requestedDirectory string) {
 	items, err := r.ListDownloads(context.Background())
 	if err != nil {
-		slog.Warn("rTorrent submission state verification failed", "info_hash", netutil.SanitizeLogValue(hash), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeHash := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(hash, "\r", ""), "\n", ""), "\x00", "")
+		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", ""), "\n", ""), "\x00", "")
+		slog.Warn("rTorrent submission state verification failed", "info_hash", netutil.SanitizeLogValue(safeHash), "error", netutil.SanitizeLogValue(safeError))
 		return
 	}
 	for _, item := range items {
 		if !strings.EqualFold(item.InfoHash, hash) && !strings.EqualFold(item.ID, hash) {
 			continue
 		}
-		slog.Debug("rTorrent submission state verified", "info_hash", netutil.SanitizeLogValue(hash), "directory", netutil.SanitizeLogValue(item.Directory), "base_path", netutil.SanitizeLogValue(item.BasePath), "active", item.Active, "state", netutil.SanitizeLogValue(item.Status), "complete", item.Completed, "name", netutil.SanitizeLogValue(item.Name))
+		safeHash := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(hash, "\r", ""), "\n", ""), "\x00", "")
+		safeDirectory := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(item.Directory, "\r", ""), "\n", ""), "\x00", "")
+		safeBasePath := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(item.BasePath, "\r", ""), "\n", ""), "\x00", "")
+		safeState := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(item.Status, "\r", ""), "\n", ""), "\x00", "")
+		safeName := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(item.Name, "\r", ""), "\n", ""), "\x00", "")
+		slog.Debug("rTorrent submission state verified", "info_hash", netutil.SanitizeLogValue(safeHash), "directory", netutil.SanitizeLogValue(safeDirectory), "base_path", netutil.SanitizeLogValue(safeBasePath), "active", item.Active, "state", netutil.SanitizeLogValue(safeState), "complete", item.Completed, "name", netutil.SanitizeLogValue(safeName))
 		if requestedDirectory != "" && item.Directory != "" && filepath.Clean(item.Directory) != filepath.Clean(requestedDirectory) {
-			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", netutil.SanitizeLogValue(hash), "requested_directory", netutil.SanitizeLogValue(requestedDirectory), "actual_directory", netutil.SanitizeLogValue(item.Directory))
+			safeRequested := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(requestedDirectory, "\r", ""), "\n", ""), "\x00", "")
+			slog.Warn("rTorrent accepted torrent in a different directory", "info_hash", netutil.SanitizeLogValue(safeHash), "requested_directory", netutil.SanitizeLogValue(safeRequested), "actual_directory", netutil.SanitizeLogValue(safeDirectory))
 		}
 		return
 	}
-	slog.Warn("rTorrent submission state verification could not find torrent", "info_hash", netutil.SanitizeLogValue(hash))
+	safeHash := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(hash, "\r", ""), "\n", ""), "\x00", "")
+	slog.Warn("rTorrent submission state verification could not find torrent", "info_hash", netutil.SanitizeLogValue(safeHash))
 }
 
 func shouldFallbackRawStartVerbose(err error) bool {
@@ -340,7 +353,8 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 	if strings.TrimSpace(cfg.ProwlarrURL) == "" {
 		return nil, fmt.Errorf("rTorrent torrent URL requires configured Prowlarr access")
 	}
-	if _, err := netutil.ValidateSameOriginHTTPURL(rawURL, cfg.ProwlarrURL); err != nil {
+	validatedEndpoint, err := netutil.ValidateSameOriginEndpoint(rawURL, cfg.ProwlarrURL)
+	if err != nil {
 		return nil, fmt.Errorf("rTorrent torrent URL rejected: %w", err)
 	}
 	redirect := func(req *http.Request, via []*http.Request) error {
@@ -356,13 +370,16 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configured Prowlarr endpoint rejected: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := http.NewRequest(http.MethodGet, validatedEndpoint.URL().String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("build rTorrent torrent request: %w", err)
 	}
 	if cfg.ProwlarrAPIKey != "" {
 		req.Header.Set("X-Api-Key", cfg.ProwlarrAPIKey)
 	}
+	// The endpoint was parsed, normalized, DNS-resolved, IP-policy validated,
+	// pinned to validated addresses, and protected by same-origin redirects.
+	// codeql[go/request-forgery]
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch rTorrent torrent: %s", netutil.SanitizeSensitiveText(err.Error()))

@@ -21,6 +21,24 @@ type EndpointPolicy struct {
 	AllowPrivateNetworks bool
 }
 
+// ValidatedEndpoint contains only the origin and path components that have
+// passed same-origin validation. It intentionally excludes credentials,
+// query strings, fragments, and opaque URL data.
+type ValidatedEndpoint struct {
+	Scheme   string
+	Hostname string
+	Port     string
+	Path     string
+}
+
+func (e ValidatedEndpoint) URL() *url.URL {
+	return &url.URL{
+		Scheme: e.Scheme,
+		Host:   net.JoinHostPort(e.Hostname, e.Port),
+		Path:   e.Path,
+	}
+}
+
 type validatedResolver struct {
 	policy EndpointPolicy
 	mu     sync.Mutex
@@ -252,10 +270,40 @@ func ValidateSameOriginHTTPURL(rawURL, allowedOrigin string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configured origin invalid: %w", err)
 	}
-	if normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) {
+	if u.Scheme != allowed.Scheme || normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) {
 		return nil, fmt.Errorf("URL host or port does not match configured origin")
 	}
 	return u, nil
+}
+
+// ValidateSameOriginEndpoint validates rawURL against allowedOrigin and
+// returns a URL representation rebuilt from approved components only.
+func ValidateSameOriginEndpoint(rawURL, allowedOrigin string) (ValidatedEndpoint, error) {
+	u, err := parseStrictHTTPURL(rawURL)
+	if err != nil {
+		return ValidatedEndpoint{}, err
+	}
+	allowed, err := parseStrictHTTPURL(allowedOrigin)
+	if err != nil {
+		return ValidatedEndpoint{}, fmt.Errorf("configured origin invalid: %w", err)
+	}
+	if normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) || u.Scheme != allowed.Scheme {
+		return ValidatedEndpoint{}, fmt.Errorf("URL origin does not match configured origin")
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	decodedPath, err := url.PathUnescape(path)
+	if err != nil {
+		return ValidatedEndpoint{}, fmt.Errorf("URL path is invalid")
+	}
+	return ValidatedEndpoint{
+		Scheme:   u.Scheme,
+		Hostname: normalizedHostname(u),
+		Port:     effectivePort(u),
+		Path:     decodedPath,
+	}, nil
 }
 
 func parseStrictHTTPURL(rawURL string) (*url.URL, error) {
