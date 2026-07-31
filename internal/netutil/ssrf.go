@@ -21,21 +21,23 @@ type EndpointPolicy struct {
 	AllowPrivateNetworks bool
 }
 
-// ValidatedEndpoint contains only the origin and path components that have
-// passed same-origin validation. It intentionally excludes credentials,
-// query strings, fragments, and opaque URL data.
+// ValidatedEndpoint contains only the origin, path, and query components that
+// have passed same-origin validation. It intentionally excludes credentials,
+// fragments, and opaque URL data.
 type ValidatedEndpoint struct {
 	Scheme   string
 	Hostname string
 	Port     string
 	Path     string
+	RawQuery string
 }
 
 func (e ValidatedEndpoint) URL() *url.URL {
 	return &url.URL{
-		Scheme: e.Scheme,
-		Host:   net.JoinHostPort(e.Hostname, e.Port),
-		Path:   e.Path,
+		Scheme:   e.Scheme,
+		Host:     net.JoinHostPort(e.Hostname, e.Port),
+		Path:     e.Path,
+		RawQuery: e.RawQuery,
 	}
 }
 
@@ -290,6 +292,12 @@ func ValidateSameOriginEndpoint(rawURL, allowedOrigin string) (ValidatedEndpoint
 	if normalizedHostname(u) != normalizedHostname(allowed) || effectivePort(u) != effectivePort(allowed) || u.Scheme != allowed.Scheme {
 		return ValidatedEndpoint{}, fmt.Errorf("URL origin does not match configured origin")
 	}
+	if u.Fragment != "" {
+		return ValidatedEndpoint{}, fmt.Errorf("URL must not include a fragment")
+	}
+	if u.Opaque != "" {
+		return ValidatedEndpoint{}, fmt.Errorf("URL must not include opaque data")
+	}
 	path := u.EscapedPath()
 	if path == "" {
 		path = "/"
@@ -303,6 +311,7 @@ func ValidateSameOriginEndpoint(rawURL, allowedOrigin string) (ValidatedEndpoint
 		Hostname: normalizedHostname(u),
 		Port:     effectivePort(u),
 		Path:     decodedPath,
+		RawQuery: u.RawQuery,
 	}, nil
 }
 
@@ -313,6 +322,12 @@ func parseStrictHTTPURL(rawURL string) (*url.URL, error) {
 	}
 	if u.User != nil {
 		return nil, fmt.Errorf("URL must not include credentials")
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("URL must not include a fragment")
+	}
+	if u.Opaque != "" {
+		return nil, fmt.Errorf("URL must not include opaque data")
 	}
 	if _, err := strictEffectivePort(u); err != nil {
 		return nil, err

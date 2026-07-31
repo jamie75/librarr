@@ -383,7 +383,7 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch rTorrent torrent: %s", netutil.SanitizeSensitiveText(err.Error()))
+		return nil, fmt.Errorf("fetch torrent from Prowlarr: %s", netutil.SanitizeSensitiveText(err.Error()))
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentFetchBytes+1))
@@ -391,7 +391,7 @@ func fetchRTorrentTorrent(rawURL string, cfg RTorrentConfig) ([]byte, error) {
 		return nil, fmt.Errorf("read rTorrent torrent: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fetch rTorrent torrent HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetch torrent from Prowlarr HTTP %d", resp.StatusCode)
 	}
 	if len(body) > maxTorrentFetchBytes {
 		return nil, fmt.Errorf("torrent response too large")
