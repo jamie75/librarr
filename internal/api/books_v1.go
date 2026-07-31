@@ -682,8 +682,8 @@ func audiobookSummary(files []library.BookFile) *v1AudioSummary {
 			summary.MetadataSource = file.EmbeddedMetadata["metadata_source"]
 		}
 		duration := parseAudioMetadataInt(file.EmbeddedMetadata["duration_seconds"])
-		trackCount := int(parseAudioMetadataInt(file.EmbeddedMetadata["track_count"]))
-		chapterCount := int(parseAudioMetadataInt(file.EmbeddedMetadata["chapter_count"]))
+		trackCount := parseAudioMetadataCount(file.EmbeddedMetadata["track_count"])
+		chapterCount := parseAudioMetadataCount(file.EmbeddedMetadata["chapter_count"])
 		if trackCount > 1 {
 			if duration > summary.DurationSeconds {
 				summary.DurationSeconds = duration
@@ -726,6 +726,15 @@ func parseAudioMetadataInt(value string) int64 {
 		return 0
 	}
 	return n
+}
+
+func parseAudioMetadataCount(value string) int {
+	n := parseAudioMetadataInt(value)
+	maxInt := int64(^uint(0) >> 1)
+	if n <= 0 || n > maxInt {
+		return 0
+	}
+	return int(n)
 }
 
 func (s *Server) buildV1BookDetail(ctx context.Context, book library.Book) (v1BookDetailResponse, error) {

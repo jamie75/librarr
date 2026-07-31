@@ -86,6 +86,12 @@ func (s *LibraryService) refreshBookMetadata(ctx context.Context, bookID int64) 
 		if !isRefreshablePath(file) {
 			continue
 		}
+		validatedPath, pathErr := s.validateStoredFilePath(path)
+		if pathErr != nil {
+			result.Error = pathErr.Error()
+			continue
+		}
+		path = validatedPath
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
@@ -253,11 +259,15 @@ func (s *LibraryService) reconcileAudiobookTracks(ctx context.Context, directory
 	if strings.TrimSpace(firstTrack) == "" {
 		return nil
 	}
-	if _, err := s.FindFileByPath(ctx, firstTrack); err != nil {
+	validatedFirstTrack, err := s.validateStoredFilePath(firstTrack)
+	if err != nil {
+		return err
+	}
+	if _, err := s.FindFileByPath(ctx, validatedFirstTrack); err != nil {
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if _, err := s.MoveFile(ctx, directoryFile.ID, firstTrack); err != nil {
+		if _, err := s.MoveFile(ctx, directoryFile.ID, validatedFirstTrack); err != nil {
 			return err
 		}
 	}
@@ -266,12 +276,16 @@ func (s *LibraryService) reconcileAudiobookTracks(ctx context.Context, directory
 		if trackPath == "" {
 			continue
 		}
-		if _, err := s.FindFileByPath(ctx, trackPath); err == nil {
+		validatedTrackPath, pathErr := s.validateStoredFilePath(trackPath)
+		if pathErr != nil {
+			continue
+		}
+		if _, err := s.FindFileByPath(ctx, validatedTrackPath); err == nil {
 			continue
 		} else if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		info, err := os.Stat(trackPath)
+		info, err := os.Stat(validatedTrackPath)
 		if err != nil {
 			continue
 		}
@@ -279,8 +293,8 @@ func (s *LibraryService) reconcileAudiobookTracks(ctx context.Context, directory
 			EditionID:    directoryFile.EditionID,
 			MediaType:    MediaTypeAudiobook,
 			Format:       strings.TrimPrefix(strings.ToLower(filepath.Ext(trackPath)), "."),
-			Path:         trackPath,
-			OriginalPath: trackPath,
+			Path:         validatedTrackPath,
+			OriginalPath: validatedTrackPath,
 			Size:         info.Size(),
 			Managed:      directoryFile.Managed,
 			ImportedAt:   directoryFile.ImportedAt,

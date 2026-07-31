@@ -81,6 +81,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	if librarySvc == nil {
 		panic("api.NewServerWithLibraryService requires an explicit LibraryService")
 	}
+	librarySvc.SetAllowedFileRoots(cfg.IncomingDir, cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir, cfg.MangaIncomingDir)
 	sessions := NewSessionStore()
 
 	// Configure which reverse proxies may set forwarded headers we honor.
@@ -140,6 +141,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 	})
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
+	coverCache.SetSourceRoots(cfg.IncomingDir, cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir, cfg.MangaIncomingDir)
 	s := &Server{
 		cfg:               cfg,
 		db:                database,

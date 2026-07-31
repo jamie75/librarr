@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -93,6 +94,17 @@ func TestExtractAudioMeta_NonexistentMP3(t *testing.T) {
 	}
 	if meta.Artist != "Artist" {
 		t.Errorf("expected artist 'Artist', got %q", meta.Artist)
+	}
+}
+
+func TestSanitizeAudioLogValueRemovesControlCharactersAndBoundsInput(t *testing.T) {
+	input := "prefix\n\rline\x00\x1b[31m" + strings.Repeat("x", 200)
+	got := sanitizeAudioLogValue(input)
+	if strings.ContainsAny(got, "\r\n\x00\x1b") {
+		t.Fatalf("control characters remained: %q", got)
+	}
+	if len([]rune(got)) > 129 {
+		t.Fatalf("sanitized value was not bounded: %d runes", len([]rune(got)))
 	}
 }
 

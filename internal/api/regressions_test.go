@@ -40,6 +40,18 @@ func TestQueryBoundedInt(t *testing.T) {
 	}
 }
 
+func TestParseAudioMetadataCountRejectsOverflow(t *testing.T) {
+	if got := parseAudioMetadataCount("12"); got != 12 {
+		t.Fatalf("count = %d, want 12", got)
+	}
+	if got := parseAudioMetadataCount("9223372036854775808"); got != 0 {
+		t.Fatalf("overflow count = %d, want 0", got)
+	}
+	if got := parseAudioMetadataCount("-1"); got != 0 {
+		t.Fatalf("negative count = %d, want 0", got)
+	}
+}
+
 func TestResolveTorrentURLUsesABBURL(t *testing.T) {
 	reg, err := sourcestest.Registry()
 	if err != nil {

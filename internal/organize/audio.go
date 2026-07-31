@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/jamie75/librarr/internal/safepath"
 )
 
 // AudioMeta holds extracted audio metadata.
@@ -79,7 +81,10 @@ func ExtractAudioMeta(path string) *AudioMeta {
 
 	// Fallback: parse from filename.
 	meta := parseAudioFilename(path)
-	slog.Debug("audio metadata fallback", "file", filepath.Base(path), "reason", "no supported embedded metadata", "title_found", meta != nil && meta.Title != "", "artist_found", meta != nil && meta.Artist != "", "abridged", meta != nil && meta.Abridged)
+	logFile := sanitizeAudioLogValue(filepath.Base(path))
+	logFile = strings.ReplaceAll(logFile, "\r", "")
+	logFile = strings.ReplaceAll(logFile, "\n", "")
+	slog.Debug("audio metadata fallback", "file", logFile, "reason", "no supported embedded metadata", "title_found", meta != nil && meta.Title != "", "artist_found", meta != nil && meta.Artist != "", "abridged", meta != nil && meta.Abridged)
 	if strings.HasSuffix(strings.ToLower(path), ".mp3") {
 		meta.DurationSeconds = estimateMP3Duration(path)
 	}
@@ -100,7 +105,11 @@ const maxID3TagBytes = 16 << 20
 
 // readID3v2Tags reads bounded ID3v2.2, 2.3, and 2.4 tags from an MP3 file.
 func readID3v2Tags(path string) *AudioMeta {
-	f, err := os.Open(path)
+	validatedPath, err := validateAudioInput(path)
+	if err != nil {
+		return nil
+	}
+	f, err := os.Open(validatedPath)
 	if err != nil {
 		return nil
 	}
@@ -122,7 +131,10 @@ func readID3v2Tags(path string) *AudioMeta {
 	}
 	size, ok := decodeSyncSafe(header[6:10])
 	if !ok || size <= 0 || size > maxID3TagBytes {
-		slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "id3 tag is missing, invalid, or oversized", "id3_version", version)
+		logFile := sanitizeAudioLogValue(filepath.Base(validatedPath))
+		logFile = strings.ReplaceAll(logFile, "\r", "")
+		logFile = strings.ReplaceAll(logFile, "\n", "")
+		slog.Debug("mp3 metadata fallback", "file", logFile, "reason", "id3 tag is missing, invalid, or oversized", "id3_version", version)
 		return nil
 	}
 
@@ -137,7 +149,10 @@ func readID3v2Tags(path string) *AudioMeta {
 	if flags&0x40 != 0 {
 		skip, valid := id3ExtendedHeaderLength(version, tagData)
 		if !valid || skip > len(tagData) {
-			slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "invalid id3 extended header", "id3_version", version)
+			logFile := sanitizeAudioLogValue(filepath.Base(validatedPath))
+			logFile = strings.ReplaceAll(logFile, "\r", "")
+			logFile = strings.ReplaceAll(logFile, "\n", "")
+			slog.Debug("mp3 metadata fallback", "file", logFile, "reason", "invalid id3 extended header", "id3_version", version)
 			return nil
 		}
 		tagData = tagData[skip:]
@@ -201,24 +216,37 @@ func readID3v2Tags(path string) *AudioMeta {
 		pos += frameHeaderSize + frameSize
 	}
 
-	slog.Debug("mp3 metadata extraction", "file", filepath.Base(path), "id3_version", version, "frame_ids", frameIDs, "title_found", meta.Title != "", "artist_found", meta.Artist != "", "cover_found", meta.Cover != nil, "cover_mime", coverMime(meta.Cover), "cover_bytes", coverBytes(meta.Cover))
+	logFile := sanitizeAudioLogValue(filepath.Base(validatedPath))
+	logFile = strings.ReplaceAll(logFile, "\r", "")
+	logFile = strings.ReplaceAll(logFile, "\n", "")
+	logFrames := sanitizeAudioLogValues(frameIDs)
+	logMime := sanitizeAudioLogValue(coverMime(meta.Cover))
+	logMime = strings.ReplaceAll(logMime, "\r", "")
+	logMime = strings.ReplaceAll(logMime, "\n", "")
+	slog.Debug("mp3 metadata extraction", "file", logFile, "id3_version", version, "frame_ids", logFrames, "title_found", meta.Title != "", "artist_found", meta.Artist != "", "cover_found", meta.Cover != nil, "cover_mime", logMime, "cover_bytes", coverBytes(meta.Cover))
 	if meta.Artist != "" || meta.Album != "" || meta.Title != "" || meta.Cover != nil || meta.Comment != "" || meta.Year != "" {
 		meta.Embedded = true
 		meta.DurationSeconds = estimateMP3Duration(path)
 		return meta
 	}
-	slog.Debug("mp3 metadata fallback", "file", filepath.Base(path), "reason", "no supported id3 metadata found", "id3_version", version)
+	logFile = strings.ReplaceAll(logFile, "\r", "")
+	logFile = strings.ReplaceAll(logFile, "\n", "")
+	slog.Debug("mp3 metadata fallback", "file", logFile, "reason", "no supported id3 metadata found", "id3_version", version)
 	return nil
 }
 
 func estimateMP3Duration(path string) int64 {
-	info, err := os.Stat(path)
+	validatedPath, err := validateAudioInput(path)
+	if err != nil {
+		return 0
+	}
+	info, err := os.Stat(validatedPath)
 	if err != nil || info.Size() <= 0 {
 		return 0
 	}
 	// A bounded MPEG frame-header scan gives useful duration for normal CBR
 	// audiobook tracks without requiring an audio decoder.
-	f, err := os.Open(path)
+	f, err := os.Open(validatedPath)
 	if err != nil {
 		return 0
 	}
@@ -527,11 +555,47 @@ func coverBytes(cover *ExtractedCover) int {
 	return len(cover.Data)
 }
 
+func validateAudioInput(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("audio path is required")
+	}
+	return safepath.ExistingUnderRoot(filepath.Dir(path), path)
+}
+
+func sanitizeAudioLogValue(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.ReplaceAll(value, "\x1b", "")
+	if len([]rune(value)) > 128 {
+		value = string([]rune(value)[:128]) + "…"
+	}
+	return value
+}
+
+func sanitizeAudioLogValues(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = sanitizeAudioLogValue(value)
+		value = strings.ReplaceAll(value, "\r", "")
+		value = strings.ReplaceAll(value, "\n", "")
+		cleaned = append(cleaned, value)
+	}
+	return cleaned
+}
+
 // readM4BMetadata reads common iTunes/MP4 metadata atoms without decoding
 // audio. It is intentionally bounded; unsupported atoms are ignored and the
 // filename/path fallback remains available.
 func readM4BMetadata(path string) *AudioMeta {
-	f, err := os.Open(path)
+	validatedPath, err := validateAudioInput(path)
+	if err != nil {
+		return nil
+	}
+	f, err := os.Open(validatedPath)
 	if err != nil {
 		return nil
 	}
@@ -757,7 +821,11 @@ func ExtractAudioMetaFromDir(dirPath string) *AudioMeta {
 		".ogg": true, ".flac": true, ".opus": true,
 	}
 
-	entries, err := os.ReadDir(dirPath)
+	validatedDir, err := validateAudioInput(dirPath)
+	if err != nil {
+		return nil
+	}
+	entries, err := os.ReadDir(validatedDir)
 	if err != nil {
 		return nil
 	}
@@ -770,7 +838,11 @@ func ExtractAudioMetaFromDir(dirPath string) *AudioMeta {
 		if !audioExts[ext] {
 			continue
 		}
-		meta := ExtractAudioMeta(filepath.Join(dirPath, entry.Name()))
+		entryPath, pathErr := validateAudioInput(filepath.Join(validatedDir, entry.Name()))
+		if pathErr != nil {
+			continue
+		}
+		meta := ExtractAudioMeta(entryPath)
 		if meta != nil && (meta.Artist != "" || meta.Album != "") {
 			return meta
 		}
@@ -783,19 +855,23 @@ func ExtractAudioMetaFromDir(dirPath string) *AudioMeta {
 // manual review instead of silently merging unrelated audio files.
 func ExtractAudiobookMetadata(path string) *AudiobookMeta {
 	paths := []string{}
-	info, err := os.Stat(path)
+	validatedPath, err := validateAudioInput(path)
+	if err != nil {
+		return nil
+	}
+	info, err := os.Stat(validatedPath)
 	if err != nil {
 		return nil
 	}
 	if info.IsDir() {
-		_ = filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
+		_ = filepath.WalkDir(validatedPath, func(current string, entry os.DirEntry, walkErr error) error {
 			if walkErr == nil && !entry.IsDir() && isAudiobookExtension(filepath.Ext(current)) {
 				paths = append(paths, current)
 			}
 			return nil
 		})
-	} else if isAudiobookExtension(filepath.Ext(path)) {
-		paths = append(paths, path)
+	} else if isAudiobookExtension(filepath.Ext(validatedPath)) {
+		paths = append(paths, validatedPath)
 	}
 	sort.Strings(paths)
 	return aggregateAudiobookMetadata(paths)
