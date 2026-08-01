@@ -50,6 +50,8 @@ Librarr 2.0 currently has:
 - local audiobook metadata extraction for MP3/M4B, multi-track grouping,
   embedded artwork caching, duration/track summaries, and conservative path
   fallback
+- opt-in Apple Books audiobook and EPUB/PDF ebook export with safe local handoff copies, export
+  history, and a configurable macOS `open -a Books` helper
 - explicit metadata refresh for existing normalized books, including legacy
   audiobook directory conversion, idempotent summaries, and manual-override
   conflict reporting
@@ -778,6 +780,9 @@ work. Do not treat them as the preferred long-term domain model.
 | GET | `/api/downloads` | Download jobs; `/api/v1/downloads` is preferred for new clients |
 | GET | `/api/settings` | Settings |
 | POST | `/api/settings` | Save settings |
+| POST | `/api/v1/books/{id}/apple-books/export` | Export a normalized audiobook or EPUB/PDF ebook for Apple Books (admin) |
+| GET | `/api/v1/books/{id}/apple-books/exports` | Export history for one audiobook |
+| GET | `/api/v1/apple-books/exports` | Recent Apple Books export history |
 | GET | `/api/config` | Bootstrap config |
 | GET | `/api/health` | Health check |
 
@@ -817,6 +822,7 @@ Avoid generic "Something went wrong" messages.
 - [docs/read-api.md](docs/read-api.md) — normalized read API
 - [docs/normalized-repository.md](docs/normalized-repository.md) — normalized repository behavior
 - [docs/wanted-books.md](docs/wanted-books.md) — Wanted monitoring, release inspection, and manual handoff
+- [docs/apple-books-export.md](docs/apple-books-export.md) — safe audiobook and EPUB/PDF ebook handoff to Apple Books
 - [docs/v2-dogfood.md](docs/v2-dogfood.md) — local Librarr 2.0 dogfood deployment
 - [docs/backfill-design.md](docs/backfill-design.md) and [docs/backfill-engine.md](docs/backfill-engine.md) — migration/backfill design
 

@@ -66,7 +66,6 @@ const I18N = {
     library_title: 'Your Library',
     library_formats: 'Formats',
     quick_details: 'Details',
-    quick_more: 'More',
     wanted_add: 'Add to Wanted',
     wanted_added: 'Wanted',
     wanted_in_library: 'In Library',
@@ -393,7 +392,6 @@ const I18N = {
     library_title: 'Ваша библиотека',
     library_formats: 'Форматы',
     quick_details: 'Подробнее',
-    quick_more: 'Ещё',
     details_kicker: 'О книге',
     details_metadata: 'Метаданные',
     details_formats: 'Доступные форматы',
@@ -767,6 +765,8 @@ const state = {
       error: '',
     },
   },
+  appleBooksExports: [],
+  appleBooksExporting: false,
 };
 
 const LIBRARY_IMPORT_FIELDS = ['incoming_dir', 'ebook_dir', 'audiobook_dir', 'manga_dir'];
@@ -2256,6 +2256,16 @@ function normalizeFormatLabels(formats) {
     .sort((a, b) => (order.get(a) ?? 100) - (order.get(b) ?? 100) || a.localeCompare(b));
 }
 
+function appleBooksDetailFormatOptions(book) {
+  const formats = normalizeFormatLabels(book?.formats || []);
+  if (book?.mediaType === 'ebook') {
+    return ['<option value="auto">Automatic format</option>']
+      .concat(formats.filter(format => format === 'EPUB' || format === 'PDF').map(format => `<option value="${format.toLowerCase()}">${format}</option>`))
+      .join('');
+  }
+  return '<option value="auto">Automatic format</option><option value="m4b">M4B</option><option value="mp3">MP3</option>';
+}
+
 function filterLibraryItems(items, query) {
   if (!query) return items;
   const needle = query.toLowerCase();
@@ -2353,7 +2363,7 @@ function renderLibraryBookCard(book, index) {
         </div>
         <div class="flex gap-2 flex-wrap">
           <button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-amber-500 text-stone-950 text-sm font-medium hover:bg-amber-400 transition-colors">${t('quick_details')}</button>
-          ${book.externalUrl ? `<a href="${escapeHtml(book.externalUrl)}" target="_blank" rel="noreferrer" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('open_external')}</a>` : `<button data-action="openBookDetails" data-index="${index}" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('quick_more')}</button>`}
+          ${book.externalUrl ? `<a href="${escapeHtml(book.externalUrl)}" target="_blank" rel="noreferrer" class="px-3 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/15 transition-colors">${t('open_external')}</a>` : ''}
         </div>
       </div>
     </article>
@@ -2916,14 +2926,20 @@ async function openBookDetails(index, collection = 'libraryBooks') {
   let detailFiles = book.files || [];
   let detailMetadata = null;
   let detailProvenance = null;
+  let detailExports = [];
   if (normalizedLibraryMode() && book.id) {
     try {
-      const [detail, files, metadata, provenance] = await Promise.all([
+      const requests = [
         apiJson(`/api/v1/books/${book.id}`),
         apiJson(`/api/v1/books/${book.id}/files`),
         apiJson(`/api/v1/books/${book.id}/metadata`),
         apiJson(`/api/v1/books/${book.id}/provenance`),
-      ]);
+      ];
+      if (book.mediaType === 'audiobook' || book.mediaType === 'ebook' || book.media_type === 'audiobook' || book.media_type === 'ebook') {
+        requests.push(apiJson(`/api/v1/books/${book.id}/apple-books/exports`).catch(() => ({ items: [] })));
+      }
+      const [detail, files, metadata, provenance, exports] = await Promise.all(requests);
+      detailExports = Array.isArray(exports?.items) ? exports.items : [];
       detailBook = {
         ...mapV1BookToUIBook(detail),
         description: detail.description || '',
@@ -3007,6 +3023,26 @@ async function openBookDetails(index, collection = 'libraryBooks') {
             <div class="rounded-[1.25rem] border border-dashed border-stone-800 bg-stone-900/30 p-4 text-sm text-stone-500">${t('dashboard_empty')}</div>
           </div>
         </section>
+        ${['audiobook', 'ebook'].includes(detailBook.mediaType) && detailBook.id && normalizedLibraryMode() ? `
+          <section class="mt-8 rounded-[1.25rem] border border-indigo-500/20 bg-indigo-500/5 p-4">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 class="text-lg font-semibold text-white">Apple Books</h3>
+                <p class="mt-1 text-sm text-stone-400">Create a safe copy for Apple Books without changing this library file.</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <select id="detail-apple-books-format" class="rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm text-stone-200">${appleBooksDetailFormatOptions(detailBook)}</select>
+                <button id="detail-apple-books-export" data-book-id="${escapeHtml(detailBook.id)}" data-action="exportBookToAppleBooks" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60">Export to Apple Books</button>
+              </div>
+            </div>
+            <p id="detail-apple-books-export-status" class="mt-3 text-xs text-stone-400"></p>
+            ${detailExports.length ? `<div class="mt-4 space-y-2">${detailExports.map(item => `
+              <div class="rounded-lg border border-stone-800 bg-stone-950/40 px-3 py-2 text-sm">
+                <span class="font-medium text-stone-200">${escapeHtml(appleBooksExportFormatLabel(item.actual_format))}</span>
+                <span class="text-stone-500"> · ${escapeHtml(item.status || 'unknown')} · ${escapeHtml(item.destination || '')}</span>
+                ${item.error ? `<p class="mt-1 text-xs text-red-300">${escapeHtml(item.error)}</p>` : ''}
+              </div>`).join('')}</div>` : '<p class="mt-3 text-xs text-stone-500">No Apple Books exports for this audiobook yet.</p>'}
+          </section>` : ''}
         ${detailBook.id && normalizedLibraryMode() ? renderBookDeletionPanel(detailBook, detailFiles) : ''}
       </div>
     </div>
@@ -3014,6 +3050,51 @@ async function openBookDetails(index, collection = 'libraryBooks') {
   modal.classList.remove('hidden');
   modal.classList.add('flex');
   loadBookHistory(detailBook);
+}
+
+async function exportBookToAppleBooks(button = null) {
+  const rawBookID = button?.dataset?.bookId || state.activeDetailBook?.id;
+  const bookID = Number(rawBookID);
+  if (!Number.isInteger(bookID) || bookID <= 0) {
+    showToast('Cannot export this book because its book ID is missing.', 'error');
+    return;
+  }
+  if (state.appleBooksExporting) return;
+  state.appleBooksExporting = true;
+  const format = document.getElementById('detail-apple-books-format')?.value || 'auto';
+  const status = document.getElementById('detail-apple-books-export-status');
+  const originalText = button?.textContent || 'Export to Apple Books';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Exporting…';
+  }
+  if (status) status.textContent = 'Preparing a safe Apple Books copy…';
+  try {
+    const response = await apiJson(`/api/v1/books/${bookID}/apple-books/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format }),
+    });
+    if (!response.success) throw new Error(response.error || 'Apple Books export failed');
+    showToast('Book exported for Apple Books', 'success');
+    if (status) status.textContent = `Export ${response.export?.status || 'completed'}: ${response.export?.destination || 'ready'}`;
+    const modal = document.getElementById('book-detail-modal');
+    const modalIsOpen = !modal || !modal.classList?.contains('hidden');
+    if (modalIsOpen) {
+      const context = state.activeDetailContext;
+      await openBookDetails(context?.index || 0, context?.collection || 'libraryBooks');
+    }
+    await loadAppleBooksExports();
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      if (status) status.textContent = err.message || 'Apple Books export failed.';
+      showToast(err.message || 'Apple Books export failed', 'error');
+    }
+  } finally {
+    state.appleBooksExporting = false;
+    if (button?.isConnected !== false) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
 }
 
 function closeBookDetails() {
@@ -4313,11 +4394,81 @@ async function loadSettings() {
   loadSources();
   loadTOTPStatus();
   loadSettingToggles();
+  loadAppleBooksExports();
   updateLibraryRepairCardVisibility();
   showChangePasswordIfMultiUser();
   if (state.currentRole === 'admin') {
     loadUsers();
     loadInviteCodes();
+  }
+}
+
+function appleBooksExportFormatLabel(value) {
+  const format = String(value || '').toLowerCase();
+  return format === 'mp3-package' ? 'MP3 package' : format.toUpperCase() || 'Unknown';
+}
+
+function renderAppleBooksHistory(items) {
+  const container = document.getElementById('settings-apple-books-history');
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = '<p class="text-sm text-slate-500">No exports yet.</p>';
+    return;
+  }
+  container.innerHTML = items.map(item => `
+    <div class="flex flex-col gap-1 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div class="min-w-0">
+        <p class="truncate font-medium text-slate-200">${escapeHtml(item.book_title || `Book ${item.book_id}`)}</p>
+        <p class="text-xs text-slate-500">${escapeHtml(appleBooksExportFormatLabel(item.actual_format))} · ${escapeHtml(item.status || 'unknown')} · ${escapeHtml(item.destination || '')}</p>
+      </div>
+      ${item.error ? `<p class="text-xs text-red-300">${escapeHtml(item.error)}</p>` : ''}
+    </div>
+  `).join('');
+}
+
+async function loadAppleBooksExports() {
+  try {
+    const data = await apiJson('/api/v1/apple-books/exports');
+    state.appleBooksExports = Array.isArray(data.items) ? data.items : [];
+    renderAppleBooksHistory(state.appleBooksExports);
+  } catch (err) {
+    if (err.message !== 'Unauthorized') {
+      const status = document.getElementById('settings-apple-books-status');
+      if (status) status.textContent = 'Apple Books export history is unavailable.';
+    }
+  }
+}
+
+async function saveAppleBooksSettings() {
+  const payload = {
+    apple_books_export_enabled: document.getElementById('setting-apple_books_export_enabled')?.checked === true,
+    apple_books_export_dir: document.getElementById('setting-apple_books_export_dir')?.value || '',
+    apple_books_export_overwrite: document.getElementById('setting-apple_books_export_overwrite')?.checked === true,
+  };
+  try {
+    const response = await apiJson('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!response.success) throw new Error(response.error || 'Failed to save Apple Books settings');
+    const status = document.getElementById('settings-apple-books-status');
+    if (status) status.textContent = 'Settings saved.';
+    showToast('Apple Books settings saved', 'success');
+  } catch (err) {
+    if (err.message !== 'Unauthorized') showToast(err.message || 'Failed to save Apple Books settings', 'error');
+  }
+}
+
+async function testAppleBooksExport() {
+  const status = document.getElementById('settings-apple-books-status');
+  if (status) status.textContent = 'Testing export folder…';
+  try {
+    const response = await apiJson('/api/apple-books/test', { method: 'POST' });
+    if (!response.success) throw new Error(response.error || 'Export folder test failed');
+    if (status) status.textContent = 'Export folder is writable.';
+    showToast('Apple Books export folder is ready', 'success');
+  } catch (err) {
+    if (status) status.textContent = err.message || 'Export folder test failed.';
+    if (err.message !== 'Unauthorized') showToast(err.message || 'Export folder test failed', 'error');
   }
 }
 
@@ -4564,6 +4715,18 @@ async function loadSettingToggles() {
     const fileOrgEnabled = document.getElementById('setting-file_org_enabled');
     if (fileOrgEnabled && data.file_org_enabled !== undefined) {
       fileOrgEnabled.checked = !!data.file_org_enabled;
+    }
+    const appleBooksEnabled = document.getElementById('setting-apple_books_export_enabled');
+    if (appleBooksEnabled && data.apple_books_export_enabled !== undefined) {
+      appleBooksEnabled.checked = !!data.apple_books_export_enabled;
+    }
+    const appleBooksOverwrite = document.getElementById('setting-apple_books_export_overwrite');
+    if (appleBooksOverwrite && data.apple_books_export_overwrite !== undefined) {
+      appleBooksOverwrite.checked = !!data.apple_books_export_overwrite;
+    }
+    const appleBooksDir = document.getElementById('setting-apple_books_export_dir');
+    if (appleBooksDir && data.apple_books_export_dir !== undefined) {
+      appleBooksDir.value = data.apple_books_export_dir || '';
     }
     const wantedMonitorEnabled = document.getElementById('setting-wanted_monitor_enabled');
     if (wantedMonitorEnabled && data.wanted_monitor_enabled !== undefined) {
@@ -6629,6 +6792,9 @@ const CLICK_ACTIONS = {
   openImportSettings: () => openImportSettings(),
   saveLibraryImportStandard: () => saveLibraryImportSettings(false),
   saveLibraryImportContinue: () => saveLibraryImportSettings(true),
+  saveAppleBooksSettings: () => saveAppleBooksSettings(),
+  testAppleBooksExport: () => testAppleBooksExport(),
+  exportBookToAppleBooks: el => exportBookToAppleBooks(el),
   previewNestedEbookPathRepair: () => previewNestedEbookPathRepair(),
   runNestedEbookPathRepair: () => runNestedEbookPathRepair(),
   startLibraryScan: () => startLibraryScan(),

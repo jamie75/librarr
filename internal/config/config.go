@@ -48,6 +48,11 @@ type Config struct {
 	IncomingDir      string
 	MangaIncomingDir string
 
+	// Apple Books export is opt-in and writes only beneath the configured root.
+	AppleBooksExportEnabled   bool
+	AppleBooksExportDir       string
+	AppleBooksExportOverwrite bool
+
 	// Torznab
 	TorznabAPIKey string
 
@@ -334,12 +339,15 @@ func buildFromEnv() *Config {
 		ProwlarrURL:    getEnv("PROWLARR_URL", ""),
 		ProwlarrAPIKey: getEnv("PROWLARR_API_KEY", ""),
 
-		FileOrgEnabled:   getEnvBool("FILE_ORG_ENABLED", true),
-		EbookDir:         getEnv("EBOOK_DIR", "/books/ebooks"),
-		AudiobookDir:     getEnv("AUDIOBOOK_DIR", "/books/audiobooks"),
-		MangaDir:         getEnv("MANGA_DIR", "/books/manga"),
-		IncomingDir:      getEnv("INCOMING_DIR", "/data/incoming"),
-		MangaIncomingDir: getEnv("MANGA_INCOMING_DIR", "/data/manga-incoming"),
+		FileOrgEnabled:            getEnvBool("FILE_ORG_ENABLED", true),
+		EbookDir:                  getEnv("EBOOK_DIR", "/books/ebooks"),
+		AudiobookDir:              getEnv("AUDIOBOOK_DIR", "/books/audiobooks"),
+		MangaDir:                  getEnv("MANGA_DIR", "/books/manga"),
+		IncomingDir:               getEnv("INCOMING_DIR", "/data/incoming"),
+		MangaIncomingDir:          getEnv("MANGA_INCOMING_DIR", "/data/manga-incoming"),
+		AppleBooksExportEnabled:   getEnvBool("APPLE_BOOKS_EXPORT_ENABLED", false),
+		AppleBooksExportDir:       getEnv("APPLE_BOOKS_EXPORT_DIR", "/data/apple-books-export"),
+		AppleBooksExportOverwrite: getEnvBool("APPLE_BOOKS_EXPORT_OVERWRITE", false),
 
 		TorznabAPIKey: getEnv("TORZNAB_API_KEY", ""),
 
@@ -671,6 +679,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"manga_dir":                 &c.MangaDir,
 		"incoming_dir":              &c.IncomingDir,
 		"manga_incoming_dir":        &c.MangaIncomingDir,
+		"apple_books_export_dir":    &c.AppleBooksExportDir,
 		"flibusta_url":              &c.FlibustaURL,
 		"library_repository_mode":   &c.LibraryRepositoryMode,
 		"import_engine":             &c.ImportEngine,
@@ -712,6 +721,8 @@ func (c *Config) applySettingsFileOverrides() {
 		"rtorrent_tls_verify":             &c.RTorrentTLSVerify,
 		"rtorrent_allow_private_networks": &c.RTorrentAllowPrivateNetworks,
 		"rtorrent_use_tls":                &c.RTorrentUseTLS,
+		"apple_books_export_enabled":      &c.AppleBooksExportEnabled,
+		"apple_books_export_overwrite":    &c.AppleBooksExportOverwrite,
 	}
 	for key, fieldPtr := range boolPtrs {
 		v, ok := raw[key]

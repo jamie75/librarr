@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jamie75/librarr/internal/applebooks"
 	"github.com/jamie75/librarr/internal/diagnostics"
 	"github.com/jamie75/librarr/internal/download"
 	"github.com/jamie75/librarr/internal/netutil"
@@ -46,27 +47,30 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	// Inject current config values as defaults so the UI can render fields
 	// even when nothing has been saved to settings.json yet.
 	defaults := map[string]interface{}{
-		"file_org_enabled":            s.cfg.FileOrgEnabled,
-		"annas_archive_domain":        s.cfg.AnnasArchiveDomain,
-		"annas_archive_secret_key":    s.cfg.AnnasArchiveSecretKey,
-		"ebook_dir":                   s.cfg.EbookDir,
-		"audiobook_dir":               s.cfg.AudiobookDir,
-		"manga_dir":                   s.cfg.MangaDir,
-		"incoming_dir":                s.cfg.IncomingDir,
-		"rate_limit_enabled":          s.cfg.RateLimitEnabled,
-		"metrics_enabled":             s.cfg.MetricsEnabled,
-		"webnovel_enabled":            s.cfg.WebNovelEnabled,
-		"mangadex_enabled":            s.cfg.MangaDexEnabled,
-		"max_retries":                 s.cfg.MaxRetries,
-		"foreign_lang_filter":         s.searchMgr.ForeignLangFilterEnabled(),
-		"flibusta_enabled":            s.cfg.FlibustaEnabled,
-		"flibusta_url":                s.cfg.FlibustaURL,
-		"zlibrary_enabled":            s.cfg.ZLibraryEnabled,
-		"remove_torrent_after_import": s.cfg.RemoveTorrentAfterImport,
-		"wanted_monitor_enabled":      s.cfg.WantedMonitorEnabled,
-		"wanted_search_interval":      s.cfg.WantedSearchIntervalMode(),
-		"wanted_retry_failures":       s.cfg.WantedRetryFailures,
-		"wanted_max_results_keep":     s.cfg.WantedMaxResultsKeep,
+		"file_org_enabled":             s.cfg.FileOrgEnabled,
+		"annas_archive_domain":         s.cfg.AnnasArchiveDomain,
+		"annas_archive_secret_key":     s.cfg.AnnasArchiveSecretKey,
+		"ebook_dir":                    s.cfg.EbookDir,
+		"audiobook_dir":                s.cfg.AudiobookDir,
+		"manga_dir":                    s.cfg.MangaDir,
+		"incoming_dir":                 s.cfg.IncomingDir,
+		"apple_books_export_enabled":   s.cfg.AppleBooksExportEnabled,
+		"apple_books_export_dir":       s.cfg.AppleBooksExportDir,
+		"apple_books_export_overwrite": s.cfg.AppleBooksExportOverwrite,
+		"rate_limit_enabled":           s.cfg.RateLimitEnabled,
+		"metrics_enabled":              s.cfg.MetricsEnabled,
+		"webnovel_enabled":             s.cfg.WebNovelEnabled,
+		"mangadex_enabled":             s.cfg.MangaDexEnabled,
+		"max_retries":                  s.cfg.MaxRetries,
+		"foreign_lang_filter":          s.searchMgr.ForeignLangFilterEnabled(),
+		"flibusta_enabled":             s.cfg.FlibustaEnabled,
+		"flibusta_url":                 s.cfg.FlibustaURL,
+		"zlibrary_enabled":             s.cfg.ZLibraryEnabled,
+		"remove_torrent_after_import":  s.cfg.RemoveTorrentAfterImport,
+		"wanted_monitor_enabled":       s.cfg.WantedMonitorEnabled,
+		"wanted_search_interval":       s.cfg.WantedSearchIntervalMode(),
+		"wanted_retry_failures":        s.cfg.WantedRetryFailures,
+		"wanted_max_results_keep":      s.cfg.WantedMaxResultsKeep,
 
 		// Integration URLs and credentials (sensitive ones are masked below).
 		"qb_url":                          s.cfg.QBUrl,
@@ -233,6 +237,15 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.FileOrgEnabled = b
 		}
 	}
+	if v, ok := data["apple_books_export_enabled"].(bool); ok {
+		s.cfg.AppleBooksExportEnabled = v
+	}
+	if v, ok := data["apple_books_export_dir"].(string); ok && strings.TrimSpace(v) != "" {
+		s.cfg.AppleBooksExportDir = strings.TrimSpace(v)
+	}
+	if v, ok := data["apple_books_export_overwrite"].(bool); ok {
+		s.cfg.AppleBooksExportOverwrite = v
+	}
 	if v, ok := data["wanted_monitor_enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			s.cfg.WantedMonitorEnabled = b
@@ -275,6 +288,7 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	s.applyStringSetting(data, "ebook_dir", &s.cfg.EbookDir)
 	s.applyStringSetting(data, "audiobook_dir", &s.cfg.AudiobookDir)
 	s.applyStringSetting(data, "manga_dir", &s.cfg.MangaDir)
+	s.applyStringSetting(data, "apple_books_export_dir", &s.cfg.AppleBooksExportDir)
 	s.applyStringSetting(data, "rtorrent_name", &s.cfg.RTorrentName)
 	s.applyStringSetting(data, "rtorrent_url", &s.cfg.RTorrentURL)
 	s.applyStringSetting(data, "rtorrent_host", &s.cfg.RTorrentHost)
@@ -300,6 +314,17 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := data["rtorrent_port"].(float64); ok && v >= 1 && v <= 65535 {
 		s.cfg.RTorrentPort = int(v)
+	}
+	if s.appleBooks != nil {
+		coverRoot := ""
+		if s.coverCache != nil {
+			coverRoot = s.coverCache.Dir()
+		}
+		s.appleBooks.SetConfig(applebooks.Config{
+			Enabled: s.cfg.AppleBooksExportEnabled, ExportDir: s.cfg.AppleBooksExportDir,
+			Overwrite: s.cfg.AppleBooksExportOverwrite, EbookRoot: s.cfg.EbookDir, AudiobookRoot: s.cfg.AudiobookDir,
+			CoverRoot: coverRoot,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})

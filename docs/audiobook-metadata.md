@@ -52,3 +52,10 @@ summaries, and uses the existing CoverCache only when the book has no usable
 cover. Manual title overrides are retained and reported as conflicts instead
 of being silently replaced. The ordinary scan continues to skip already
 cataloged files; refresh is an explicit operation.
+
+## Apple Books handoff
+
+Normalized audiobook and EPUB/PDF ebook records can optionally be exported to a separate,
+root-constrained Apple Books handoff folder. See
+[Apple Books export](apple-books-export.md) for configuration, API history,
+and the macOS helper. Export does not change book metadata or source files.

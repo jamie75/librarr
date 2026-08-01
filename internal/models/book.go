@@ -225,6 +225,26 @@ type UploadRecord struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// AppleBooksExport records one attempt to prepare a normalized book for Apple
+// Books. DestinationPath is internal; API responses expose a relative name.
+type AppleBooksExport struct {
+	ID              int64      `json:"id"`
+	BookID          int64      `json:"book_id"`
+	MediaType       string     `json:"media_type"`
+	RequestedFormat string     `json:"requested_format"`
+	ActualFormat    string     `json:"actual_format"`
+	Status          string     `json:"status"`
+	SourceFileCount int        `json:"source_file_count"`
+	SourceBytes     int64      `json:"source_bytes"`
+	DestinationPath string     `json:"-"`
+	DestinationName string     `json:"destination_name"`
+	Checksum        string     `json:"checksum,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
 // User represents a registered user.
 type User struct {
 	ID           int64     `json:"id"`
