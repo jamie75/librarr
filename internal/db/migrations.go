@@ -23,6 +23,45 @@ var versionedMigrations = []schemaMigration{
 	{version: 7, name: "librarr_2_wanted_release_context", run: migrateLibrarr2WantedReleaseContext},
 	{version: 8, name: "librarr_2_wanted_search_releases", run: migrateLibrarr2WantedSearchReleases},
 	{version: 9, name: "librarr_2_wanted_manual_download", run: migrateLibrarr2WantedManualDownload},
+	{version: 10, name: "librarr_2_apple_books_exports", run: migrateLibrarr2AppleBooksExports},
+	{version: 11, name: "librarr_2_apple_books_export_media_type", run: migrateLibrarr2AppleBooksExportMediaType},
+}
+
+func migrateLibrarr2AppleBooksExportMediaType(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE apple_books_exports ADD COLUMN media_type TEXT NOT NULL DEFAULT 'audiobook'`); err != nil {
+		return fmt.Errorf("add Apple Books export media type: %w", err)
+	}
+	return nil
+}
+
+func migrateLibrarr2AppleBooksExports(tx *sql.Tx) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS apple_books_exports (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			book_id INTEGER NOT NULL,
+			requested_format TEXT NOT NULL DEFAULT '',
+			actual_format TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'queued',
+			source_file_count INTEGER NOT NULL DEFAULT 0,
+			source_bytes INTEGER NOT NULL DEFAULT 0,
+			destination_path TEXT NOT NULL DEFAULT '',
+			destination_name TEXT NOT NULL DEFAULT '',
+			checksum TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			completed_at DATETIME,
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_apple_books_exports_book ON apple_books_exports(book_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_apple_books_exports_status ON apple_books_exports(status)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("execute Apple Books export migration: %w", err)
+		}
+	}
+	return nil
 }
 
 func (d *DB) runVersionedMigrations() error {

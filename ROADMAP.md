@@ -34,6 +34,7 @@ The current codebase already provides a useful foundation, including:
 - Wanted Books with canonical release normalization, monitored Prowlarr searches, stored release inspection, manual qBittorrent handoff, and library reconciliation
 - staged connection diagnostics for Prowlarr and qBittorrent
 - local audiobook metadata extraction and multi-track normalized import
+- opt-in Apple Books export for normalized audiobooks and EPUB/PDF ebooks with durable history
 - metadata refresh for existing normalized audiobook records
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
@@ -455,6 +456,8 @@ The next implementation sequence should be:
 5. Extend rich diagnostics to Audiobookshelf, Kavita, Komga, SABnzbd, Transmission, and filesystem mappings.
 6. Begin metadata provider and cover improvements.
 7. Begin the download-client adapter framework after diagnostics are reliable.
+8. Dogfood Apple Books export with real M4B, single-track MP3, multi-track
+   audiobook packages, EPUB, and PDF on macOS.
 
 ## Import Repair Follow-up
 

@@ -1565,6 +1565,49 @@
         ]
       }
     },
+    "/api/v1/books/{id}/apple-books/export": {
+      "post": {
+        "summary": "Export a normalized audiobook or EPUB/PDF ebook for Apple Books",
+        "description": "Administrator-only, root-constrained copy. The source book is never modified or deleted. MOBI and AZW3 are unsupported.",
+        "security": [{"session": []}, {"apiKey": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {
+          "content": {"application/json": {"schema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["auto", "m4b", "mp3", "epub", "pdf"]}}}}}
+        },
+        "responses": {"201": {"description": "Export queued and completed"}, "400": {"description": "Invalid request"}, "409": {"description": "Export already exists"}, "422": {"description": "Unsupported or incompatible format"}}
+      }
+    },
+    "/api/v1/books/{id}/apple-books/exports": {
+      "get": {
+        "summary": "List Apple Books exports for a book",
+        "security": [{"session": []}, {"apiKey": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Export history"}}
+      }
+    },
+    "/api/v1/apple-books/exports": {
+      "get": {
+        "summary": "List recent Apple Books exports",
+        "security": [{"session": []}, {"apiKey": []}],
+        "responses": {"200": {"description": "Export history"}}
+      }
+    },
+    "/api/v1/apple-books/exports/{export_id}": {
+      "get": {
+        "summary": "Get an Apple Books export",
+        "security": [{"session": []}, {"apiKey": []}],
+        "parameters": [{"name": "export_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Export record"}, "404": {"description": "Export not found"}}
+      }
+    },
+    "/api/apple-books/test": {
+      "post": {
+        "summary": "Test the configured Apple Books export folder",
+        "description": "Administrator-only bounded write/delete probe beneath the configured export root.",
+        "security": [{"session": []}, {"apiKey": []}],
+        "responses": {"200": {"description": "Export folder is writable"}, "400": {"description": "Folder is disabled or not writable"}}
+      }
+    },
     "/api/v1/library/summary": {
       "get": {
         "summary": "Return normalized library totals and format distribution",

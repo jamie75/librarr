@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.librarr.apple-books-import</string>
+  <key>ProgramArguments</key>
+  <array><string>__INSTALL_PATH__/scripts/import-to-books.sh</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>APPLE_BOOKS_EXPORT_DIR</key><string>__APPLE_BOOKS_EXPORT_DIR__</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__LOG_DIR__/librarr-apple-books-import.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/librarr-apple-books-import.error.log</string>
+</dict>
+</plist>

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jamie75/librarr/internal/applebooks"
 	"github.com/jamie75/librarr/internal/config"
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/download"
@@ -59,6 +60,7 @@ type Server struct {
 	seriesDetector      *scheduler.SeriesDetector
 	authorMonitor       *scheduler.AuthorMonitor
 	wantedMonitor       *scheduler.WantedMonitor
+	appleBooks          *applebooks.Exporter
 	metadataProposalMu  sync.Mutex
 	metadataProposals   map[string]metadataProposal
 }
@@ -142,6 +144,14 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 
 	coverCache := library.NewCoverCache(defaultCoverCacheDir(cfg))
 	coverCache.SetSourceRoots(cfg.IncomingDir, cfg.EbookDir, cfg.AudiobookDir, cfg.MangaDir, cfg.MangaIncomingDir)
+	appleBooksExporter := applebooks.NewExporter(librarySvc, database, applebooks.Config{
+		Enabled:       cfg.AppleBooksExportEnabled,
+		ExportDir:     cfg.AppleBooksExportDir,
+		Overwrite:     cfg.AppleBooksExportOverwrite,
+		EbookRoot:     cfg.EbookDir,
+		AudiobookRoot: cfg.AudiobookDir,
+		CoverRoot:     coverCache.Dir(),
+	})
 	s := &Server{
 		cfg:               cfg,
 		db:                database,
@@ -167,6 +177,7 @@ func NewServerWithServices(cfg *config.Config, database *db.DB, searchMgr *searc
 		seriesDetector:    seriesDet,
 		authorMonitor:     authorMon,
 		wantedMonitor:     wantedMon,
+		appleBooks:        appleBooksExporter,
 		metadataProposals: map[string]metadataProposal{},
 	}
 
@@ -421,6 +432,10 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/books/{id}/files", s.handleV1BookFiles)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/editions", s.handleV1BookEditions)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/cover", s.handleV1BookCover)
+	s.mux.HandleFunc("POST /api/v1/books/{id}/apple-books/export", requireAdmin(s.handleAppleBooksExport))
+	s.mux.HandleFunc("GET /api/v1/books/{id}/apple-books/exports", s.handleAppleBooksBookExports)
+	s.mux.HandleFunc("GET /api/v1/apple-books/exports", s.handleAppleBooksExports)
+	s.mux.HandleFunc("GET /api/v1/apple-books/exports/{export_id}", s.handleAppleBooksExportByID)
 	s.mux.HandleFunc("GET /api/v1/library/repairs/nested-ebook-paths", requireAdmin(s.handleV1NestedEbookPathRepairPreview))
 	s.mux.HandleFunc("POST /api/v1/library/repairs/nested-ebook-paths", requireAdmin(s.handleV1NestedEbookPathRepairRun))
 	s.mux.HandleFunc("POST /api/v1/library/scan", requireAdmin(s.handleV1LibraryScanStart))
@@ -546,6 +561,7 @@ func (s *Server) registerAdminRoutes() {
 	s.mux.HandleFunc("GET /api/rtorrent/mappings", requireAdmin(s.handleGetRTorrentMappings))
 	s.mux.HandleFunc("POST /api/rtorrent/mappings", requireAdmin(s.handleAddRTorrentMapping))
 	s.mux.HandleFunc("DELETE /api/rtorrent/mappings/{index}", requireAdmin(s.handleDeleteRTorrentMapping))
+	s.mux.HandleFunc("POST /api/apple-books/test", requireAdmin(s.handleAppleBooksTest))
 
 	// CSV bulk import (admin only — triggers downloads).
 	s.mux.HandleFunc("POST /api/import/csv", requireAdmin(s.handleCSVImport))

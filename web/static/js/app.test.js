@@ -74,6 +74,7 @@ const functionBundle = [
   extractFunctionSource('renderOnboardingChecklist'),
   extractFunctionSource('mapV1BookToUIBook'),
   extractFunctionSource('normalizeFormatLabels'),
+  extractFunctionSource('appleBooksDetailFormatOptions'),
   extractFunctionSource('renderBookCover'),
   extractFunctionSource('makePlaceholderHtml'),
   extractFunctionSource('normalizeWantedKeyPart'),
@@ -108,6 +109,7 @@ const functionBundle = [
   extractFunctionSource('searchWantedBook'),
   extractFunctionSource('searchAllWanted'),
   extractFunctionSource('saveWantedSettings'),
+  extractFunctionSource('exportBookToAppleBooks'),
   extractFunctionSource('removeWantedBook'),
   extractFunctionSource('renderBookDeletionPanel'),
   extractFunctionSource('renderBookDeleteConfirmation'),
@@ -364,6 +366,7 @@ function createContext(overrides = {}) {
     loadHomeDashboard: async () => {},
     loadLibrary: async () => {},
     openBookDetails: async () => {},
+    loadAppleBooksExports: async () => {},
     loadSettings: async () => {},
     refreshDownloads: async () => {},
     getDownloadKey: result => result.title,
@@ -939,6 +942,119 @@ test('index.html places Save & Continue before Step 2', () => {
   assert.notEqual(buttonPos, -1);
   assert.notEqual(step2Pos, -1);
   assert.ok(buttonPos < step2Pos, 'Save & Continue should appear before Step 2');
+});
+
+test('Apple Books export settings and detail actions are wired', () => {
+  assert.match(indexHTML, /id="settings-apple-books"/);
+  assert.match(indexHTML, /setting-apple_books_export_enabled/);
+  assert.match(indexHTML, /setting-apple_books_export_dir/);
+  assert.match(indexHTML, /data-action="saveAppleBooksSettings"/);
+  assert.match(indexHTML, /data-action="testAppleBooksExport"/);
+  assert.match(appSource, /async function saveAppleBooksSettings\(\)/);
+  assert.match(appSource, /async function exportBookToAppleBooks\(button = null\)/);
+  assert.match(appSource, /\/api\/v1\/books\/\$\{bookID\}\/apple-books\/export/);
+  assert.match(appSource, /saveAppleBooksSettings: \(\) => saveAppleBooksSettings\(\)/);
+  assert.match(appSource, /exportBookToAppleBooks: el => exportBookToAppleBooks\(el\)/);
+  assert.match(appSource, /\['audiobook', 'ebook'\]\.includes\(detailBook\.mediaType\)/);
+});
+
+test('Apple Books detail format options are limited to the ebook source formats', () => {
+  const context = createContext();
+  const options = context.appleBooksDetailFormatOptions({ mediaType: 'ebook', formats: ['EPUB', 'MOBI', 'PDF'] });
+  assert.match(options, /value="auto"/);
+  assert.match(options, /value="epub"/);
+  assert.match(options, /value="pdf"/);
+  assert.doesNotMatch(options, /MOBI/);
+  const audioOptions = context.appleBooksDetailFormatOptions({ mediaType: 'audiobook', formats: ['MP3'] });
+  assert.match(audioOptions, /value="m4b"/);
+  assert.match(audioOptions, /value="mp3"/);
+});
+
+test('Apple Books export disables the dynamic button while the request is pending', async () => {
+  const button = { dataset: { bookId: '20' }, disabled: false, textContent: 'Export to Apple Books', isConnected: true };
+  let resolveRequest;
+  let requestCount = 0;
+  const context = createContext({
+    state: { activeDetailBook: { id: 20 }, activeDetailContext: null, appleBooksExporting: false },
+    document: { getElementById: id => id === 'detail-apple-books-format' ? { value: 'auto' } : null },
+    apiJson: async () => {
+      requestCount++;
+      if (requestCount === 1) return new Promise(resolve => { resolveRequest = resolve; });
+      return { items: [] };
+    },
+  });
+  const pending = context.exportBookToAppleBooks(button);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, 'Exporting…');
+  resolveRequest({ success: true, export: { status: 'completed', destination: 'book.m4b' } });
+  await pending;
+  assert.equal(button.disabled, false);
+});
+
+test('dynamic Apple Books export button posts the selected book and format', async () => {
+  const calls = [];
+  const button = { dataset: { bookId: '20' }, disabled: false, textContent: 'Export to Apple Books', isConnected: true };
+  const status = { textContent: '' };
+  const context = createContext({
+    state: { activeDetailBook: { id: 20 }, activeDetailContext: { index: 2, collection: 'libraryBooks' }, appleBooksExporting: false },
+    document: {
+      getElementById: id => id === 'detail-apple-books-format' ? { value: 'mp3' } : id === 'detail-apple-books-export-status' ? status : null,
+    },
+    apiJson: async (url, options) => {
+      calls.push({ url, options });
+      return { success: true, export: { status: 'completed', destination: 'Test Author - Book.mp3' } };
+    },
+  });
+  await context.exportBookToAppleBooks(button);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/v1/books/20/apple-books/export');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { format: 'mp3' });
+  assert.equal(button.disabled, false);
+  assert.match(status.textContent, /completed/);
+});
+
+test('Apple Books export button restores itself and reports API errors', async () => {
+  const button = { dataset: { bookId: '20' }, disabled: false, textContent: 'Export to Apple Books', isConnected: true };
+  const status = { textContent: '' };
+  const context = createContext({
+    state: { activeDetailBook: { id: 20 }, activeDetailContext: null, appleBooksExporting: false },
+    document: {
+      getElementById: id => id === 'detail-apple-books-format' ? { value: 'auto' } : id === 'detail-apple-books-export-status' ? status : null,
+    },
+    apiJson: async () => { throw new Error('export folder is not writable'); },
+  });
+  await context.exportBookToAppleBooks(button);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Export to Apple Books');
+  assert.equal(status.textContent, 'export folder is not writable');
+});
+
+test('Apple Books export does not reopen a modal that was closed while exporting', async () => {
+  let detailRefreshes = 0;
+  const button = { dataset: { bookId: '20' }, disabled: false, textContent: 'Export to Apple Books', isConnected: false };
+  const context = createContext({
+    state: { activeDetailBook: { id: 20 }, activeDetailContext: { index: 0, collection: 'libraryBooks' }, appleBooksExporting: false },
+    document: {
+      getElementById: id => id === 'detail-apple-books-format' ? { value: 'auto' } : id === 'book-detail-modal' ? { classList: { contains: () => true } } : null,
+    },
+    openBookDetails: async () => { detailRefreshes++; },
+    apiJson: async () => ({ success: true, export: { status: 'completed' } }),
+  });
+  await context.exportBookToAppleBooks(button);
+  assert.equal(detailRefreshes, 0);
+});
+
+test('Apple Books export reports a missing book ID instead of doing nothing', async () => {
+  const toasts = [];
+  const context = createContext({
+    state: { activeDetailBook: null, appleBooksExporting: false },
+    showToast: (message, level) => toasts.push({ message, level }),
+    apiJson: async () => { throw new Error('request should not be sent'); },
+  });
+  await context.exportBookToAppleBooks({ dataset: {}, textContent: 'Export to Apple Books' });
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].level, 'error');
 });
 
 test('index.html shows Step 2 as disabled before save', () => {
@@ -2221,6 +2337,30 @@ test('normalized book cards render one card with sorted unique format chips', ()
   assert.equal((html.match(/<format>/g) || []).length, 3);
   assert.match(html, /Ameritopia/);
   assert.match(html, /Mark R\. Levin/);
+});
+
+test('ebook, audiobook, and manga cards have one Details action and no More action', () => {
+  const context = createContext({
+    renderBookCover: () => '<cover />',
+    renderFormatBadge: format => `<format>${format}</format>`,
+  });
+  for (const mediaType of ['ebook', 'audiobook', 'manga']) {
+    const html = context.renderLibraryBookCard({ title: `${mediaType} book`, author: 'Author', mediaType, formats: ['EPUB'] }, 0);
+    assert.equal((html.match(/data-action="openBookDetails"/g) || []).length, 1, `${mediaType} should have one Details action`);
+    assert.doesNotMatch(html, />More</);
+  }
+  assert.doesNotMatch(appSource, /quick_more/);
+});
+
+test('Details remains the card action for an ebook with Apple Books details', () => {
+  const context = createContext({
+    renderBookCover: () => '<cover />',
+    renderFormatBadge: format => `<format>${format}</format>`,
+  });
+  const html = context.renderLibraryBookCard({ title: 'EPUB Book', author: 'Author', mediaType: 'ebook', formats: ['EPUB'] }, 4);
+  assert.match(html, /data-action="openBookDetails" data-index="4"/);
+  assert.doesNotMatch(html, />More</);
+  assert.match(appSource, /data-action="exportBookToAppleBooks"/);
 });
 
 test('book management panel exposes admin duplicate merge repair', () => {

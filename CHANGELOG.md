@@ -7,6 +7,11 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
 
 ### Added
 
+- Opt-in Apple Books export for normalized audiobooks and EPUB/PDF ebooks, including safe
+  single-file and multi-track handoff copies, export history, folder diagnostics,
+  and a configurable macOS `open -a Books` helper. Source files are never
+  modified or deleted.
+
 - Local audiobook metadata support for MP3/M4B imports, including conservative
   filename fallback, multi-track grouping, embedded artwork, and normalized
   duration/track summaries. Online audiobook metadata remains future work.
