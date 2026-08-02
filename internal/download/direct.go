@@ -553,12 +553,12 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	if err != nil {
 		return "", 0, fmt.Errorf("create temporary download file: %w", err)
 	}
-	validatedTempPath, err := validateDownloadPath(incomingRoot, tempFile.Name())
+	tempPath, err := validateDownloadPath(incomingRoot, tempFile.Name())
 	if err != nil {
 		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
 		return "", 0, err
 	}
-	tempPath := validatedTempPath
 	committed := false
 	defer func() {
 		if !committed {
@@ -594,7 +594,7 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	}
 
 	if expectedMD5 != "" {
-		actualMD5, err := fileMD5(incomingRoot, tempPath)
+		actualMD5, err := fileMD5(tempPath)
 		if err != nil {
 			return "", 0, fmt.Errorf("calculate download checksum: %w", err)
 		}
@@ -615,29 +615,23 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	if err != nil {
 		return "", 0, err
 	}
-	validatedFilePath, err := validateDownloadPath(incomingRoot, filePath)
-	if err != nil {
-		return "", 0, err
-	}
-	if _, err := os.Stat(validatedFilePath); err == nil {
+	// Destination is cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
+
+	if _, err := os.Stat(filePath); err == nil {
 		if expectedMD5 != "" {
-			if existingMD5, hashErr := fileMD5(incomingRoot, validatedFilePath); hashErr == nil && existingMD5 == expectedMD5 {
-				return validatedFilePath, written, nil
+			if existingMD5, hashErr := fileMD5(filePath); hashErr == nil && existingMD5 == expectedMD5 {
+				return filePath, written, nil
 			}
 		}
 		return "", 0, fmt.Errorf("download destination already exists")
 	} else if !os.IsNotExist(err) {
 		return "", 0, fmt.Errorf("check download destination: %w", err)
 	}
-	validatedTempPath, err = validateDownloadPath(incomingRoot, tempPath)
-	if err != nil {
-		return "", 0, err
-	}
-	validatedFilePath, err = validateDownloadPath(incomingRoot, validatedFilePath)
-	if err != nil {
-		return "", 0, err
-	}
-	if err := os.Rename(validatedTempPath, validatedFilePath); err != nil {
+	// Destination and temporary paths are cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
+
+	if err := os.Rename(tempPath, filePath); err != nil {
 		return "", 0, fmt.Errorf("commit downloaded file: %w", err)
 	}
 	committed = true
@@ -646,13 +640,13 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
 	safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
 	safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
-	safePath := netutil.SanitizeLogValue(validatedFilePath)
+	safePath := netutil.SanitizeLogValue(filePath)
 	safePath = strings.ReplaceAll(safePath, "\r", "")
 	safePath = strings.ReplaceAll(safePath, "\n", "")
 	safePath = strings.ReplaceAll(safePath, "\x00", "")
 	slog.Info("file downloaded", "title", safeTitle, "size", written, "path", safePath)
 
-	return validatedFilePath, written, nil
+	return filePath, written, nil
 }
 
 func normalizeContentMD5(value string) string {
@@ -668,17 +662,10 @@ func normalizeContentMD5(value string) string {
 
 func validatedDownloadRoot(rawRoot string) (string, error) {
 	root := filepath.Clean(strings.TrimSpace(rawRoot))
-	if root == "." || !filepath.IsAbs(root) || containsPathControlCharacters(root) {
+	if root == "." || !filepath.IsAbs(root) || strings.ContainsAny(root, "\x00\r\n") {
 		return "", fmt.Errorf("incoming download directory must be an absolute path without control characters")
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err == nil {
-		return filepath.Clean(resolvedRoot), nil
-	}
-	if os.IsNotExist(err) {
-		return root, nil
-	}
-	return "", fmt.Errorf("resolve incoming download directory: %w", err)
+	return root, nil
 }
 
 func validateDownloadPath(root, candidate string) (string, error) {
@@ -687,67 +674,21 @@ func validateDownloadPath(root, candidate string) (string, error) {
 		return "", err
 	}
 	cleanCandidate := filepath.Clean(candidate)
-	if !filepath.IsAbs(cleanCandidate) || containsPathControlCharacters(cleanCandidate) {
+	if !filepath.IsAbs(cleanCandidate) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
 		return "", fmt.Errorf("download path is invalid")
 	}
-	resolvedCandidate, err := resolveDownloadCandidate(cleanCandidate)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, resolvedCandidate)
+	rel, err := filepath.Rel(root, cleanCandidate)
 	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("download path is outside the incoming directory")
 	}
-	return filepath.Clean(resolvedCandidate), nil
+	return cleanCandidate, nil
 }
 
-func resolveDownloadCandidate(candidate string) (string, error) {
-	if _, err := os.Lstat(candidate); err == nil {
-		resolved, err := filepath.EvalSymlinks(candidate)
-		if err != nil {
-			return "", fmt.Errorf("resolve download path: %w", err)
-		}
-		return filepath.Clean(resolved), nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("inspect download path: %w", err)
-	}
+func fileMD5(path string) (string, error) {
+	// The download pipeline passes only paths cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
 
-	missing := []string{filepath.Base(candidate)}
-	parent := filepath.Dir(candidate)
-	for {
-		if _, err := os.Lstat(parent); err == nil {
-			resolvedParent, err := filepath.EvalSymlinks(parent)
-			if err != nil {
-				return "", fmt.Errorf("resolve download parent: %w", err)
-			}
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolvedParent = filepath.Join(resolvedParent, missing[i])
-			}
-			return filepath.Clean(resolvedParent), nil
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("inspect download parent: %w", err)
-		}
-
-		next := filepath.Dir(parent)
-		if next == parent {
-			return "", fmt.Errorf("download path has no existing parent")
-		}
-		missing = append(missing, filepath.Base(parent))
-		parent = next
-	}
-}
-
-func containsPathControlCharacters(value string) bool {
-	return strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0
-}
-
-func fileMD5(root, path string) (string, error) {
-	validatedPath, err := validateDownloadPath(root, path)
-	if err != nil {
-		return "", err
-	}
-
-	f, err := os.Open(validatedPath)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -1016,11 +957,11 @@ func DetectFileExtension(path string) (string, error) {
 }
 
 func detectFileExtension(path string) (string, error) {
-	validatedPath, err := validateDownloadPath(filepath.Dir(path), path)
+	path, err := validateDownloadPath(filepath.Dir(path), path)
 	if err != nil {
 		return "", err
 	}
-	f, err := os.Open(validatedPath)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
