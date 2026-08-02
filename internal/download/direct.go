@@ -84,7 +84,15 @@ func (d *DirectDownloader) DownloadFromAnnas(md5, title string, progressFn func(
 		if err == nil {
 			return filePath, fileSize, md5, nil
 		}
-		slog.Warn("annas fast download failed; falling back to LibGen", "md5", md5, "error", err)
+		safeMD5 := netutil.SanitizeLogValue(md5)
+		safeMD5 = strings.ReplaceAll(safeMD5, "\r", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\n", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\x00", "")
+		safeError := netutil.SanitizeSensitiveText(err.Error())
+		safeError = strings.ReplaceAll(safeError, "\r", "")
+		safeError = strings.ReplaceAll(safeError, "\n", "")
+		safeError = strings.ReplaceAll(safeError, "\x00", "")
+		slog.Warn("annas fast download failed; falling back to LibGen", "md5", safeMD5, "error", safeError)
 		if progressFn != nil {
 			progressFn("Fast download unavailable, trying LibGen mirrors...")
 		}
@@ -149,7 +157,15 @@ func (d *DirectDownloader) downloadFromAnnasFast(md5, title string, progressFn f
 	if progressFn != nil {
 		progressFn("Downloading via Anna's Archive fast download...")
 	}
-	slog.Info("found annas fast download link", "title", title, "md5", md5)
+	safeTitle := netutil.SanitizeLogValue(title)
+	safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
+	safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
+	safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
+	safeMD5 := netutil.SanitizeLogValue(md5)
+	safeMD5 = strings.ReplaceAll(safeMD5, "\r", "")
+	safeMD5 = strings.ReplaceAll(safeMD5, "\n", "")
+	safeMD5 = strings.ReplaceAll(safeMD5, "\x00", "")
+	slog.Info("found annas fast download link", "title", safeTitle, "md5", safeMD5)
 	return d.downloadFileWithExpectedMD5(downloadURL, title, md5, progressFn)
 }
 
@@ -283,16 +299,56 @@ func (d *DirectDownloader) downloadFromLibgenMirrors(md5, title string, attempte
 		}
 		attemptedURLs[downloadURL] = true
 
-		slog.Info("libgen mirror attempt", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror))
+		safeTitle := netutil.SanitizeLogValue(title)
+		safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
+		safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
+		safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
+		safeMD5 := netutil.SanitizeLogValue(md5)
+		safeMD5 = strings.ReplaceAll(safeMD5, "\r", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\n", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\x00", "")
+		safeMirror := netutil.SanitizeLogValue(mirror)
+		safeMirror = strings.ReplaceAll(safeMirror, "\r", "")
+		safeMirror = strings.ReplaceAll(safeMirror, "\n", "")
+		safeMirror = strings.ReplaceAll(safeMirror, "\x00", "")
+		slog.Info("libgen mirror attempt", "title", safeTitle, "md5", safeMD5, "mirror", safeMirror)
 		if progressFn != nil {
 			progressFn(fmt.Sprintf("Downloading from mirror %d/%d...", i+1, len(mirrors)))
 		}
 		filePath, fileSize, err := d.downloadFileWithExpectedMD5(downloadURL, title, md5, progressFn)
 		if err == nil {
-			slog.Info("libgen mirror succeeded", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror))
+			safeTitle = netutil.SanitizeLogValue(title)
+			safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
+			safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
+			safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
+			safeMD5 = netutil.SanitizeLogValue(md5)
+			safeMD5 = strings.ReplaceAll(safeMD5, "\r", "")
+			safeMD5 = strings.ReplaceAll(safeMD5, "\n", "")
+			safeMD5 = strings.ReplaceAll(safeMD5, "\x00", "")
+			safeMirror = netutil.SanitizeLogValue(mirror)
+			safeMirror = strings.ReplaceAll(safeMirror, "\r", "")
+			safeMirror = strings.ReplaceAll(safeMirror, "\n", "")
+			safeMirror = strings.ReplaceAll(safeMirror, "\x00", "")
+			slog.Info("libgen mirror succeeded", "title", safeTitle, "md5", safeMD5, "mirror", safeMirror)
 			return filePath, fileSize, nil
 		}
-		slog.Warn("libgen mirror failed", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror), "error", netutil.SanitizeSensitiveText(err.Error()))
+		safeTitle = netutil.SanitizeLogValue(title)
+		safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
+		safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
+		safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
+		safeMD5 = netutil.SanitizeLogValue(md5)
+		safeMD5 = strings.ReplaceAll(safeMD5, "\r", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\n", "")
+		safeMD5 = strings.ReplaceAll(safeMD5, "\x00", "")
+		safeMirror = netutil.SanitizeLogValue(mirror)
+		safeMirror = strings.ReplaceAll(safeMirror, "\r", "")
+		safeMirror = strings.ReplaceAll(safeMirror, "\n", "")
+		safeMirror = strings.ReplaceAll(safeMirror, "\x00", "")
+		safeError := netutil.SanitizeSensitiveText(err.Error())
+		safeError = strings.ReplaceAll(safeError, "\r", "")
+		safeError = strings.ReplaceAll(safeError, "\n", "")
+		safeError = strings.ReplaceAll(safeError, "\x00", "")
+		slog.Warn("libgen mirror failed", "title", safeTitle, "md5", safeMD5, "mirror", safeMirror, "error", safeError)
 		lastErr = fmt.Errorf("%s download: %w", mirror, err)
 	}
 	if lastErr == nil {
@@ -479,7 +535,14 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 
 	// Save to incoming directory.
 	safeTitle := sanitizeFilename(title, 80)
-	if err := os.MkdirAll(d.cfg.IncomingDir, 0755); err != nil {
+	incomingRoot, err := validatedDownloadRoot(d.cfg.IncomingDir)
+	if err != nil {
+		return "", 0, err
+	}
+	// The configured incoming directory is the approved local download root.
+	// codeql[go/path-injection]
+
+	if err := os.MkdirAll(incomingRoot, 0755); err != nil {
 		return "", 0, fmt.Errorf("create incoming dir: %w", err)
 	}
 
@@ -489,11 +552,19 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 		ext = ".pdf"
 	}
 
-	tempFile, err := os.CreateTemp(d.cfg.IncomingDir, ".librarr-download-*.part")
+	// The configured incoming directory is the approved local download root.
+	// codeql[go/path-injection]
+
+	tempFile, err := os.CreateTemp(incomingRoot, ".librarr-download-*.part")
 	if err != nil {
 		return "", 0, fmt.Errorf("create temporary download file: %w", err)
 	}
-	tempPath := tempFile.Name()
+	tempPath, err := validateDownloadPath(incomingRoot, tempFile.Name())
+	if err != nil {
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
+		return "", 0, err
+	}
 	committed := false
 	defer func() {
 		if !committed {
@@ -519,7 +590,11 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	// verify by reading the file signature. This fixes #8.
 	actualExt, err := detectFileExtension(tempPath)
 	if err != nil {
-		slog.Warn("failed to detect file type from content", "error", err)
+		safeError := netutil.SanitizeSensitiveText(err.Error())
+		safeError = strings.ReplaceAll(safeError, "\r", "")
+		safeError = strings.ReplaceAll(safeError, "\n", "")
+		safeError = strings.ReplaceAll(safeError, "\x00", "")
+		slog.Warn("failed to detect file type from content", "error", safeError)
 	} else if actualExt != "" && actualExt != ext {
 		ext = actualExt
 	}
@@ -542,7 +617,10 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 		}
 	}
 
-	filePath := filepath.Join(d.cfg.IncomingDir, safeTitle+ext)
+	filePath, err := validateDownloadPath(incomingRoot, filepath.Join(incomingRoot, safeTitle+ext))
+	if err != nil {
+		return "", 0, err
+	}
 	if _, err := os.Stat(filePath); err == nil {
 		if expectedMD5 != "" {
 			if existingMD5, hashErr := fileMD5(filePath); hashErr == nil && existingMD5 == expectedMD5 {
@@ -558,7 +636,15 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	}
 	committed = true
 
-	slog.Info("file downloaded", "title", netutil.SanitizeLogValue(title), "size", written, "path", netutil.SanitizeLogValue(filePath))
+	safeTitle = netutil.SanitizeLogValue(title)
+	safeTitle = strings.ReplaceAll(safeTitle, "\r", "")
+	safeTitle = strings.ReplaceAll(safeTitle, "\n", "")
+	safeTitle = strings.ReplaceAll(safeTitle, "\x00", "")
+	safePath := netutil.SanitizeLogValue(filePath)
+	safePath = strings.ReplaceAll(safePath, "\r", "")
+	safePath = strings.ReplaceAll(safePath, "\n", "")
+	safePath = strings.ReplaceAll(safePath, "\x00", "")
+	slog.Info("file downloaded", "title", safeTitle, "size", written, "path", safePath)
 
 	return filePath, written, nil
 }
@@ -572,6 +658,30 @@ func normalizeContentMD5(value string) string {
 		return ""
 	}
 	return value
+}
+
+func validatedDownloadRoot(rawRoot string) (string, error) {
+	root := filepath.Clean(strings.TrimSpace(rawRoot))
+	if root == "." || !filepath.IsAbs(root) || strings.ContainsAny(root, "\x00\r\n") {
+		return "", fmt.Errorf("incoming download directory must be an absolute path without control characters")
+	}
+	return root, nil
+}
+
+func validateDownloadPath(root, candidate string) (string, error) {
+	root, err := validatedDownloadRoot(root)
+	if err != nil {
+		return "", err
+	}
+	cleanCandidate := filepath.Clean(candidate)
+	if !filepath.IsAbs(cleanCandidate) || strings.ContainsAny(cleanCandidate, "\x00\r\n") {
+		return "", fmt.Errorf("download path is invalid")
+	}
+	rel, err := filepath.Rel(root, cleanCandidate)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("download path is outside the incoming directory")
+	}
+	return cleanCandidate, nil
 }
 
 func fileMD5(path string) (string, error) {
@@ -844,6 +954,13 @@ func DetectFileExtension(path string) (string, error) {
 }
 
 func detectFileExtension(path string) (string, error) {
+	path, err := validateDownloadPath(filepath.Dir(path), path)
+	if err != nil {
+		return "", err
+	}
+	// The caller supplies a cleaned local file path constrained to its approved directory.
+	// codeql[go/path-injection]
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
