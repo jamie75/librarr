@@ -85,6 +85,33 @@ func TestVerifyEPUBTitle_WordOverlapLogic(t *testing.T) {
 	})
 }
 
+func TestTitlesMatchWithSubtitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+		actual   string
+		want     bool
+	}{
+		{"full expected and main actual", "Courtiers : intrigue, ambition, and the power players behind the house of Windsor", "Courtiers", true},
+		{"main expected and full actual", "Courtiers", "Courtiers: Intrigue, Ambition, and the Power Players Behind the House of Windsor", true},
+		{"colon spacing and case", "  COURTIERS:   intrigue  ", "courtiers", true},
+		{"em dash subtitle", "Courtiers — intrigue", "Courtiers", true},
+		{"en dash subtitle", "Courtiers – intrigue", "Courtiers", true},
+		{"unicode quote normalization", "The ‘Great’ Gatsby", "The 'Great' Gatsby", true},
+		{"arbitrary prefix rejected", "The House", "The House of Windsor", false},
+		{"short prefix rejected", "Court", "Courtiers", false},
+		{"different main titles rejected", "Courtiers", "The Crown", false},
+		{"different subtitles are not silently accepted", "Courtiers: intrigue", "Courtiers: power", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := TitlesMatchWithSubtitle(tt.expected, tt.actual); got != tt.want {
+				t.Errorf("TitlesMatchWithSubtitle(%q, %q) = %v, want %v", tt.expected, tt.actual, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeAuthor(t *testing.T) {
 	tests := []struct {
 		input    string

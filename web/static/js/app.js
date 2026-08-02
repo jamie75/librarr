@@ -100,12 +100,15 @@ const I18N = {
     wanted_release_sort: 'Sort',
     wanted_release_top_match: 'Top match',
     wanted_release_selected: 'Selected',
-    wanted_release_download: 'Send to download client',
+    wanted_release_download: 'Get release',
     wanted_release_sending: 'Sending...',
-    wanted_release_unsupported: 'Download unavailable',
-    wanted_release_download_confirm: 'Send "{title}" from {indexer} ({format}, {size}, {seeders} seeders) to the configured download client?',
-    wanted_release_download_success: 'Release sent to download client',
-    wanted_release_download_failed: 'Could not send release to download client',
+    wanted_release_unsupported: 'Acquisition unavailable',
+    wanted_release_download_confirm: 'Get "{title}" from {indexer} ({format}, {size}, {seeders} seeders) using the configured download client?',
+    wanted_release_download_success: 'Release acquisition started',
+    wanted_release_download_failed: 'Could not acquire release',
+    get_book: 'Get Book',
+    get_audiobook: 'Get Audiobook',
+    get_manga: 'Get Manga',
     wanted_selected_release: 'Selected release',
     wanted_download_started: 'Download started',
     wanted_last_searched: 'Last searched',
@@ -226,7 +229,7 @@ const I18N = {
     refresh: 'Refresh',
     clear_completed: 'Clear Completed',
     no_active_downloads: 'No active downloads',
-    no_downloads_hint: 'Search for books and click download to get started',
+    no_downloads_hint: 'Search Discover and use Get Book, Get Audiobook, or Get Manga to start an acquisition.',
     failed_load_downloads: 'Failed to load downloads',
     retry: 'Retry',
     // Status
@@ -457,6 +460,9 @@ const I18N = {
     no_results_hint: 'Попробуйте другие ключевые слова или проверьте написание',
     no_results_filtered: 'Нет результатов, соответствующих текущим фильтрам',
     no_results_filtered_hint: 'Prowlarr вернул результаты, но Librarr отфильтровал их по активным фильтрам поиска.',
+    get_book: 'Получить книгу',
+    get_audiobook: 'Получить аудиокнигу',
+    get_manga: 'Получить мангу',
     download: 'Скачать',
     download_added: 'Добавлено',
     download_failed_state: 'Ошибка',
@@ -481,7 +487,7 @@ const I18N = {
     refresh: 'Обновить',
     clear_completed: 'Очистить завершённые',
     no_active_downloads: 'Нет активных загрузок',
-    no_downloads_hint: 'Найдите книги и нажмите «Скачать» для начала',
+    no_downloads_hint: 'Найдите книгу в Discover и используйте «Получить книгу», «Получить аудиокнигу» или «Получить мангу».',
     failed_load_downloads: 'Не удалось загрузить список загрузок',
     retry: 'Повторить',
     // Status
@@ -1606,6 +1612,14 @@ function searchResultMediaType(result) {
   return 'ebook';
 }
 
+function acquisitionLabel(mediaType) {
+  switch (String(mediaType || '').toLowerCase()) {
+    case 'audiobook': return t('get_audiobook');
+    case 'manga': return t('get_manga');
+    default: return t('get_book');
+  }
+}
+
 function wantedStateForResult(result) {
   const key = wantedIdentityKey(result.title, result.author, searchResultMediaType(result));
   const sourceKey = wantedSourceKey(result.source_id || result.guid || result.info_hash || result.download_url || result.magnet_url || '', result.title || '');
@@ -1700,7 +1714,7 @@ function renderBookCard(result, index) {
     error: 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer',
   };
   const buttonText = {
-    idle: t('download'),
+    idle: acquisitionLabel(searchResultMediaType(result)),
     loading: t('loading'),
     success: t('download_added'),
     error: t('download_failed_state'),
@@ -1857,8 +1871,8 @@ async function startDownload(result) {
   try {
     const body = {
       title: result.title,
-      // Direct-download sources (Gutenberg, Standard Ebooks) carry their
-      // link in epub_url — without this fallback their Download button 400s.
+      // Direct acquisition sources (Gutenberg, Standard Ebooks) carry their
+      // link in epub_url — without this fallback their Get button 400s.
       download_url: result.download_url || result.url || result.epub_url || '',
       abb_url: result.abb_url || '',
       source: result.source,
@@ -3043,6 +3057,7 @@ async function openBookDetails(index, collection = 'libraryBooks') {
                 ${item.error ? `<p class="mt-1 text-xs text-red-300">${escapeHtml(item.error)}</p>` : ''}
               </div>`).join('')}</div>` : '<p class="mt-3 text-xs text-stone-500">No Apple Books exports for this audiobook yet.</p>'}
           </section>` : ''}
+        ${renderBookDownloadSection(detailBook, detailFiles)}
         ${detailBook.id && normalizedLibraryMode() ? renderBookDeletionPanel(detailBook, detailFiles) : ''}
       </div>
     </div>
@@ -3050,6 +3065,50 @@ async function openBookDetails(index, collection = 'libraryBooks') {
   modal.classList.remove('hidden');
   modal.classList.add('flex');
   loadBookHistory(detailBook);
+}
+
+function renderBookDownloadSection(book, files = []) {
+  if (!book?.id || !normalizedLibraryMode()) return '';
+  const mediaType = book.mediaType || book.media_type || '';
+  const formatForFile = file => {
+    const stored = String(file.format || '').toLowerCase();
+    if (['epub', 'pdf', 'mp3', 'm4b'].includes(stored)) return stored;
+    const path = String(file.path || file.originalPath || '');
+    return (path.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
+  };
+  const supported = (files || []).filter(file => {
+    const format = formatForFile(file);
+    return (mediaType === 'ebook' && ['epub', 'pdf'].includes(format))
+      || (mediaType === 'audiobook' && ['mp3', 'm4b'].includes(format));
+  });
+  if (!supported.length) return '';
+  const byFormat = {};
+  supported.forEach(file => {
+    const format = formatForFile(file);
+    (byFormat[format] ||= []).push(file);
+  });
+  const links = [];
+  for (const format of ['epub', 'pdf', 'm4b', 'mp3']) {
+    const matching = byFormat[format] || [];
+    if (mediaType === 'audiobook' && matching.length > 1) continue;
+    if (matching.length !== 1) continue;
+    const file = matching[0];
+    const query = file.id ? `?file_id=${encodeURIComponent(file.id)}` : '';
+    links.push(`<a href="/api/v1/books/${encodeURIComponent(book.id)}/download/${encodeURIComponent(format)}${query}" class="rounded-lg border border-stone-700 bg-stone-900 px-3 py-2 text-sm font-medium text-stone-200 hover:border-amber-300 hover:text-amber-200 transition-colors">Download ${escapeHtml(format.toUpperCase())}</a>`);
+  }
+  const multiTrackMP3 = mediaType === 'audiobook' && (byFormat.mp3 || []).length > 1;
+  if (!links.length && !multiTrackMP3) return '';
+  const note = multiTrackMP3
+    ? '<p class="mt-3 text-xs text-stone-500">Direct download for multi-track audiobooks is not available yet.</p>'
+    : '';
+  return `<section class="mt-8 rounded-[1.25rem] border border-stone-800 bg-stone-900/40 p-4" data-testid="book-downloads">
+    <div>
+      <h3 class="text-lg font-semibold text-white">Downloads</h3>
+      <p class="mt-1 text-sm text-stone-400">Download a copy of an available file without changing the library source.</p>
+    </div>
+    <div class="mt-4 flex flex-wrap gap-2">${links.join('')}</div>
+    ${note}
+  </section>`;
 }
 
 async function exportBookToAppleBooks(button = null) {
@@ -4021,6 +4080,8 @@ function renderWantedReleaseRow(release, index) {
   const sending = !!state.wantedReleaseDownloads?.has?.(key);
   const selected = !!release.selected;
   const downloadAvailable = !!release.download_available;
+  const wantedBook = (state.wantedBooks || []).find(item => Number(item.id) === Number(state.wantedReleaseViewer?.itemId));
+  const mediaType = release.media_type || wantedBook?.media_type || wantedBook?.mediaType || 'ebook';
   const badges = [
     format,
     language,
@@ -4042,7 +4103,7 @@ function renderWantedReleaseRow(release, index) {
           <p class="text-lg font-semibold text-amber-200">${escapeHtml(String(Math.round(Number(release.score || 0))))}</p>
           <p class="text-xs text-stone-500">score</p>
           <div class="mt-3">
-            ${downloadAvailable ? `<button data-action="downloadWantedRelease" data-release-id="${release.id}" data-title="${escapeHtml(release.title || '')}" data-indexer="${escapeHtml(release.indexer || '')}" data-format="${escapeHtml(format || 'Unknown format')}" data-size="${escapeHtml(release.size_human || formatSize(release.size || 0))}" data-seeders="${escapeHtml(String(release.seeders ?? 0))}" ${sending || selected ? 'disabled' : ''} class="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60">${sending ? `<span class="inline-block animate-spin">⟳</span> ${t('wanted_release_sending')}` : t('wanted_release_download')}</button>` : `<span class="text-xs text-stone-500">${t('wanted_release_unsupported')}</span>`}
+            ${downloadAvailable ? `<button data-action="downloadWantedRelease" data-release-id="${release.id}" data-title="${escapeHtml(release.title || '')}" data-indexer="${escapeHtml(release.indexer || '')}" data-format="${escapeHtml(format || 'Unknown format')}" data-size="${escapeHtml(release.size_human || formatSize(release.size || 0))}" data-seeders="${escapeHtml(String(release.seeders ?? 0))}" ${sending || selected ? 'disabled' : ''} class="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60">${sending ? `<span class="inline-block animate-spin">⟳</span> ${t('wanted_release_sending')}` : acquisitionLabel(mediaType)}</button>` : `<span class="text-xs text-stone-500">${t('wanted_release_unsupported')}</span>`}
           </div>
         </div>
       </div>
@@ -5845,6 +5906,9 @@ async function refreshLibraryAfterScanImport() {
   }
   if (state.currentTab === 'library' && typeof loadLibrary === 'function') {
     tasks.push(loadLibrary());
+  }
+  if (state.currentTab === 'wanted' && typeof loadWanted === 'function') {
+    tasks.push(loadWanted());
   }
   if (tasks.length) {
     await Promise.allSettled(tasks);

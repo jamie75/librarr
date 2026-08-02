@@ -444,6 +444,7 @@ func (w *Watcher) importTracked(item models.TrackedDownload, torrent TorrentInfo
 		}
 		return
 	}
+	reconcileWantedImport(w.db, item.SourceID, item.Title, "", library.MediaType(mediaType), nil)
 	now := time.Now().UTC()
 	item.ImportStatus = "imported"
 	item.Status = "imported"

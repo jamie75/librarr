@@ -407,6 +407,54 @@ func TestListMonitoredWantedBooksSkipsTerminalAndDownloadingStatuses(t *testing.
 	}
 }
 
+func TestCompleteWantedForImportIsDurableAndIdempotent(t *testing.T) {
+	d := newTestDB(t)
+	book, err := d.CreateWantedBook(models.WantedBook{
+		Title:     "The MAGA Doctrine",
+		Author:    "",
+		MediaType: "audiobook",
+		Monitored: true,
+		Status:    "downloading",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.MarkWantedDownloading(book.ID, 0, "release", "rtorrent", "wanted-hash", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	updated, matched, err := d.CompleteWantedForImport(WantedImportIdentity{
+		SourceID:      "wanted-hash",
+		Title:         "The MAGA Doctrine The Only Ideas That Will Win the Future",
+		Author:        "Charlie Kirk",
+		MediaType:     "audiobook",
+		LibraryBookID: 42,
+	})
+	if err != nil || !matched {
+		t.Fatalf("complete wanted: item=%+v matched=%v err=%v", updated, matched, err)
+	}
+	if updated.Status != "imported" || updated.LibraryBookID != 42 || updated.CompletedAt == nil || updated.Monitored {
+		t.Fatalf("completed wanted = %+v", updated)
+	}
+	if _, matched, err := d.CompleteWantedForImport(WantedImportIdentity{WantedID: book.ID, MediaType: "audiobook"}); err != nil || matched {
+		t.Fatalf("second completion = matched=%v err=%v", matched, err)
+	}
+}
+
+func TestCompleteWantedForImportLeavesAmbiguousMatchesPending(t *testing.T) {
+	d := newTestDB(t)
+	for _, author := range []string{"Writer One", "Writer Two"} {
+		if _, err := d.CreateWantedBook(models.WantedBook{
+			Title: "Same Title", Author: author, MediaType: "ebook", Monitored: true, Status: "wanted",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	item, matched, err := d.CompleteWantedForImport(WantedImportIdentity{Title: "Same Title", MediaType: "ebook"})
+	if err != nil || matched || item != nil {
+		t.Fatalf("ambiguous completion = item=%+v matched=%v err=%v", item, matched, err)
+	}
+}
+
 func TestSchemaFoundation_FailedMigrationIsNotRecorded(t *testing.T) {
 	d := newTestDB(t)
 	err := d.applySchemaMigration(schemaMigration{

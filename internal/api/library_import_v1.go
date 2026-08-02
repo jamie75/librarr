@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/library"
 	libraryimport "github.com/jamie75/librarr/internal/library/import"
 	libraryscanner "github.com/jamie75/librarr/internal/library/scanner"
@@ -493,7 +494,25 @@ func (s *Server) libraryImportJobs() *libraryImportJobManager {
 }
 
 func (s *Server) attachImportedCandidateCover(ctx context.Context, candidate libraryscanner.Candidate, result *libraryimport.EngineResult) {
-	if s == nil || s.coverCache == nil || s.libraryService == nil || result == nil || result.Execution == nil {
+	if s == nil || s.db == nil || result == nil || result.Execution == nil {
+		return
+	}
+	// A successful manual-review resolution can satisfy a Wanted record even
+	// when cover caching is disabled. Completion is deliberately separate from
+	// cover handling so it cannot be lost as an incidental side effect.
+	for _, execution := range result.Execution.Results {
+		if execution.Status != libraryimport.ExecutionStatusSuccess && execution.Status != libraryimport.ExecutionStatusDuplicate {
+			continue
+		}
+		_, _, _ = s.db.CompleteWantedForImport(db.WantedImportIdentity{
+			Title:         candidateDisplayTitle(candidate),
+			Author:        candidateDisplayAuthor(candidate),
+			MediaType:     string(candidate.MediaType),
+			LibraryBookID: execution.BookID,
+		})
+		break
+	}
+	if s.coverCache == nil || s.libraryService == nil {
 		return
 	}
 	for _, execution := range result.Execution.Results {

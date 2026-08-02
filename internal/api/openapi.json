@@ -631,6 +631,13 @@
           },
           "download_error": {
             "type": "string"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "library_book_id": {
+            "type": "integer"
           }
         }
       },
@@ -1563,6 +1570,23 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/books/{id}/download/{format}": {
+      "get": {
+        "summary": "Download an authenticated EPUB, PDF, MP3, or M4B library file",
+        "description": "Serves an unchanged normalized library source file after configured-root and symlink validation. The browser receives an Author - Title.ext filename. Use file_id when a book contains multiple files of the same format.",
+        "security": [{"session": []}, {"apiKey": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "format", "in": "path", "required": true, "schema": {"type": "string", "enum": ["epub", "pdf", "mp3", "m4b"]}},
+          {"name": "file_id", "in": "query", "required": false, "schema": {"type": "integer"}, "description": "Select a specific file when multiple files share the requested format."}
+        ],
+        "responses": {
+          "200": {"description": "File download"},
+          "404": {"description": "Book or safely accessible source file not found"},
+          "422": {"description": "Format is unsupported or incompatible with the book"}
+        }
       }
     },
     "/api/v1/books/{id}/apple-books/export": {

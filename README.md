@@ -52,6 +52,7 @@ Librarr 2.0 currently has:
   fallback
 - opt-in Apple Books audiobook and EPUB/PDF ebook export with safe local handoff copies, export
   history, and a configurable macOS `open -a Books` helper
+- authenticated first-class Delivery downloads for EPUB, PDF, MP3, and M4B
 - explicit metadata refresh for existing normalized books, including legacy
   audiobook directory conversion, idempotent summaries, and manual-override
   conflict reporting
@@ -64,6 +65,16 @@ Librarr 2.0 currently has:
   completion imports (cleanup/removal remains unsupported)
 - normalized `/api/v1` read endpoints
 - `/api/v1` Wanted and Downloads endpoints for new UI/API consumers
+
+In the user interface, **Get Book**, **Get Audiobook**, and **Get Manga** start
+acquisition from Discover or Wanted releases. **Download** is reserved for
+delivering files that already exist in the Library, such as Download EPUB or
+Download M4B from Book Details.
+
+Direct Delivery supports EPUB, PDF, M4B, and single-file MP3 downloads for
+authenticated users. Multi-track MP3, MOBI, AZW3, and manga-package downloads
+are not supported yet. A mobile browser can download an EPUB for manual
+sharing into Kindle or Send to Kindle; Amazon integration is not included.
 - OPDS 1.2 catalog browsing and downloads for compatible reader apps
 - compatibility endpoints for existing legacy behavior
 - optional Prowlarr and download-client integration
@@ -688,6 +699,7 @@ Prefer Librarr 2.0 endpoints for new integrations.
 | GET | `/api/v1/books/{id}/files` | Files for a book |
 | GET | `/api/v1/books/{id}/editions` | Editions for a book |
 | GET | `/api/v1/books/{id}/cover` | Stored local book cover |
+| GET | `/api/v1/books/{id}/download/{format}` | Authenticated download of an EPUB, PDF, MP3, or M4B file |
 | GET | `/api/v1/books/{id}/metadata` | Effective metadata |
 | PATCH | `/api/v1/books/{id}/metadata` | Partial metadata update |
 | POST | `/api/v1/books/{id}/metadata/extract` | Build a review proposal from a managed local ebook file |

@@ -35,6 +35,7 @@ The current codebase already provides a useful foundation, including:
 - staged connection diagnostics for Prowlarr and qBittorrent
 - local audiobook metadata extraction and multi-track normalized import
 - opt-in Apple Books export for normalized audiobooks and EPUB/PDF ebooks with durable history
+- authenticated Delivery downloads for normalized EPUB, PDF, MP3, and M4B files
 - metadata refresh for existing normalized audiobook records
 
 The immediate architectural limitation is that `library_items` represents both a logical book and a physical file.
@@ -344,6 +345,7 @@ Make acquired books easy to consume.
 - [ ] Define device/destination model.
 - [ ] Add preferred formats and size limits.
 - [ ] Add direct download destination.
+- [x] Add authenticated normalized Delivery downloads for EPUB, PDF, MP3, and M4B.
 - [ ] Add watched-folder delivery.
 - [ ] Add Kindle email delivery.
 - [ ] Record delivery history and failures.

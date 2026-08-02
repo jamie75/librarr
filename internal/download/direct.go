@@ -2,7 +2,9 @@ package download
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,6 +73,9 @@ func (d *DirectDownloader) mirrors() []string {
 // When an account secret key is configured, tries the membership
 // fast_download API first, then falls back to public LibGen mirrors.
 func (d *DirectDownloader) DownloadFromAnnas(md5, title string, progressFn func(string)) (string, int64, string, error) {
+	if normalizedMD5 := normalizeContentMD5(md5); normalizedMD5 != "" {
+		md5 = normalizedMD5
+	}
 	if strings.TrimSpace(d.cfg.AnnasArchiveSecretKey) != "" {
 		if progressFn != nil {
 			progressFn("Trying Anna's Archive fast download...")
@@ -102,10 +107,16 @@ func (d *DirectDownloader) DownloadFromAnnas(md5, title string, progressFn func(
 
 	lastErr := originalErr
 	matchingAlternatives := 0
+	seenMD5 := map[string]bool{}
+	if normalizedMD5 := normalizeContentMD5(md5); normalizedMD5 != "" {
+		seenMD5[normalizedMD5] = true
+	}
 	for _, result := range results {
-		if result.MD5 == "" || result.MD5 == md5 || !titlesMatch(title, result.Title) {
+		resultMD5 := normalizeContentMD5(result.MD5)
+		if resultMD5 == "" || seenMD5[resultMD5] || !titlesMatch(title, result.Title) {
 			continue
 		}
+		seenMD5[resultMD5] = true
 		if matchingAlternatives >= 5 {
 			break
 		}
@@ -113,9 +124,9 @@ func (d *DirectDownloader) DownloadFromAnnas(md5, title string, progressFn func(
 		if progressFn != nil {
 			progressFn(fmt.Sprintf("Trying matching alternative %d...", matchingAlternatives))
 		}
-		filePath, fileSize, err := d.downloadFromLibgenMirrors(result.MD5, title, attemptedURLs, progressFn)
+		filePath, fileSize, err := d.downloadFromLibgenMirrors(resultMD5, title, attemptedURLs, progressFn)
 		if err == nil {
-			return filePath, fileSize, result.MD5, nil
+			return filePath, fileSize, resultMD5, nil
 		}
 		lastErr = err
 	}
@@ -139,7 +150,7 @@ func (d *DirectDownloader) downloadFromAnnasFast(md5, title string, progressFn f
 		progressFn("Downloading via Anna's Archive fast download...")
 	}
 	slog.Info("found annas fast download link", "title", title, "md5", md5)
-	return d.downloadFile(downloadURL, title, progressFn)
+	return d.downloadFileWithExpectedMD5(downloadURL, title, md5, progressFn)
 }
 
 // fetchAnnasFastDownloadURL calls AA fast_download API for one MD5 using the account secret key.
@@ -250,9 +261,16 @@ func truncateForErr(s string, max int) string {
 // A bad response or failed file verification advances to the next mirror.
 func (d *DirectDownloader) downloadFromLibgenMirrors(md5, title string, attemptedURLs map[string]bool, progressFn func(string)) (string, int64, error) {
 	var lastErr error
-	for i, mirror := range d.mirrors() {
+	mirrors := d.mirrors()
+	seenMirrors := make(map[string]bool, len(mirrors))
+	for i, mirror := range mirrors {
+		mirror = strings.TrimRight(strings.TrimSpace(mirror), "/")
+		if mirror == "" || seenMirrors[mirror] {
+			continue
+		}
+		seenMirrors[mirror] = true
 		if progressFn != nil {
-			progressFn(fmt.Sprintf("Trying mirror %d/%d...", i+1, len(d.mirrors())))
+			progressFn(fmt.Sprintf("Trying mirror %d/%d...", i+1, len(mirrors)))
 		}
 		downloadURL, err := d.fetchLibgenDownloadURLFromMirror(mirror, md5)
 		if err != nil {
@@ -265,14 +283,16 @@ func (d *DirectDownloader) downloadFromLibgenMirrors(md5, title string, attempte
 		}
 		attemptedURLs[downloadURL] = true
 
-		slog.Info("found libgen download link", "title", title, "md5", md5, "mirror", mirror)
+		slog.Info("libgen mirror attempt", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror))
 		if progressFn != nil {
-			progressFn(fmt.Sprintf("Downloading from mirror %d/%d...", i+1, len(d.mirrors())))
+			progressFn(fmt.Sprintf("Downloading from mirror %d/%d...", i+1, len(mirrors)))
 		}
-		filePath, fileSize, err := d.downloadFile(downloadURL, title, progressFn)
+		filePath, fileSize, err := d.downloadFileWithExpectedMD5(downloadURL, title, md5, progressFn)
 		if err == nil {
+			slog.Info("libgen mirror succeeded", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror))
 			return filePath, fileSize, nil
 		}
+		slog.Warn("libgen mirror failed", "title", netutil.SanitizeLogValue(title), "md5", netutil.SanitizeLogValue(md5), "mirror", netutil.SanitizeLogValue(mirror), "error", netutil.SanitizeSensitiveText(err.Error()))
 		lastErr = fmt.Errorf("%s download: %w", mirror, err)
 	}
 	if lastErr == nil {
@@ -375,7 +395,11 @@ func (d *DirectDownloader) downloadFileWithClient(client *http.Client, fileURL, 
 }
 
 func (d *DirectDownloader) downloadFileWithClientAndUserAgent(client *http.Client, fileURL, title string, progressFn func(string), userAgent string) (string, int64, error) {
-	return d.downloadFileAttempt(client, fileURL, title, progressFn, true, userAgent, 0)
+	return d.downloadFileAttemptWithExpectedMD5(client, fileURL, title, progressFn, true, userAgent, 0, "")
+}
+
+func (d *DirectDownloader) downloadFileWithExpectedMD5(fileURL, title, expectedMD5 string, progressFn func(string)) (string, int64, error) {
+	return d.downloadFileAttemptWithExpectedMD5(d.client, fileURL, title, progressFn, true, d.cfg.UserAgent, 0, normalizeContentMD5(expectedMD5))
 }
 
 // maxDownloadHops bounds how many times downloadFileAttempt will follow an HTML
@@ -385,7 +409,7 @@ func (d *DirectDownloader) downloadFileWithClientAndUserAgent(client *http.Clien
 // exhausted and the download job wedges.
 const maxDownloadHops = 5
 
-func (d *DirectDownloader) downloadFileAttempt(client *http.Client, fileURL, title string, progressFn func(string), allowChallenge bool, userAgent string, depth int) (string, int64, error) {
+func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Client, fileURL, title string, progressFn func(string), allowChallenge bool, userAgent string, depth int, expectedMD5 string) (string, int64, error) {
 	if depth > maxDownloadHops {
 		return "", 0, fmt.Errorf("too many download hops (exceeded %d): mirror kept returning HTML instead of a file", maxDownloadHops)
 	}
@@ -420,7 +444,7 @@ func (d *DirectDownloader) downloadFileAttempt(client *http.Client, fileURL, tit
 				return "", 0, err
 			}
 			_ = addCookie(client, fileURL, "c_time", "0.1")
-			return d.downloadFileAttempt(client, fileURL, title, progressFn, false, userAgent, depth+1)
+			return d.downloadFileAttemptWithExpectedMD5(client, fileURL, title, progressFn, false, userAgent, depth+1, expectedMD5)
 		}
 		return "", 0, fmt.Errorf("zlibrary browser challenge changed or could not be solved")
 	}
@@ -444,13 +468,13 @@ func (d *DirectDownloader) downloadFileAttempt(client *http.Client, fileURL, tit
 			fileLink := regexp.MustCompile(`href="(https?://[^"]*\.(epub|pdf|mobi)[^"]*)"`).FindStringSubmatch(bodyStr)
 			if len(fileLink) < 2 {
 				if dlLink := zlibraryparse.FindDownloadLinkInHTML(fileURL, body); dlLink != "" {
-					return d.downloadFileAttempt(client, dlLink, title, progressFn, true, userAgent, depth+1)
+					return d.downloadFileAttemptWithExpectedMD5(client, dlLink, title, progressFn, true, userAgent, depth+1, expectedMD5)
 				}
 				return "", 0, fmt.Errorf("no download link found in HTML response")
 			}
-			return d.downloadFileAttempt(client, fileLink[1], title, progressFn, true, userAgent, depth+1)
+			return d.downloadFileAttemptWithExpectedMD5(client, fileLink[1], title, progressFn, true, userAgent, depth+1, expectedMD5)
 		}
-		return d.downloadFileAttempt(client, getLink[1], title, progressFn, true, userAgent, depth+1)
+		return d.downloadFileAttemptWithExpectedMD5(client, getLink[1], title, progressFn, true, userAgent, depth+1, expectedMD5)
 	}
 
 	// Save to incoming directory.
@@ -465,51 +489,105 @@ func (d *DirectDownloader) downloadFileAttempt(client *http.Client, fileURL, tit
 		ext = ".pdf"
 	}
 
-	filePath := filepath.Join(d.cfg.IncomingDir, safeTitle+ext)
-	f, err := os.Create(filePath)
+	tempFile, err := os.CreateTemp(d.cfg.IncomingDir, ".librarr-download-*.part")
 	if err != nil {
-		return "", 0, fmt.Errorf("create file: %w", err)
+		return "", 0, fmt.Errorf("create temporary download file: %w", err)
 	}
+	tempPath := tempFile.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
-	written, err := io.Copy(f, resp.Body)
-	f.Close()
+	written, err := io.Copy(tempFile, resp.Body)
+	closeErr := tempFile.Close()
 	if err != nil {
-		os.Remove(filePath)
 		return "", 0, fmt.Errorf("write file: %w", err)
+	}
+	if closeErr != nil {
+		return "", 0, fmt.Errorf("close temporary download file: %w", closeErr)
 	}
 
 	if written < 1000 {
-		os.Remove(filePath)
 		return "", 0, fmt.Errorf("downloaded file too small (%d bytes)", written)
 	}
 
 	// Detect actual file type from magic bytes and correct the extension if needed.
 	// Content-Type headers often lie (e.g., application/octet-stream) so we always
 	// verify by reading the file signature. This fixes #8.
-	actualExt, err := detectFileExtension(filePath)
+	actualExt, err := detectFileExtension(tempPath)
 	if err != nil {
-		slog.Warn("failed to detect file type from content", "error", err, "path", filePath)
+		slog.Warn("failed to detect file type from content", "error", err)
 	} else if actualExt != "" && actualExt != ext {
-		correctedPath := filepath.Join(d.cfg.IncomingDir, safeTitle+actualExt)
-		if err := os.Rename(filePath, correctedPath); err == nil {
-			slog.Info("corrected file extension based on content", "title", title,
-				"from", ext, "to", actualExt)
-			filePath = correctedPath
-			ext = actualExt
+		ext = actualExt
+	}
+
+	if expectedMD5 != "" {
+		actualMD5, err := fileMD5(tempPath)
+		if err != nil {
+			return "", 0, fmt.Errorf("calculate download checksum: %w", err)
+		}
+		if actualMD5 != expectedMD5 {
+			return "", 0, fmt.Errorf("download checksum mismatch")
 		}
 	}
 
-	slog.Info("file downloaded", "title", title, "size", written, "path", filePath)
-
-	// EPUB verification: validate ZIP and title match (only for actual EPUB files).
-	if strings.HasSuffix(strings.ToLower(filePath), ".epub") {
-		if err := d.verifyEPUB(filePath, title); err != nil {
-			os.Remove(filePath)
-			return "", 0, fmt.Errorf("EPUB verification failed: %w", err)
+	// EPUB verification follows checksum validation: the selected content
+	// identity is verified first, then metadata is checked for plausibility.
+	if strings.EqualFold(ext, ".epub") {
+		if err := d.verifyEPUB(tempPath, title); err != nil {
+			return "", 0, err
 		}
 	}
+
+	filePath := filepath.Join(d.cfg.IncomingDir, safeTitle+ext)
+	if _, err := os.Stat(filePath); err == nil {
+		if expectedMD5 != "" {
+			if existingMD5, hashErr := fileMD5(filePath); hashErr == nil && existingMD5 == expectedMD5 {
+				return filePath, written, nil
+			}
+		}
+		return "", 0, fmt.Errorf("download destination already exists")
+	} else if !os.IsNotExist(err) {
+		return "", 0, fmt.Errorf("check download destination: %w", err)
+	}
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return "", 0, fmt.Errorf("commit downloaded file: %w", err)
+	}
+	committed = true
+
+	slog.Info("file downloaded", "title", netutil.SanitizeLogValue(title), "size", written, "path", netutil.SanitizeLogValue(filePath))
 
 	return filePath, written, nil
+}
+
+func normalizeContentMD5(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != md5.Size*2 {
+		return ""
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func fileMD5(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	// LibGen publishes MD5 content identities; this digest verifies downloaded bytes and is not used for password storage or authentication.
+	// codeql[go/weak-sensitive-data-hashing]
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (d *DirectDownloader) zlibraryClient() (*http.Client, error) {
@@ -804,14 +882,16 @@ func (d *DirectDownloader) verifyEPUB(filePath, expectedTitle string) error {
 		return err
 	}
 
-	// Check title overlap (60% threshold).
+	// Check exact title or exact main-title/subtitle equivalence.
 	ok, actualTitle, err := organize.VerifyEPUBTitle(filePath, expectedTitle, 0.6)
 	if err != nil {
-		slog.Warn("EPUB metadata extraction failed (allowing download)", "error", err)
-		return nil // Can't verify, let it pass.
+		return fmt.Errorf("EPUB verification failed: invalid EPUB: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("wrong book: expected %q, got %q", expectedTitle, actualTitle)
+		return fmt.Errorf("EPUB verification failed: wrong book: expected %q, got %q", netutil.SanitizeLogValue(expectedTitle), netutil.SanitizeLogValue(actualTitle))
+	}
+	if actualTitle != "" && !strings.EqualFold(strings.TrimSpace(actualTitle), strings.TrimSpace(expectedTitle)) {
+		slog.Debug("title verification accepted using main-title match")
 	}
 	return nil
 }

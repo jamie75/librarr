@@ -2,10 +2,12 @@ package download
 
 import (
 	"bytes"
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -96,6 +98,138 @@ func TestDownloadFromLibgenMirrorsContinuesAfterDownloadFailure(t *testing.T) {
 	}
 	if !strings.HasSuffix(filePath, ".pdf") || fileSize != int64(len(pdf)) {
 		t.Errorf("unexpected downloaded file: path=%q size=%d", filePath, fileSize)
+	}
+}
+
+func TestDownloadFromLibgenMirrorsContinuesAfterInvalidEPUB(t *testing.T) {
+	invalidEPUB := append([]byte{0x50, 0x4B, 0x03, 0x04}, bytes.Repeat([]byte{'x'}, 2000)...)
+	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'p'}, 1500)...)
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			_, _ = w.Write([]byte(`<a href="get.php?md5=book">GET</a>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/epub+zip")
+		_, _ = w.Write(invalidEPUB)
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			_, _ = w.Write([]byte(`<a href="get.php?md5=book">GET</a>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(pdf)
+	}))
+	defer second.Close()
+
+	cfg := newTestConfig([]string{first.URL, second.URL})
+	cfg.IncomingDir = t.TempDir()
+	d := NewDirectDownloader(cfg, second.Client())
+	d.validate = nil
+	path, _, err := d.downloadFromLibgenMirrors("book", "Fallback Book", make(map[string]bool), nil)
+	if err != nil {
+		t.Fatalf("invalid EPUB fallback: %v", err)
+	}
+	if !strings.HasSuffix(path, ".pdf") {
+		t.Fatalf("fallback path = %q, want PDF", path)
+	}
+}
+
+func TestDownloadFromLibgenMirrorsStopsAfterVerifiedSuccess(t *testing.T) {
+	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'v'}, 1500)...)
+	expectedMD5 := fmt.Sprintf("%x", md5.Sum(pdf))
+	secondCalls := int32(0)
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			_, _ = w.Write([]byte(`<a href="get.php?md5=` + expectedMD5 + `">GET</a>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(pdf)
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&secondCalls, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer second.Close()
+
+	cfg := newTestConfig([]string{first.URL, second.URL})
+	cfg.IncomingDir = t.TempDir()
+	d := NewDirectDownloader(cfg, first.Client())
+	d.validate = nil
+
+	path, size, err := d.downloadFromLibgenMirrors(expectedMD5, "Verified Book", make(map[string]bool), nil)
+	if err != nil {
+		t.Fatalf("download from first verified mirror: %v", err)
+	}
+	if secondCalls != 0 {
+		t.Fatalf("later mirror was contacted %d times after success", secondCalls)
+	}
+	if size != int64(len(pdf)) || path == "" {
+		t.Fatalf("unexpected successful download path=%q size=%d", path, size)
+	}
+}
+
+func TestDownloadFromLibgenMirrorsContinuesAfterChecksumMismatch(t *testing.T) {
+	good := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'g'}, 1500)...)
+	wrong := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'w'}, 1500)...)
+	expectedMD5 := fmt.Sprintf("%x", md5.Sum(good))
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			_, _ = w.Write([]byte(`<a href="get.php?md5=` + expectedMD5 + `">GET</a>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(wrong)
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			_, _ = w.Write([]byte(`<a href="get.php?md5=` + expectedMD5 + `">GET</a>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(good)
+	}))
+	defer second.Close()
+
+	cfg := newTestConfig([]string{first.URL, second.URL})
+	cfg.IncomingDir = t.TempDir()
+	d := NewDirectDownloader(cfg, second.Client())
+	d.validate = nil
+	path, _, err := d.downloadFromLibgenMirrors(expectedMD5, "Checksum Book", make(map[string]bool), nil)
+	if err != nil {
+		t.Fatalf("checksum fallback: %v", err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(contents, good) {
+		t.Fatalf("fallback did not retain verified content: err=%v", err)
+	}
+}
+
+func TestDownloadFromLibgenMirrorsSkipsDuplicateMirrorConfiguration(t *testing.T) {
+	adsCalls := int32(0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ads.php") {
+			atomic.AddInt32(&adsCalls, 1)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := newTestConfig([]string{server.URL, server.URL + "/"})
+	d := NewDirectDownloader(cfg, server.Client())
+	d.validate = nil
+	_, _, err := d.downloadFromLibgenMirrors("not-a-valid-md5", "Duplicate Mirror", make(map[string]bool), nil)
+	if err == nil {
+		t.Fatal("expected duplicate mirror configuration to fail")
+	}
+	if got := atomic.LoadInt32(&adsCalls); got != 1 {
+		t.Fatalf("duplicate mirror was queried %d times, want 1", got)
 	}
 }
 

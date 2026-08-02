@@ -11,6 +11,10 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
   single-file and multi-track handoff copies, export history, folder diagnostics,
   and a configurable macOS `open -a Books` helper. Source files are never
   modified or deleted.
+- Added authenticated normalized-library Delivery downloads for EPUB, PDF, MP3,
+  and M4B files with safe Author - Title filenames.
+- Acquisition controls now use media-aware Get Book, Get Audiobook, and Get
+  Manga labels; Download is reserved for Library Delivery.
 
 - Local audiobook metadata support for MP3/M4B imports, including conservative
   filename fallback, multi-track grouping, embedded artwork, and normalized

@@ -138,8 +138,8 @@ func TestWantedListMarksExistingLibraryMatchImported(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Items) != 1 || listed.Items[0].Status != "imported" || listed.Counts["imported"] != 1 {
-		t.Fatalf("wanted list = %+v", listed)
+	if len(listed.Items) != 0 || listed.Counts["total"] != 0 || listed.Counts["imported"] != 0 {
+		t.Fatalf("active wanted list = %+v", listed)
 	}
 
 	stored, err := s.db.GetWantedBook(wanted.ID)

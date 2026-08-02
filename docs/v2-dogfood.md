@@ -203,7 +203,8 @@ stored releases:
 
 1. Open Wanted.
 2. Click **View Releases** on a found Wanted item.
-3. Pick a torrent or magnet result and click **Download with qBittorrent**.
+3. Pick a torrent or magnet result and click the media-aware **Get** action to
+   send it to qBittorrent.
 4. Confirm the release title, indexer, format, size, and seeders.
 5. Verify qBittorrent receives exactly one torrent using the configured remote
    save path and category.

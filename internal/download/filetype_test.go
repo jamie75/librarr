@@ -2,6 +2,7 @@ package download
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,10 +32,37 @@ func makeEPUB(t *testing.T, mimetype string) string {
 	mw.Write([]byte(mimetype))
 	cw, _ := zw.Create("content.opf")
 	cw.Write([]byte("<package/>"))
+	pw, _ := zw.CreateHeader(&zip.FileHeader{Name: "padding.bin", Method: zip.Store})
+	pw.Write(make([]byte, 2000))
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func makeEPUBBytes(t *testing.T, mimetype string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(makeEPUB(t, mimetype))
+	if err != nil {
+		t.Fatalf("read generated EPUB: %v", err)
+	}
+	return b
+}
+
+func makeEPUBBytesWithTitle(t *testing.T, title string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	zw := zip.NewWriter(&buffer)
+	mimetype, _ := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
+	_, _ = mimetype.Write([]byte("application/epub+zip"))
+	opf, _ := zw.Create("content.opf")
+	_, _ = opf.Write([]byte(`<package><metadata><title>` + title + `</title></metadata></package>`))
+	padding, _ := zw.CreateHeader(&zip.FileHeader{Name: "padding.bin", Method: zip.Store})
+	_, _ = padding.Write(make([]byte, 2000))
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close generated EPUB: %v", err)
+	}
+	return buffer.Bytes()
 }
 
 func mobiBytes() []byte {

@@ -432,6 +432,7 @@ func (s *Server) registerLibraryRoutes() {
 	s.mux.HandleFunc("GET /api/v1/books/{id}/files", s.handleV1BookFiles)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/editions", s.handleV1BookEditions)
 	s.mux.HandleFunc("GET /api/v1/books/{id}/cover", s.handleV1BookCover)
+	s.mux.HandleFunc("GET /api/v1/books/{id}/download/{format}", s.handleV1BookDownload)
 	s.mux.HandleFunc("POST /api/v1/books/{id}/apple-books/export", requireAdmin(s.handleAppleBooksExport))
 	s.mux.HandleFunc("GET /api/v1/books/{id}/apple-books/exports", s.handleAppleBooksBookExports)
 	s.mux.HandleFunc("GET /api/v1/apple-books/exports", s.handleAppleBooksExports)
