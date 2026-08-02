@@ -151,9 +151,8 @@ func TestDownloadFile_EPUBKeepsCorrectExtension(t *testing.T) {
 	d := NewDirectDownloader(cfg, server.Client())
 	d.validate = nil // httptest serves on loopback; not exercising the SSRF guard here
 
-	// downloadFile runs EPUB validation after detection. A fake ZIP will fail
-	// the validation (VerifyEPUBTitle errors -> "allowing download" warn path),
-	// so the download should still succeed. We just verify the extension handling.
+	// downloadFile runs EPUB validation after detection. A fake ZIP is rejected,
+	// but the extension is still detected before validation.
 	filePath, _, err := d.downloadFile(server.URL, "Test Book", nil)
 	if err != nil {
 		// Validation may fail with our fake ZIP; we only care about extension logic
@@ -165,6 +164,18 @@ func TestDownloadFile_EPUBKeepsCorrectExtension(t *testing.T) {
 	}
 	if !strings.HasSuffix(filePath, ".epub") {
 		t.Errorf("EPUB should keep .epub extension, got: %s", filePath)
+	}
+}
+
+func TestVerifyEPUBAcceptsMainTitleWhenExpectedHasSubtitle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "courtiers.epub")
+	if err := os.WriteFile(path, makeEPUBBytesWithTitle(t, "Courtiers"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDirectDownloader(&config.Config{}, http.DefaultClient)
+	if err := d.verifyEPUB(path, "Courtiers : intrigue, ambition, and the power players behind the house of Windsor"); err != nil {
+		t.Fatalf("subtitle variant rejected: %v", err)
 	}
 }
 
@@ -347,10 +358,8 @@ func TestDetectFileExtension_WeirdZIPSignature(t *testing.T) {
 	}
 }
 
-// TestDownloadFile_RenameCollision — if we download a PDF masquerading as EPUB
-// but a file with the correct .pdf name already exists in the incoming dir,
-// document the behavior. os.Rename on Linux atomically replaces the target,
-// which is what we want (the new download wins; the stale file is overwritten).
+// TestDownloadFile_RenameCollision ensures an existing destination is never
+// overwritten by a later mirror or duplicate download attempt.
 func TestDownloadFile_RenameCollision(t *testing.T) {
 	pdfBytes := append([]byte("%PDF-1.6\n"), make([]byte, 2000)...)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -371,16 +380,15 @@ func TestDownloadFile_RenameCollision(t *testing.T) {
 	d.validate = nil // httptest serves on loopback; not exercising the SSRF guard here
 
 	path, _, err := d.downloadFile(server.URL, "Collide", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected existing destination to be preserved")
 	}
-	if !strings.HasSuffix(path, ".pdf") {
-		t.Errorf("expected .pdf extension, got: %s", path)
+	if path != "" {
+		t.Fatalf("path = %q, want empty on collision", path)
 	}
-	// The stale content should have been overwritten with the new PDF bytes.
-	got, _ := os.ReadFile(path)
-	if string(got[:5]) != "%PDF-" {
-		t.Errorf("stale file was not replaced; first bytes: %q", got[:5])
+	got, _ := os.ReadFile(stalePath)
+	if string(got) != "STALE" {
+		t.Errorf("stale file was changed: %q", got)
 	}
 }
 

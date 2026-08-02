@@ -55,6 +55,20 @@ of the repository.
 
 ## API
 
+The same normalized delivery surface also provides authenticated direct
+downloads without copying or changing the source file:
+
+```text
+GET /api/v1/books/{id}/download/{format}
+```
+
+Supported formats are `epub`, `pdf`, `mp3`, and `m4b`. The response uses the
+appropriate media type and an `Author - Title.ext` attachment filename. Pass
+`file_id` when an audiobook contains multiple files with the same format. The
+endpoint uses the same configured-root, symlink, traversal, and safe-filename
+rules as Apple Books export and is available to authenticated normalized-library
+users; it is not an administrator-only operation.
+
 - `POST /api/v1/books/{id}/apple-books/export` with `{ "format": "auto" }`
 - `GET /api/v1/books/{id}/apple-books/exports`
 - `GET /api/v1/apple-books/exports`
@@ -65,6 +79,29 @@ PDF for ebooks; an ebook can also request its available `epub` or `pdf`
 format. History endpoints require an
 authenticated session or API key. No download client or metadata provider is
 involved.
+
+## Direct Library Delivery
+
+Delivery downloads are separate from acquisition. Discover and Wanted use
+media-aware **Get Book**, **Get Audiobook**, and **Get Manga** actions to acquire
+releases. Book Details uses **Download** only for files already in the
+normalized library:
+
+```text
+GET /api/v1/books/{id}/download/{format}
+```
+
+Authenticated users can download EPUB, PDF, M4B, or a single-file MP3
+directly. Multi-track MP3 audiobooks are intentionally not offered as one
+download yet. The response streams the validated library source with range
+support and a safe `Author - Title.ext` filename. It does not create an export
+copy or modify the source. MOBI, AZW3, manga packages, and unsupported media
+types are rejected.
+
+The normal browser link works behind a reverse proxy and on mobile browsers.
+For Kindle, download the EPUB in the browser and use the device's normal
+open/share flow or Send to Kindle manually; Librarr does not integrate Amazon
+credentials or email delivery.
 
 Apple Books or iCloud may copy the handoff into its own managed storage after
 the macOS helper opens it. Librarr does not observe or guarantee that final

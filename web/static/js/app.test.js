@@ -75,12 +75,14 @@ const functionBundle = [
   extractFunctionSource('mapV1BookToUIBook'),
   extractFunctionSource('normalizeFormatLabels'),
   extractFunctionSource('appleBooksDetailFormatOptions'),
+  extractFunctionSource('renderBookDownloadSection'),
   extractFunctionSource('renderBookCover'),
   extractFunctionSource('makePlaceholderHtml'),
   extractFunctionSource('normalizeWantedKeyPart'),
   extractFunctionSource('wantedIdentityKey'),
   extractFunctionSource('wantedSourceKey'),
   extractFunctionSource('searchResultMediaType'),
+  extractFunctionSource('acquisitionLabel'),
   extractFunctionSource('wantedStateForResult'),
   extractFunctionSource('refreshWantedData'),
   extractFunctionSource('loadWantedHistory'),
@@ -456,6 +458,31 @@ test('discover card shows add to wanted when result is neither wanted nor in lib
 
   assert.match(html, /data-action="addWantedFromSearch"/);
   assert.match(html, /wanted_add/);
+  assert.match(html, /get_book/);
+});
+
+test('discover acquisition action uses the known media type', () => {
+  const context = createContext({
+    state: {
+      wantedIndex: new Set(),
+      libraryMatchIndex: new Set(),
+      pendingDownloads: new Set(),
+      trackedDownloadJobs: new Map(),
+      downloadOutcomes: new Map(),
+      searchTab: 'audiobooks',
+    },
+  });
+
+  assert.match(context.renderBookCard({ title: 'The Hobbit', media_type: 'audiobook' }, 0), /get_audiobook/);
+  assert.match(context.renderBookCard({ title: 'Akira', media_type: 'manga' }, 1), /get_manga/);
+});
+
+test('acquisition labels are media-aware in the active locale', () => {
+  const labels = { get_book: 'Get Book', get_audiobook: 'Get Audiobook', get_manga: 'Get Manga' };
+  const context = createContext({ t: key => labels[key] || key });
+  assert.equal(context.acquisitionLabel('ebook'), 'Get Book');
+  assert.equal(context.acquisitionLabel('audiobook'), 'Get Audiobook');
+  assert.equal(context.acquisitionLabel('manga'), 'Get Manga');
 });
 
 test('discover card shows wanted badge for existing wanted result', () => {
@@ -968,6 +995,39 @@ test('Apple Books detail format options are limited to the ebook source formats'
   const audioOptions = context.appleBooksDetailFormatOptions({ mediaType: 'audiobook', formats: ['MP3'] });
   assert.match(audioOptions, /value="m4b"/);
   assert.match(audioOptions, /value="mp3"/);
+});
+
+test('book details render supported Delivery downloads without unsupported formats', () => {
+  const context = createContext({ normalizedLibraryMode: () => true });
+  const ebook = context.renderBookDownloadSection({ id: 20, mediaType: 'ebook' }, [
+    { id: 1, format: 'EPUB' }, { id: 2, format: 'PDF' }, { id: 3, format: 'MOBI' },
+  ]);
+  assert.match(ebook, /Download EPUB/);
+  assert.match(ebook, /Download PDF/);
+  assert.doesNotMatch(ebook, /Download MOBI/);
+  assert.match(ebook, /file_id=1/);
+
+  const audiobook = context.renderBookDownloadSection({ id: 21, mediaType: 'audiobook' }, [
+    { id: 4, format: 'MP3' }, { id: 5, format: 'M4B' },
+  ]);
+  assert.match(audiobook, /Download MP3/);
+  assert.match(audiobook, /Download M4B/);
+  assert.doesNotMatch(audiobook, /Download EPUB/);
+});
+
+test('book details do not offer a misleading multi-track MP3 download', () => {
+  const context = createContext({ normalizedLibraryMode: () => true });
+  const audiobook = context.renderBookDownloadSection({ id: 21, mediaType: 'audiobook' }, [
+    { id: 4, format: 'MP3', path: '/books/audio/01.mp3' },
+    { id: 5, format: 'MP3', path: '/books/audio/02.mp3' },
+  ]);
+  assert.match(audiobook, /Direct download for multi-track audiobooks is not available yet/);
+  assert.doesNotMatch(audiobook, /Download MP3/);
+});
+
+test('book details do not show Delivery downloads for manga', () => {
+  const context = createContext({ normalizedLibraryMode: () => true });
+  assert.equal(context.renderBookDownloadSection({ id: 22, mediaType: 'manga' }, [{ id: 1, format: 'PDF' }]), '');
 });
 
 test('Apple Books export disables the dynamic button while the request is pending', async () => {
@@ -2069,7 +2129,7 @@ test('wanted release row shows download action only for supported releases', () 
 
   const supported = context.renderWantedReleaseRow({ id: 22, title: 'Release One', protocol: 'torrent', download_available: true, score: 90, seeders: 4 }, 0);
   assert.match(supported, /downloadWantedRelease/);
-  assert.match(supported, /wanted_release_download/);
+  assert.match(supported, /get_book/);
 
   const unsupported = context.renderWantedReleaseRow({ id: 23, title: 'Release Two', protocol: 'usenet', download_available: false, score: 80 }, 1);
   assert.doesNotMatch(unsupported, /downloadWantedRelease/);
@@ -2875,6 +2935,14 @@ test('manual review use suggested resolves candidate through scan endpoint', asy
   assert.equal(context.state.libraryImport.scan.result.totals.ready_to_import, 1);
   assert.equal(context.state.libraryImport.scan.selected.has('review-1'), true);
   assert.equal(refreshed, true);
+});
+
+test('library import refresh reloads Wanted so completed items disappear from the active list', async () => {
+  const calls = [];
+  const context = createContext({ state: { currentTab: 'wanted' } });
+  context.loadWanted = async () => calls.push('loadWanted');
+  await context.refreshLibraryAfterScanImport();
+  assert.deepEqual(calls, ['loadWanted']);
 });
 
 test('metadata editor renders live preview and validation for manual review items', () => {

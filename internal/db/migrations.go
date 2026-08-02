@@ -25,6 +25,32 @@ var versionedMigrations = []schemaMigration{
 	{version: 9, name: "librarr_2_wanted_manual_download", run: migrateLibrarr2WantedManualDownload},
 	{version: 10, name: "librarr_2_apple_books_exports", run: migrateLibrarr2AppleBooksExports},
 	{version: 11, name: "librarr_2_apple_books_export_media_type", run: migrateLibrarr2AppleBooksExportMediaType},
+	{version: 12, name: "librarr_2_wanted_completion", run: migrateLibrarr2WantedCompletion},
+}
+
+func migrateLibrarr2WantedCompletion(tx *sql.Tx) error {
+	columns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "completed_at", definition: `ALTER TABLE wanted_books ADD COLUMN completed_at DATETIME`},
+		{name: "library_book_id", definition: `ALTER TABLE wanted_books ADD COLUMN library_book_id INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, column := range columns {
+		exists, err := columnExistsInTx(tx, "wanted_books", column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec(column.definition); err != nil {
+				return fmt.Errorf("add wanted completion column %s: %w", column.name, err)
+			}
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_wanted_books_library_book ON wanted_books(library_book_id)`); err != nil {
+		return fmt.Errorf("index wanted completion book: %w", err)
+	}
+	return nil
 }
 
 func migrateLibrarr2AppleBooksExportMediaType(tx *sql.Tx) error {

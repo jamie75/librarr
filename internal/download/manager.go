@@ -396,6 +396,7 @@ func (m *Manager) runAnnasDownload(job *models.DownloadJob) {
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
+	reconcileWantedImport(m.db, downloadedMD5, job.Title, author, library.MediaTypeEbook, result)
 
 	// Trigger library imports.
 	if m.targets != nil && result.InsertedCount > 0 {
@@ -499,6 +500,7 @@ func (m *Manager) runDirectDownload(job *models.DownloadJob, fileURL, sourceID, 
 		m.updateJob(job, "error", "Library import failed", err.Error())
 		return
 	}
+	reconcileWantedImport(m.db, job.SourceID, job.Title, author, library.MediaTypeEbook, result)
 
 	// Trigger library imports.
 	if m.targets != nil && result.InsertedCount > 0 {

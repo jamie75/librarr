@@ -55,6 +55,21 @@ type Exporter struct {
 	config  Config
 }
 
+// DeliveryFile is a validated source file that may be served to an
+// authenticated client. The path has already been checked against the
+// media-specific configured root; callers must still perform their final
+// sink-local validation immediately before opening it.
+type DeliveryFile struct {
+	FileID      int64
+	BookID      int64
+	Format      string
+	Path        string
+	Filename    string
+	ContentType string
+	Size        int64
+	ModTime     time.Time
+}
+
 func NewExporter(libraryService *library.LibraryService, store Store, config Config) *Exporter {
 	return &Exporter{library: libraryService, store: store, config: config}
 }
@@ -66,6 +81,140 @@ func (e *Exporter) SetConfig(config Config) {
 		e.config = config
 	}
 }
+
+// PrepareDownload selects and validates one supported source file without
+// copying or modifying it. A fileID of zero selects the first file in the
+// requested format; callers can pass fileID when a book has multiple tracks
+// of the same format.
+func (e *Exporter) PrepareDownload(ctx context.Context, bookID, fileID int64, requestedFormat string) (*DeliveryFile, error) {
+	if e == nil || e.library == nil {
+		return nil, errors.New("download delivery is unavailable in this repository mode")
+	}
+	book, err := e.library.GetBook(ctx, bookID)
+	if err != nil {
+		return nil, fmt.Errorf("load book: %w", err)
+	}
+	if book.MediaType != library.MediaTypeEbook && book.MediaType != library.MediaTypeAudiobook {
+		return nil, fmt.Errorf("unsupported media type %q for download", book.MediaType)
+	}
+	files, err := e.library.GetBookFiles(ctx, bookID)
+	if err != nil {
+		return nil, fmt.Errorf("load book files: %w", err)
+	}
+	requested := normalizeFormat(requestedFormat)
+	if requested == "auto" {
+		requested = ""
+	}
+	type downloadCandidate struct {
+		file   library.BookFile
+		format string
+	}
+	var candidates []downloadCandidate
+	for _, file := range files {
+		if fileID > 0 && file.ID != fileID {
+			continue
+		}
+		format := extension(file.Path)
+		if strings.TrimSpace(file.Format) != "" {
+			storedFormat := extension("." + file.Format)
+			if downloadFormatAllowed(book.MediaType, storedFormat) {
+				format = storedFormat
+			}
+		}
+		if !downloadFormatAllowed(book.MediaType, format) || (requested != "" && format != requested) {
+			continue
+		}
+		candidates = append(candidates, downloadCandidate{file: file, format: format})
+	}
+	if len(candidates) == 0 {
+		if fileID > 0 {
+			return nil, errors.New("requested file is not available in the requested format")
+		}
+		if requested != "" {
+			return nil, fmt.Errorf("requested format %q is not available for this book", requested)
+		}
+		return nil, errors.New("no supported downloadable file is available for this book")
+	}
+	if book.MediaType == library.MediaTypeAudiobook && candidates[0].format == "mp3" && len(candidates) > 1 {
+		return nil, errors.New("direct download for multi-track audiobooks is not available yet")
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].format != candidates[j].format && requested == "" && book.MediaType == library.MediaTypeAudiobook {
+			return candidates[i].format == "m4b"
+		}
+		if candidates[i].file.ID != candidates[j].file.ID {
+			return candidates[i].file.ID < candidates[j].file.ID
+		}
+		return candidates[i].file.Path < candidates[j].file.Path
+	})
+	candidate := candidates[0]
+	file := candidate.file
+	format := candidate.format
+	root := e.config.EbookRoot
+	if book.MediaType == library.MediaTypeAudiobook {
+		root = e.config.AudiobookRoot
+	}
+	validated, err := validateSource(root, file.Path)
+	if err != nil {
+		return nil, fmt.Errorf("unsafe %s source: %w", book.MediaType, err)
+	}
+	info, err := os.Stat(validated)
+	if err != nil {
+		return nil, fmt.Errorf("read download source: %w", err)
+	}
+	if info.IsDir() {
+		return nil, errors.New("directory audiobook downloads are not supported; choose an individual MP3 or M4B file")
+	}
+	author := primaryContributor(book.Contributors, library.RoleAuthor)
+	base := strings.TrimSpace(book.Title)
+	if base == "" {
+		return nil, errors.New("book title is required for download")
+	}
+	if author = strings.TrimSpace(author); author != "" {
+		base = author + " - " + base
+	}
+	filename := safeName(base) + "." + format
+	if filename == "."+format {
+		return nil, errors.New("book title is not a valid download filename")
+	}
+	return &DeliveryFile{
+		FileID: file.ID, BookID: bookID, Format: format, Path: validated,
+		Filename: filename, ContentType: deliveryMIME(format), Size: info.Size(), ModTime: info.ModTime(),
+	}, nil
+}
+
+func downloadFormatAllowed(mediaType library.MediaType, format string) bool {
+	switch mediaType {
+	case library.MediaTypeEbook:
+		return format == "epub" || format == "pdf"
+	case library.MediaTypeAudiobook:
+		return format == "mp3" || format == "m4b"
+	default:
+		return false
+	}
+}
+
+func deliveryMIME(format string) string {
+	switch format {
+	case "epub":
+		return "application/epub+zip"
+	case "pdf":
+		return "application/pdf"
+	case "mp3":
+		return "audio/mpeg"
+	case "m4b":
+		return "audio/mp4"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// SafeFilename applies the same filename policy used by Apple Books exports.
+func SafeFilename(value string) string { return safeName(value) }
+
+// ValidateSource applies the same configured-root and symlink checks used by
+// Apple Books exports to another delivery surface.
+func ValidateSource(root, candidate string) (string, error) { return validateSource(root, candidate) }
 
 func (e *Exporter) Export(ctx context.Context, bookID int64, requestedFormat string) (*models.AppleBooksExport, error) {
 	if !e.config.Enabled {

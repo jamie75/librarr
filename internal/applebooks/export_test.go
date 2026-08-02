@@ -146,6 +146,66 @@ func TestExportSingleM4BAndHistory(t *testing.T) {
 	}
 }
 
+func TestPrepareDownloadUsesSafeNamesAndSupportedFormats(t *testing.T) {
+	ebook, database, root, _, bookID := newTestEbookExporter(t, "A: Book", "A/uthor", "source.epub", []byte("epub bytes"))
+	defer database.Close()
+	download, err := ebook.PrepareDownload(context.Background(), bookID, 0, "epub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if download.Filename != "A-uthor - A- Book.epub" || download.ContentType != "application/epub+zip" {
+		t.Fatalf("download = %+v", download)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, "source.epub"))
+	if err != nil || download.Path != resolved || download.Size != int64(len("epub bytes")) {
+		t.Fatalf("download path/size = %+v", download)
+	}
+	if _, err := ebook.PrepareDownload(context.Background(), bookID, 0, "mobi"); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("unsupported download error = %v", err)
+	}
+}
+
+func TestPrepareDownloadRejectsUnsafeAndUnsupportedSources(t *testing.T) {
+	ebook, database, root, _, bookID := newTestEbookExporter(t, "A Book", "Author", "source.epub", []byte("epub"))
+	defer database.Close()
+	outside := filepath.Join(t.TempDir(), "outside.epub")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQLDB().Exec(`UPDATE files SET file_path = ?`, outside); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ebook.PrepareDownload(context.Background(), bookID, 0, "epub"); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("outside path error = %v", err)
+	}
+	link := filepath.Join(root, "escape.epub")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQLDB().Exec(`UPDATE files SET file_path = ?`, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ebook.PrepareDownload(context.Background(), bookID, 0, "epub"); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("symlink path error = %v", err)
+	}
+
+	audio, audioDB, _, _, audioID := newTestExporter(t, "Audio Book", []string{"track.mp3"})
+	defer audioDB.Close()
+	prepared, err := audio.PrepareDownload(context.Background(), audioID, 0, "mp3")
+	if err != nil || prepared.ContentType != "audio/mpeg" || prepared.Filename != "Test Author - Audio Book.mp3" {
+		t.Fatalf("audio download = %+v err=%v", prepared, err)
+	}
+}
+
+func TestPrepareDownloadRejectsMultiTrackMP3(t *testing.T) {
+	exporter, database, _, _, bookID := newTestExporter(t, "A Book", []string{"01.mp3", "02.mp3"})
+	defer database.Close()
+
+	if _, err := exporter.PrepareDownload(context.Background(), bookID, 0, "mp3"); err == nil || !strings.Contains(err.Error(), "multi-track") {
+		t.Fatalf("multi-track download error = %v", err)
+	}
+}
+
 func TestExportMultiTrackMP3IncludesOrderedManifest(t *testing.T) {
 	exporter, database, _, exportRoot, bookID := newTestExporter(t, "A Book", []string{"02.mp3", "01.mp3"})
 	defer database.Close()

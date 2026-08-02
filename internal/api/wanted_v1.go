@@ -96,6 +96,7 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items = s.reconcileWantedImportedStatus(r.Context(), items)
+	items = filterActiveWantedBooks(items)
 
 	counts := map[string]int{
 		"total":       len(items),
@@ -118,6 +119,19 @@ func (s *Server) handleV1WantedList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wantedListResponse{Items: items, Counts: counts})
 }
 
+func filterActiveWantedBooks(items []models.WantedBook) []models.WantedBook {
+	active := make([]models.WantedBook, 0, len(items))
+	for _, item := range items {
+		switch strings.TrimSpace(strings.ToLower(item.Status)) {
+		case "downloaded", "imported", "completed", "satisfied", "cancelled", "removed":
+			continue
+		default:
+			active = append(active, item)
+		}
+	}
+	return active
+}
+
 func (s *Server) reconcileWantedImportedStatus(ctx context.Context, items []models.WantedBook) []models.WantedBook {
 	if s == nil || s.db == nil || len(items) == 0 || s.libraryService == nil {
 		return items
@@ -127,31 +141,35 @@ func (s *Server) reconcileWantedImportedStatus(ctx context.Context, items []mode
 		if status == "ignored" || status == "downloaded" || status == "imported" {
 			continue
 		}
-		matched, err := s.wantedBookInLibrary(ctx, items[i])
+		matchedBookID, err := s.wantedBookInLibrary(ctx, items[i])
 		if err != nil {
 			slog.Debug("wanted library reconciliation skipped", "wanted_id", items[i].ID, "error", err)
 			continue
 		}
-		if !matched {
+		if matchedBookID == 0 {
 			continue
 		}
-		imported := "imported"
-		updated, err := s.db.UpdateWantedBook(items[i].ID, nil, &imported)
+		updated, _, err := s.db.CompleteWantedForImport(db.WantedImportIdentity{
+			WantedID:      items[i].ID,
+			MediaType:     items[i].MediaType,
+			LibraryBookID: matchedBookID,
+		})
 		if err != nil {
 			slog.Warn("wanted library reconciliation failed", "wanted_id", items[i].ID, "error", err)
-			items[i].Status = imported
 			continue
 		}
-		items[i] = *updated
+		if updated != nil {
+			items[i] = *updated
+		}
 	}
 	return items
 }
 
-func (s *Server) wantedBookInLibrary(ctx context.Context, item models.WantedBook) (bool, error) {
+func (s *Server) wantedBookInLibrary(ctx context.Context, item models.WantedBook) (int64, error) {
 	titleKey := library.TitleMatchKey(item.Title)
 	authorKey := library.ContributorMatchKey(item.Author)
 	if titleKey == "" {
-		return false, nil
+		return 0, nil
 	}
 	mediaType := library.MediaType(strings.TrimSpace(strings.ToLower(item.MediaType)))
 	if mediaType == "" {
@@ -170,19 +188,43 @@ func (s *Server) wantedBookInLibrary(ctx context.Context, item models.WantedBook
 		seen[strings.ToLower(query)] = struct{}{}
 		books, err := s.libraryService.ListBookReadModels(ctx, library.ListBooksQuery{MediaType: mediaType, Search: query, Limit: 500})
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		for _, book := range books {
-			if library.TitleMatchKey(book.Book.Title) != titleKey {
+			if !wantedTitlesEquivalent(item.Title, book.Book.Title) {
 				continue
 			}
-			if authorKey != "" && library.ContributorMatchKey(primaryReadModelAuthor(book)) != authorKey {
+			existingAuthor := strings.TrimSpace(primaryReadModelAuthor(book))
+			if authorKey != "" && existingAuthor != "" && !strings.EqualFold(existingAuthor, "unknown") && library.ContributorMatchKey(existingAuthor) != authorKey {
 				continue
 			}
-			return true, nil
+			return book.Book.ID, nil
 		}
 	}
-	return false, nil
+	return 0, nil
+}
+
+func wantedTitlesEquivalent(left, right string) bool {
+	leftKey, rightKey := library.TitleMatchKey(left), library.TitleMatchKey(right)
+	if leftKey == "" || rightKey == "" {
+		return false
+	}
+	if leftKey == rightKey {
+		return true
+	}
+	for _, value := range []string{left, right} {
+		for _, delimiter := range []string{" - ", ":"} {
+			parts := strings.SplitN(value, delimiter, 2)
+			if len(parts) != 2 {
+				continue
+			}
+			prefix := library.TitleMatchKey(parts[0])
+			if prefix == leftKey || prefix == rightKey {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) handleV1WantedCreate(w http.ResponseWriter, r *http.Request) {

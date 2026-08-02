@@ -52,7 +52,19 @@ type WantedSearchUpdate struct {
 	Query           string
 }
 
-const wantedBookSelectColumns = `id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, selected_release_id, selected_release_title, download_job_id, download_client, download_hash, download_started_at, download_error, added_at, updated_at`
+// WantedImportIdentity contains the durable signals available after an
+// import. An explicit WantedID is authoritative; the other fields are used
+// only for bounded, unambiguous reconciliation of older acquisition paths.
+type WantedImportIdentity struct {
+	WantedID      int64
+	SourceID      string
+	Title         string
+	Author        string
+	MediaType     string
+	LibraryBookID int64
+}
+
+const wantedBookSelectColumns = `id, title, author, isbn, asin, series, publisher, language, cover_url, description, source, media_type, preferred_format, origin_source, origin_release_title, origin_indexer, source_id, monitored, status, last_search, last_result_count, last_success, last_error, best_match_score, last_match_title, selected_release_id, selected_release_title, download_job_id, download_client, download_hash, download_started_at, download_error, completed_at, library_book_id, added_at, updated_at`
 
 const wantedReleaseSelectColumns = `id, wanted_book_id, title, guid, indexer, protocol, publish_date, size, size_human, seeders, leechers, grabs, language, format, download_url, categories, score, search_query, search_time`
 
@@ -293,6 +305,146 @@ func (d *DB) MarkWantedDownloadFailure(id int64, message string) (*models.Wanted
 	return d.GetWantedBook(id)
 }
 
+// CompleteWantedForImport marks exactly one active Wanted record satisfied.
+// It is intentionally conservative: ambiguous title/author matches are left
+// untouched so an unrelated book cannot clear a Wanted item.
+func (d *DB) CompleteWantedForImport(identity WantedImportIdentity) (*models.WantedBook, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	identity.Title = strings.TrimSpace(identity.Title)
+	identity.Author = strings.TrimSpace(identity.Author)
+	identity.SourceID = strings.TrimSpace(identity.SourceID)
+	identity.MediaType = strings.TrimSpace(strings.ToLower(identity.MediaType))
+	if identity.WantedID > 0 {
+		item, err := scanWantedBook(d.db.QueryRow(`SELECT `+wantedBookSelectColumns+` FROM wanted_books WHERE id = ?`, identity.WantedID))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		if isWantedCompleteStatus(item.Status) || (identity.MediaType != "" && item.MediaType != identity.MediaType) {
+			return item, false, nil
+		}
+		return d.markWantedCompletedLocked(item.ID, identity.LibraryBookID)
+	}
+
+	rows, err := d.db.Query(`SELECT ` + wantedBookSelectColumns + ` FROM wanted_books
+		WHERE status NOT IN ('ignored', 'downloaded', 'imported', 'completed', 'satisfied', 'cancelled', 'removed')`)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var matches []*models.WantedBook
+	for rows.Next() {
+		item, scanErr := scanWantedBook(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
+		}
+		if identity.MediaType != "" && item.MediaType != identity.MediaType {
+			continue
+		}
+		if identity.SourceID != "" && strings.EqualFold(item.DownloadHash, identity.SourceID) {
+			matches = append(matches, item)
+			continue
+		}
+		if !titlesEquivalent(item.Title, identity.Title) || !authorsCompatible(item.Author, identity.Author) {
+			continue
+		}
+		matches = append(matches, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(matches) != 1 {
+		return nil, false, nil
+	}
+	return d.markWantedCompletedLocked(matches[0].ID, identity.LibraryBookID)
+}
+
+func (d *DB) markWantedCompletedLocked(id, libraryBookID int64) (*models.WantedBook, bool, error) {
+	completedAt := time.Now().UTC()
+	result, err := d.db.Exec(`UPDATE wanted_books SET
+		status = 'imported', monitored = 0, completed_at = ?, library_book_id = ?,
+		download_error = '', last_error = '', updated_at = datetime('now')
+		WHERE id = ? AND status NOT IN ('ignored', 'downloaded', 'imported', 'completed', 'satisfied', 'cancelled', 'removed')`,
+		completedAt.Format(time.RFC3339), libraryBookID, id)
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if affected == 0 {
+		item, getErr := d.getWantedBookNoLock(id)
+		return item, false, getErr
+	}
+	item, err := d.getWantedBookNoLock(id)
+	return item, err == nil, err
+}
+
+func (d *DB) getWantedBookNoLock(id int64) (*models.WantedBook, error) {
+	return scanWantedBook(d.db.QueryRow(`SELECT `+wantedBookSelectColumns+` FROM wanted_books WHERE id = ?`, id))
+}
+
+func isWantedCompleteStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "downloaded", "imported", "completed", "satisfied", "cancelled", "removed":
+		return true
+	default:
+		return false
+	}
+}
+
+func wantedIdentityKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	space := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			space = false
+			continue
+		}
+		if !space && b.Len() > 0 {
+			b.WriteByte(' ')
+			space = true
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func titlesEquivalent(left, right string) bool {
+	leftKey, rightKey := wantedIdentityKey(left), wantedIdentityKey(right)
+	if leftKey == "" || rightKey == "" {
+		return false
+	}
+	if leftKey == rightKey {
+		return true
+	}
+	for _, value := range []string{left, right} {
+		for _, delimiter := range []string{" - ", ":"} {
+			if parts := strings.SplitN(value, delimiter, 2); len(parts) == 2 {
+				key := wantedIdentityKey(parts[0])
+				if key != "" && (key == leftKey || key == rightKey) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func authorsCompatible(existing, candidate string) bool {
+	existing, candidate = wantedIdentityKey(existing), wantedIdentityKey(candidate)
+	if existing == "" || existing == "unknown" || candidate == "" || candidate == "unknown" {
+		return true
+	}
+	return existing == candidate
+}
+
 func (d *DB) AddWantedSearchHistory(id int64, update WantedSearchUpdate) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -464,6 +616,7 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 	var lastSuccess int
 	var lastSearch sql.NullTime
 	var downloadStartedAt sql.NullTime
+	var completedAt sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
 		&item.Title,
@@ -497,6 +650,8 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 		&item.DownloadHash,
 		&downloadStartedAt,
 		&item.DownloadError,
+		&completedAt,
+		&item.LibraryBookID,
 		&item.AddedAt,
 		&item.UpdatedAt,
 	); err != nil {
@@ -511,6 +666,10 @@ func scanWantedBook(scanner wantedBookScanner) (*models.WantedBook, error) {
 	if downloadStartedAt.Valid {
 		timestamp := downloadStartedAt.Time
 		item.DownloadStartedAt = &timestamp
+	}
+	if completedAt.Valid {
+		timestamp := completedAt.Time
+		item.CompletedAt = &timestamp
 	}
 	return &item, nil
 }

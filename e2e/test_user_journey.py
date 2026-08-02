@@ -192,16 +192,56 @@ def test_wanted_add_from_discover_delete(ui):
     page.fill("#search-input", "test adventure")
     page.press("#search-input", "Enter")
     page.wait_for_selector('[data-action="addWantedFromSearch"]', timeout=30000)
+    title = page.evaluate("""() => {
+        const button = document.querySelector('[data-action="addWantedFromSearch"]');
+        return state.renderedResults[+button.dataset.idx].title;
+    }""")
     page.click('[data-action="addWantedFromSearch"]')
-    page.wait_for_selector("text=Wanted", timeout=5000)
 
-    open_tab(page, "wanted")
-    page.wait_for_selector('[data-action="removeWantedBook"]', timeout=5000)
-    page.on("dialog", lambda dialog: dialog.accept())
-    page.click('[data-action="removeWantedBook"]')
+    # The hermetic fixture may leave acquisition pending, or may complete it
+    # before the UI is revisited. Wait for either terminal observation rather
+    # than assuming that every successful acquisition remains Wanted.
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-action=\"removeWantedBook\"]').length === 0"
+        """async (expectedTitle) => {
+            const wanted = await fetch('/api/v1/wanted').then(response => response.json());
+            if ((wanted.items || []).some(item => item.title === expectedTitle)) return true;
+            const normalized = await fetch('/api/v1/books?limit=100&offset=0').then(response => response.json());
+            if ((normalized.items || []).some(item => item.title === expectedTitle)) return true;
+            const legacy = await fetch('/api/library').then(response => response.json());
+            return (legacy.items || []).some(item => item.title === expectedTitle);
+        }""",
+        arg=title,
+        timeout=30000,
     )
+
+    wanted = api(page, "/api/v1/wanted")
+    pending = next((item for item in wanted.get("items", []) if item.get("title") == title), None)
+    if pending:
+        # Pending acquisition remains actionable and can still be removed.
+        open_tab(page, "wanted")
+        page.wait_for_function(
+            "expectedTitle => document.body.innerText.includes(expectedTitle)",
+            arg=title,
+            timeout=5000,
+        )
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.click(f'[data-action="removeWantedBook"][data-id="{pending["id"]}"]')
+        page.wait_for_function(
+            """async ({id, title}) => {
+                const wanted = await fetch('/api/v1/wanted').then(response => response.json());
+                return !(wanted.items || []).some(item => item.id === id || item.title === title);
+            }""",
+            arg={"id": pending["id"], "title": title},
+            timeout=10000,
+        )
+    else:
+        # A completed acquisition satisfies Wanted and must be visible in the
+        # Library instead of being presented as a removable active item.
+        library = api(page, "/api/library")
+        assert any(item.get("title") == title for item in library.get("items", [])), \
+            f"completed acquisition for {title!r} was not found in Library: wanted={wanted!r} library={library!r}"
+        assert not any(item.get("title") == title for item in wanted.get("items", [])), \
+            f"completed acquisition for {title!r} remained in active Wanted"
 
 
 # ── Cover fallback via capture-phase error delegation ───────────────────────

@@ -2,7 +2,9 @@ package download
 
 import (
 	"bytes"
+	"crypto/md5"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -73,7 +75,7 @@ func TestDownloadFromAnnasRejectsUnrelatedFallbackAndExhaustsCandidates(t *testi
 }
 
 func TestDownloadFromAnnasReturnsSuccessfulFallbackMD5(t *testing.T) {
-	const fallbackMD5 = "48d427b054f3199f44171ba55c21adb2"
+	const fallbackMD5 = "0325284b803976662c9fd11e3e79bf68"
 	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'x'}, 1500)...)
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		status := http.StatusOK
@@ -83,9 +85,9 @@ func TestDownloadFromAnnasReturnsSuccessfulFallbackMD5(t *testing.T) {
 		case req.URL.Host == "mirror.test" && req.URL.Path == "/ads.php" && req.URL.Query().Get("md5") == "original":
 			body = []byte("File not found in DB")
 		case req.URL.Host == "annas.test" && req.URL.Path == "/search":
-			body = []byte(`<a href="/md5/48d427b054f3199f44171ba55c21adb2">The Adventures of Sherlock Holmes</a>`)
+			body = []byte(`<a href="/md5/` + fallbackMD5 + `">The Adventures of Sherlock Holmes</a>`)
 		case req.URL.Host == "mirror.test" && req.URL.Path == "/ads.php" && req.URL.Query().Get("md5") == fallbackMD5:
-			body = []byte(`<a href="get.php?md5=48d427b054f3199f44171ba55c21adb2&amp;key=test">GET</a>`)
+			body = []byte(`<a href="get.php?md5=` + fallbackMD5 + `&amp;key=test">GET</a>`)
 		case req.URL.Host == "mirror.test" && req.URL.Path == "/get.php":
 			header.Set("Content-Type", "application/pdf")
 			body = pdf
@@ -174,8 +176,8 @@ func TestParseAnnasFastDownloadURLAbsoluteAndRelative(t *testing.T) {
 }
 
 func TestDownloadFromAnnasUsesFastDownloadWhenKeyConfigured(t *testing.T) {
-	const md5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	epub := append([]byte("PK"), bytes.Repeat([]byte{'z'}, 2000)...)
+	epub := makeEPUBBytes(t, "application/epub+zip")
+	md5 := fmt.Sprintf("%x", md5.Sum(epub))
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		header := make(http.Header)
 		switch {
@@ -199,7 +201,6 @@ func TestDownloadFromAnnasUsesFastDownloadWhenKeyConfigured(t *testing.T) {
 	cfg.AnnasArchiveSecretKey = "vip-key"
 	direct := NewDirectDownloader(cfg, client)
 	direct.validate = nil
-
 	path, size, gotMD5, err := direct.DownloadFromAnnas(md5, "VIP Book", nil)
 	if err != nil {
 		t.Fatalf("fast download: %v", err)
@@ -216,8 +217,8 @@ func TestDownloadFromAnnasUsesFastDownloadWhenKeyConfigured(t *testing.T) {
 }
 
 func TestDownloadFromAnnasFallsBackToLibgenWhenFastFails(t *testing.T) {
-	const md5 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	epub := append([]byte("PK"), bytes.Repeat([]byte{'y'}, 2000)...)
+	epub := makeEPUBBytes(t, "application/epub+zip")
+	md5 := fmt.Sprintf("%x", md5.Sum(epub))
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		header := make(http.Header)
 		switch {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // EPUBMeta holds extracted EPUB metadata.
@@ -151,9 +152,12 @@ func normalizeAuthor(author string) string {
 	return strings.TrimSpace(author)
 }
 
-// VerifyEPUBTitle checks that the EPUB's dc:title has >= threshold word overlap
-// with the expected title. Returns true if verification passes.
+// VerifyEPUBTitle checks that the EPUB title is either an exact match or the
+// exact main-title portion of the expected title across a recognized subtitle
+// separator. threshold is retained for API compatibility with older callers;
+// title verification is now deterministic rather than overlap-based.
 func VerifyEPUBTitle(epubPath, expectedTitle string, threshold float64) (bool, string, error) {
+	_ = threshold
 	meta, err := ExtractEPUBMeta(epubPath)
 	if err != nil {
 		return false, "", err
@@ -163,11 +167,76 @@ func VerifyEPUBTitle(epubPath, expectedTitle string, threshold float64) (bool, s
 		return true, "", nil
 	}
 
-	overlap := wordOverlap(expectedTitle, meta.Title)
-	if overlap >= threshold {
+	if TitlesMatchWithSubtitle(expectedTitle, meta.Title) {
 		return true, meta.Title, nil
 	}
 	return false, meta.Title, nil
+}
+
+// TitlesMatchWithSubtitle matches complete normalized titles, or a complete
+// main title when only one side contains a recognized subtitle delimiter. It
+// deliberately does not accept arbitrary prefixes or word overlap.
+func TitlesMatchWithSubtitle(expected, actual string) bool {
+	expected = normalizeTitleForMatch(expected)
+	actual = normalizeTitleForMatch(actual)
+	if expected == "" || actual == "" {
+		return expected == actual
+	}
+	if expected == actual {
+		return true
+	}
+
+	expectedMain, expectedHasSubtitle := mainTitleForMatch(expected)
+	actualMain, actualHasSubtitle := mainTitleForMatch(actual)
+	if expectedHasSubtitle == actualHasSubtitle {
+		return false
+	}
+	if expectedHasSubtitle {
+		return meaningfulMainTitle(expectedMain) && expectedMain == actual
+	}
+	return meaningfulMainTitle(actualMain) && actualMain == expected
+}
+
+func normalizeTitleForMatch(value string) string {
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '\u2018', '\u2019', '\u201a', '\u201b':
+			return '\''
+		case '\u201c', '\u201d', '\u201e', '\u201f':
+			return '"'
+		case '\u2013', '\u2014', '\u2212':
+			return '-'
+		default:
+			return unicode.ToLower(r)
+		}
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, ":", " : ")
+	value = strings.ReplaceAll(value, "-", " - ")
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.Trim(value, " .,!?;:'\"")
+}
+
+func mainTitleForMatch(value string) (string, bool) {
+	for _, separator := range []string{" : ", " - "} {
+		if index := strings.Index(value, separator); index >= 0 {
+			main := strings.TrimSpace(value[:index])
+			if main != "" && index+len(separator) < len(value) {
+				return main, true
+			}
+		}
+	}
+	return value, false
+}
+
+func meaningfulMainTitle(value string) bool {
+	lettersOrDigits := 0
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			lettersOrDigits++
+		}
+	}
+	return lettersOrDigits >= 3
 }
 
 var wordExtractRe = regexp.MustCompile(`\w+`)

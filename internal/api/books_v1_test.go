@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jamie75/librarr/internal/applebooks"
 	"github.com/jamie75/librarr/internal/config"
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/library"
@@ -70,6 +71,61 @@ func TestV1BooksListSupportsPaginationSortSearchAndFormat(t *testing.T) {
 	}
 	if body.Items[0].PrimaryAuthor == nil || body.Items[0].PrimaryAuthor.Name != "Andy Weir" {
 		t.Fatalf("primary author = %+v", body.Items[0].PrimaryAuthor)
+	}
+}
+
+func TestV1BookDownloadServesAuthenticatedDeliveryFile(t *testing.T) {
+	s, ids, cleanup := newNormalizedBooksAPIServer(t)
+	defer cleanup()
+	root := t.TempDir()
+	path := filepath.Join(root, "source.epub")
+	content := []byte("ebook content")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := s.libraryService.GetBookFiles(context.Background(), ids.projectHailMaryID)
+	if err != nil || len(files) == 0 {
+		t.Fatalf("book files = %+v err=%v", files, err)
+	}
+	if _, err := s.db.SQLDB().Exec(`UPDATE files SET file_path = ?, file_size = ? WHERE id = ?`, path, len(content), files[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.EbookDir = root
+	s.libraryService.SetAllowedFileRoots(root)
+	s.appleBooks = applebooks.NewExporter(s.libraryService, s.db, applebooks.Config{EbookRoot: root})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/download/epub", ids.projectHailMaryID), nil)
+	req.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	req.SetPathValue("format", "epub")
+	rr := httptest.NewRecorder()
+	s.handleV1BookDownload(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != string(content) {
+		t.Fatalf("download status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); got != "application/epub+zip" {
+		t.Fatalf("content type=%q", got)
+	}
+	if got := rr.Header().Get("Content-Disposition"); !strings.Contains(got, "Andy Weir - Project Hail Mary.epub") {
+		t.Fatalf("content disposition=%q", got)
+	}
+	if got := rr.Header().Get("Content-Disposition"); !strings.Contains(got, "filename*=UTF-8''Andy%20Weir%20-%20Project%20Hail%20Mary.epub") {
+		t.Fatalf("utf-8 content disposition=%q", got)
+	}
+	if got := rr.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("accept ranges=%q", got)
+	}
+	if got := rr.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("nosniff=%q", got)
+	}
+
+	rangeReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/books/%d/download/epub", ids.projectHailMaryID), nil)
+	rangeReq.SetPathValue("id", fmt.Sprint(ids.projectHailMaryID))
+	rangeReq.SetPathValue("format", "epub")
+	rangeReq.Header.Set("Range", "bytes=0-3")
+	rangeRR := httptest.NewRecorder()
+	s.handleV1BookDownload(rangeRR, rangeReq)
+	if rangeRR.Code != http.StatusPartialContent || rangeRR.Body.String() != string(content[:4]) {
+		t.Fatalf("range status=%d body=%q", rangeRR.Code, rangeRR.Body.String())
 	}
 }
 

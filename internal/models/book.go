@@ -156,6 +156,8 @@ type WantedBook struct {
 	DownloadHash         string     `json:"download_hash,omitempty"`
 	DownloadStartedAt    *time.Time `json:"download_started_at,omitempty"`
 	DownloadError        string     `json:"download_error,omitempty"`
+	CompletedAt          *time.Time `json:"completed_at,omitempty"`
+	LibraryBookID        int64      `json:"library_book_id,omitempty"`
 	AddedAt              time.Time  `json:"added_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 }

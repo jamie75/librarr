@@ -20,8 +20,7 @@ import (
 // TestPipelineDirectDownloadOrganizeImport exercises search → download → organize → DB import
 // without external network dependencies.
 func TestPipelineDirectDownloadOrganizeImport(t *testing.T) {
-	epubHeader := []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00}
-	payload := append(epubHeader, make([]byte, 2000)...)
+	payload := makeEPUBBytes(t, "application/epub+zip")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/epub+zip")
@@ -85,8 +84,7 @@ func TestPipelineDirectDownloadOrganizeImport(t *testing.T) {
 }
 
 func TestPipelineDirectDownloadUsesConfiguredImportEngine(t *testing.T) {
-	epubHeader := []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00}
-	payload := append(epubHeader, make([]byte, 2000)...)
+	payload := makeEPUBBytes(t, "application/epub+zip")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/epub+zip")
 		w.Write(payload)
@@ -135,8 +133,7 @@ func TestPipelineDirectDownloadUsesConfiguredImportEngine(t *testing.T) {
 }
 
 func TestPipelineDirectDownloadDoesNotImportWhenOrganizationFails(t *testing.T) {
-	epubHeader := []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00}
-	payload := append(epubHeader, make([]byte, 2000)...)
+	payload := makeEPUBBytes(t, "application/epub+zip")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/epub+zip")
 		w.Write(payload)
