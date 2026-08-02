@@ -539,9 +539,6 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	if err != nil {
 		return "", 0, err
 	}
-	// The configured incoming directory is the approved local download root.
-	// codeql[go/path-injection]
-
 	if err := os.MkdirAll(incomingRoot, 0755); err != nil {
 		return "", 0, fmt.Errorf("create incoming dir: %w", err)
 	}
@@ -551,9 +548,6 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	if strings.Contains(contentType, "pdf") {
 		ext = ".pdf"
 	}
-
-	// The configured incoming directory is the approved local download root.
-	// codeql[go/path-injection]
 
 	tempFile, err := os.CreateTemp(incomingRoot, ".librarr-download-*.part")
 	if err != nil {
@@ -621,6 +615,9 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	if err != nil {
 		return "", 0, err
 	}
+	// Destination is cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
+
 	if _, err := os.Stat(filePath); err == nil {
 		if expectedMD5 != "" {
 			if existingMD5, hashErr := fileMD5(filePath); hashErr == nil && existingMD5 == expectedMD5 {
@@ -631,6 +628,9 @@ func (d *DirectDownloader) downloadFileAttemptWithExpectedMD5(client *http.Clien
 	} else if !os.IsNotExist(err) {
 		return "", 0, fmt.Errorf("check download destination: %w", err)
 	}
+	// Destination and temporary paths are cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
+
 	if err := os.Rename(tempPath, filePath); err != nil {
 		return "", 0, fmt.Errorf("commit downloaded file: %w", err)
 	}
@@ -685,6 +685,9 @@ func validateDownloadPath(root, candidate string) (string, error) {
 }
 
 func fileMD5(path string) (string, error) {
+	// The download pipeline passes only paths cleaned and verified beneath the configured incoming root.
+	// codeql[go/path-injection]
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -958,9 +961,6 @@ func detectFileExtension(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The caller supplies a cleaned local file path constrained to its approved directory.
-	// codeql[go/path-injection]
-
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
