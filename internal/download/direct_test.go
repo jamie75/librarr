@@ -94,6 +94,93 @@ func TestDetectFileExtension_RealPDFFile(t *testing.T) {
 	}
 }
 
+func TestValidateDownloadPath(t *testing.T) {
+	root := t.TempDir()
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "existing.epub"), []byte("book"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		candidate string
+		wantErr   bool
+	}{
+		{name: "existing nested destination", candidate: filepath.Join(nested, "existing.epub")},
+		{name: "new destination beneath existing parent", candidate: filepath.Join(nested, "new.epub")},
+		{name: "traversal", candidate: filepath.Join(root, "nested", "..", "..", "outside.epub"), wantErr: true},
+		{name: "absolute escape", candidate: filepath.Join(filepath.Dir(root), "outside.epub"), wantErr: true},
+		{name: "control character", candidate: filepath.Join(root, "bad\x00.epub"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := validateDownloadPath(root, tt.candidate)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateDownloadPath(%q) succeeded with %q", tt.candidate, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateDownloadPath(%q): %v", tt.candidate, err)
+			}
+			if !strings.HasPrefix(got, resolvedRoot+string(filepath.Separator)) {
+				t.Fatalf("validated path %q escaped root %q", got, resolvedRoot)
+			}
+		})
+	}
+}
+
+func TestValidateDownloadPathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := validateDownloadPath(root, filepath.Join(link, "book.epub")); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+}
+
+func TestFileMD5RequiresValidatedRootPath(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "book.epub")
+	if err := os.WriteFile(inside, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fileMD5(root, inside)
+	if err != nil {
+		t.Fatalf("fileMD5 inside root: %v", err)
+	}
+	if got != "5d41402abc4b2a76b9719d911017c592" {
+		t.Fatalf("fileMD5 = %q", got)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.epub")
+	if err := os.WriteFile(outside, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fileMD5(root, outside); err == nil {
+		t.Fatal("fileMD5 accepted a path outside the root")
+	}
+
+	link := filepath.Join(root, "escape.epub")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := fileMD5(root, link); err == nil {
+		t.Fatal("fileMD5 accepted a symlink escape")
+	}
+}
+
 // --- End-to-end download test: full flow from HTTP server to renamed file ---
 
 // TestDownloadFile_PDFSavedAsEPUBGetsRenamed is the regression test for issue #8.
