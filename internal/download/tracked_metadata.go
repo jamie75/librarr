@@ -1,6 +1,7 @@
 package download
 
 import (
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,7 @@ func (w *Watcher) canonicalTrackedImportMetadata(item models.TrackedDownload) tr
 		return trackedImportMetadata{}
 	}
 	return trackedImportMetadata{
-		source: "wanted_record",
+		source: "library_record",
 		override: libraryimport.CandidateMetadata{
 			SelectedTitle:  strings.TrimSpace(wanted.Title),
 			SelectedAuthor: strings.TrimSpace(wanted.Author),
@@ -85,6 +86,9 @@ func chooseTrackedAudiobookMetadata(torrentName string, embedded *libraryimport.
 
 func inferAudiobookReleaseMetadata(name string) (title, author string) {
 	name = strings.TrimSpace(name)
+	if ext := strings.ToLower(filepath.Ext(name)); isAudiobookMetadataExtension(ext) {
+		name = strings.TrimSpace(strings.TrimSuffix(name, ext))
+	}
 	if bracket := strings.Index(name, "["); bracket > 0 {
 		name = strings.TrimSpace(name[:bracket])
 	}
@@ -98,17 +102,18 @@ func inferAudiobookReleaseMetadata(name string) (title, author string) {
 	return name, ""
 }
 
+func isAudiobookMetadataExtension(ext string) bool {
+	switch ext {
+	case ".m4b", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus":
+		return true
+	default:
+		return false
+	}
+}
+
 func ebookMetadataSource(metadata organize.EbookMetadata) string {
 	if strings.TrimSpace(metadata.Title) != "" || strings.TrimSpace(metadata.Author) != "" {
 		return "embedded_ebook_metadata"
 	}
 	return "filename_fallback"
-}
-
-func trackedMetadataLogFields(metadata trackedImportMetadata, title, author string) []any {
-	return []any{
-		"metadata_source", firstNonEmpty(metadata.source, "torrent_name"),
-		"selected_title", title,
-		"selected_author", author,
-	}
 }

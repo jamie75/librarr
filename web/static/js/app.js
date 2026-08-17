@@ -1882,8 +1882,10 @@ async function startDownload(result) {
       source_id: result.source_id || '',
       md5: result.md5 || '',
       author: result.author || '',
+      media_type: searchResultMediaType(result),
       info_hash: result.info_hash || '',
       magnet: result.magnet || '',
+      download_protocol: result.download_protocol || result.source || '',
     };
 
     const data = await apiJson('/api/download', {

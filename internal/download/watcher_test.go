@@ -770,8 +770,8 @@ func TestTrackedWantedMetadataOverridesReleaseNameBeforeAudiobookOrganization(t 
 	}
 	tracked := models.TrackedDownload{Source: "wanted", SourceID: "wanted:" + strconv.FormatInt(wanted.ID, 10), MediaType: "audiobook"}
 	canonical := w.canonicalTrackedImportMetadata(tracked)
-	if canonical.source != "wanted_record" {
-		t.Fatalf("metadata source = %q, want wanted_record", canonical.source)
+	if canonical.source != "library_record" {
+		t.Fatalf("metadata source = %q, want library_record", canonical.source)
 	}
 	if err := w.importAudiobookWithMetadata(TorrentInfo{Name: "Rediscovering Americanism", Hash: "torrent-wanted"}, source, canonical); err != nil {
 		t.Fatal(err)
@@ -811,9 +811,9 @@ func TestTrackedWantedMetadataRequiresMatchingMediaType(t *testing.T) {
 
 func TestChooseTrackedAudiobookMetadataPriority(t *testing.T) {
 	embedded := &libraryimport.CandidateMetadata{SelectedTitle: "Embedded Title", SelectedAuthor: "Embedded Author"}
-	canonical := trackedImportMetadata{source: "wanted_record", override: libraryimport.CandidateMetadata{SelectedTitle: "Canonical Title", SelectedAuthor: "Canonical Author"}}
+	canonical := trackedImportMetadata{source: "library_record", override: libraryimport.CandidateMetadata{SelectedTitle: "Canonical Title", SelectedAuthor: "Canonical Author"}}
 	title, author, source := chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", embedded, canonical)
-	if title != "Canonical Title" || author != "Canonical Author" || source != "wanted_record" {
+	if title != "Canonical Title" || author != "Canonical Author" || source != "library_record" {
 		t.Fatalf("canonical choice = (%q, %q, %q)", title, author, source)
 	}
 	title, author, source = chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", embedded, trackedImportMetadata{})
@@ -823,6 +823,10 @@ func TestChooseTrackedAudiobookMetadataPriority(t *testing.T) {
 	title, author, source = chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", &libraryimport.CandidateMetadata{}, trackedImportMetadata{})
 	if title != "Release Title" || author != "Release Author" || source != "release_name" {
 		t.Fatalf("release-name choice = (%q, %q, %q)", title, author, source)
+	}
+	title, author, source = chooseTrackedAudiobookMetadata("Christopher Greyson, Trey Gowdy - The Color of Death.m4b", &libraryimport.CandidateMetadata{}, trackedImportMetadata{})
+	if title != "The Color of Death" || author != "Christopher Greyson, Trey Gowdy" || source != "release_name" {
+		t.Fatalf("filename choice = (%q, %q, %q)", title, author, source)
 	}
 }
 
