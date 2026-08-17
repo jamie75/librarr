@@ -112,6 +112,27 @@ func TestDownloadsV1RouteReturnsDownloadsEnvelope(t *testing.T) {
 	}
 }
 
+func TestEnsureDiscoverTorrentIdentityCreatesAndReusesCanonicalWantedBook(t *testing.T) {
+	server := newDownloadWarningTestServer(t, &recordingTorrentClient{})
+	request := &models.DownloadRequest{
+		Source: "prowlarr_audiobooks", Title: "The Color of Death by Christopher Greyson, Trey Gowdy [ENG / M4B] [VIP]", MediaType: "audiobook",
+	}
+	item, err := server.ensureDiscoverTorrentIdentity(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item == nil || item.Title != "The Color of Death" || item.Author != "Christopher Greyson, Trey Gowdy" {
+		t.Fatalf("canonical wanted identity = %+v", item)
+	}
+	again, err := server.ensureDiscoverTorrentIdentity(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again == nil || again.ID != item.ID {
+		t.Fatalf("identity should be reused: first=%+v second=%+v", item, again)
+	}
+}
+
 func TestHandleTorrentDownloadUsesConfiguredQBSavePaths(t *testing.T) {
 	tests := []struct {
 		name         string

@@ -8,13 +8,16 @@ import (
 	"log/slog"
 	"net/http"
 	neturl "net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jamie75/librarr/internal/download"
+	"github.com/jamie75/librarr/internal/library"
 	"github.com/jamie75/librarr/internal/models"
 	"github.com/jamie75/librarr/internal/netutil"
 	"github.com/jamie75/librarr/internal/search"
+	wantedmeta "github.com/jamie75/librarr/internal/wanted"
 )
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -123,9 +126,20 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		category = s.cfg.QBMangaCategory
 	}
 
-	_, err = s.downloadMgr.StartTorrentDownloadTracked(url, req.Title, savePath, category, req.InfoHash, req.MediaType, req.Source, extractSourceID(req))
+	if wanted, identityErr := s.ensureDiscoverTorrentIdentity(&req); identityErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "error": "Failed to preserve acquisition identity"})
+		return
+	} else if wanted != nil {
+		req.Source = "wanted"
+		req.SourceID = fmt.Sprintf("wanted:%d", wanted.ID)
+		req.Title = wanted.Title
+		req.Author = wanted.Author
+	}
+
+	tracked, err := s.downloadMgr.StartTorrentDownloadTracked(url, req.Title, savePath, category, req.InfoHash, req.MediaType, req.Source, extractSourceID(req))
 	var verificationWarning *download.TorrentVerificationWarning
 	if errors.As(err, &verificationWarning) {
+		s.markWantedTrackedDownload(req, tracked)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"title":   req.Title,
@@ -141,11 +155,73 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		safeError := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(errString(err), "\r", ""), "\n", ""), "\x00", "")
 		slog.Error("torrent submission failed", "title", netutil.SanitizeLogValue(safeTitle), "error", netutil.SanitizeLogValue(safeError))
 	}
+	if err == nil {
+		s.markWantedTrackedDownload(req, tracked)
+	}
 	writeJSON(w, status, map[string]interface{}{
 		"success": err == nil,
 		"title":   req.Title,
 		"error":   errString(err),
 	})
+}
+
+// ensureDiscoverTorrentIdentity turns a direct Prowlarr acquisition into a
+// durable Wanted identity before it reaches a torrent client. This avoids using
+// volatile release names as canonical catalog metadata after completion.
+func (s *Server) ensureDiscoverTorrentIdentity(req *models.DownloadRequest) (*models.WantedBook, error) {
+	if req == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "prowlarr") {
+		return nil, nil
+	}
+	candidate := wantedmeta.NormalizeBook(models.WantedBook{
+		Title:              req.Title,
+		Author:             req.Author,
+		Source:             req.Source,
+		OriginSource:       req.Source,
+		OriginReleaseTitle: req.Title,
+		SourceID:           extractSourceID(*req),
+		MediaType:          req.MediaType,
+		Monitored:          false,
+		Status:             "wanted",
+	}).Normalized
+	// Prowlarr release tags are not contributor names. Normalization can retain
+	// a trailing private-indexer tag after a multi-author string.
+	if before, _, found := strings.Cut(candidate.Author, "["); found {
+		candidate.Author = strings.TrimSpace(before)
+	}
+	if strings.TrimSpace(req.Author) == "" {
+		if _, rawAuthor, found := strings.Cut(req.Title, " by "); found {
+			if before, _, hasTag := strings.Cut(rawAuthor, "["); hasTag {
+				rawAuthor = before
+			}
+			if rawAuthor = strings.TrimSpace(rawAuthor); rawAuthor != "" {
+				candidate.Author = rawAuthor
+			}
+		}
+	}
+	if candidate.Title == "" || candidate.MediaType == "" {
+		return nil, nil
+	}
+	items, err := s.db.ListWantedBooks()
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if strings.EqualFold(items[i].MediaType, candidate.MediaType) && library.TitleMatchKey(items[i].Title) == library.TitleMatchKey(candidate.Title) && library.ContributorMatchKey(items[i].Author) == library.ContributorMatchKey(candidate.Author) {
+			return &items[i], nil
+		}
+	}
+	return s.db.CreateWantedBook(candidate)
+}
+
+func (s *Server) markWantedTrackedDownload(req models.DownloadRequest, tracked models.TrackedDownload) {
+	if !strings.HasPrefix(strings.ToLower(req.SourceID), "wanted:") {
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(strings.ToLower(req.SourceID), "wanted:"), 10, 64)
+	if err != nil || id <= 0 {
+		return
+	}
+	_, _ = s.db.MarkWantedDownloading(id, 0, req.Title, tracked.ClientID, tracked.InfoHash, time.Now().UTC())
 }
 
 func (s *Server) handleDirectDownloadReq(w http.ResponseWriter, req models.DownloadRequest) {

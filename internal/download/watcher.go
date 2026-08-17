@@ -863,12 +863,10 @@ func (w *Watcher) importAudiobookWithMetadata(t TorrentInfo, savePath string, ca
 	}
 	title, author, metadataSource := chooseTrackedAudiobookMetadata(t.Name, &embedded, canonical)
 	override := canonical.override
-	if override.SelectedTitle == "" {
-		override.SelectedTitle = embedded.SelectedTitle
-	}
-	if override.SelectedAuthor == "" {
-		override.SelectedAuthor = embedded.SelectedAuthor
-	}
+	// The selected values are authoritative for this import handoff. They keep
+	// the planner from reinterpreting a source filename after organization.
+	override.SelectedTitle = title
+	override.SelectedAuthor = author
 	if override.Narrator == "" {
 		override.Narrator = embedded.Narrator
 	}
@@ -882,14 +880,14 @@ func (w *Watcher) importAudiobookWithMetadata(t TorrentInfo, savePath string, ca
 		override.ChapterCount = embedded.ChapterCount
 	}
 	override.Abridged = override.Abridged || embedded.Abridged
-	slog.Info("tracked audiobook metadata selected", append([]any{"torrent_hash", t.Hash}, trackedMetadataLogFields(canonical, title, author)...)...)
+	slog.Info("tracked audiobook metadata selected", "torrent_hash", t.Hash, "metadata_source", metadataSource, "selected_title", title, "selected_author", author)
 
 	destPath, err := w.organizer.OrganizeAudiobook(savePath, title, author)
 	if err != nil {
 		return fmt.Errorf("organize audiobook %q: %w", savePath, err)
 	}
 
-	inserted, err := w.importTorrentItemWithMetadata(context.Background(), t, library.MediaTypeAudiobook, savePath, destPath, title, author, embedded.SelectedTitle, embedded.SelectedAuthor, fileFormat(destPath), t.TotalSize, override, metadataSource)
+	inserted, err := w.importTorrentItemWithMetadata(context.Background(), t, library.MediaTypeAudiobook, savePath, destPath, title, author, title, author, fileFormat(destPath), t.TotalSize, override, metadataSource)
 	if err != nil {
 		return err
 	}
