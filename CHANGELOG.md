@@ -31,6 +31,10 @@ public Librarr 2.0 release. Librarr 2.0 is not yet stable.
   download-listing endpoint. Removal and data deletion remain intentionally
   unsupported.
 
+- Wanted-linked rTorrent imports now preserve selected canonical metadata
+  through completion, destination organization, and normalized import instead
+  of deriving author/title solely from a release name.
+
 - Normalized book-centric schema and repository selection.
 - LibraryService domain boundary.
 - Backfill and validation framework for migration from legacy `library_items`.
