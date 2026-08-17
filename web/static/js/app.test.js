@@ -125,6 +125,7 @@ const functionBundle = [
   extractFunctionSource('renderCompactDownload'),
   extractFunctionSource('isActiveDownloadStatus'),
   extractFunctionSource('renderDownloadList'),
+  extractFunctionSource('formatTrackedImportStatus'),
   extractFunctionSource('renderDownloadJob'),
   extractFunctionSource('renderActivityRow'),
   extractFunctionSource('renderDashboardEmpty'),
@@ -828,6 +829,20 @@ test('download rows tolerate failed imports and malformed historic entries', () 
   assert.match(failed, /data-action="retryDownload"/);
   assert.match(malformed, /Unknown/);
   assert.match(malformed, /status_queued/);
+});
+
+test('tracked downloads render durable sync and review states clearly', () => {
+  const context = createContext();
+  const waiting = context.renderDownloadJob({
+    status: 'waiting', title: 'Synced later', import_status: 'waiting_for_sync',
+    detail: 'Waiting for local content', remote_path: '/remote/book', local_path: '/data/incoming/book',
+  });
+  assert.match(waiting, /Waiting for local content/);
+  assert.match(waiting, /Import: waiting for sync/);
+  assert.match(waiting, /Remote: \/remote\/book/);
+  const review = context.renderDownloadJob({ status: 'needs_review', title: 'Review me', import_status: 'needs_review' });
+  assert.match(review, /status_needs_review/);
+  assert.match(review, /Import: needs review/);
 });
 
 test('downloads page renders without the removed navigation badge', () => {

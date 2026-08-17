@@ -610,11 +610,12 @@ func (m *Manager) GetDownloads() []models.DownloadStatus {
 			if item.ImportStatus == "imported" && (item.ImportedAt == nil || time.Since(*item.ImportedAt) > 24*time.Hour) {
 				continue
 			}
+			detail, visibleError := trackedDownloadPresentation(item)
 			downloads = append(downloads, models.DownloadStatus{
 				Source: item.ClientType, Title: item.Title, Status: trackedDownloadDisplayStatus(item),
 				Progress: item.Progress * 100, Hash: item.InfoHash, ClientID: item.ClientID,
 				ClientType: item.ClientType, RemotePath: item.RemotePath, LocalPath: item.LocalPath,
-				ImportStatus: item.ImportStatus, Error: item.LastError, CreatedAt: item.CreatedAt,
+				ImportStatus: item.ImportStatus, Detail: detail, Error: visibleError, CreatedAt: item.CreatedAt,
 				CompletedAt: item.CompletedAt, ImportedAt: item.ImportedAt,
 			})
 		}
@@ -639,12 +640,16 @@ func downloadIdentityKey(clientID, hash string) string {
 
 func trackedDownloadDisplayStatus(item models.TrackedDownload) string {
 	switch strings.ToLower(strings.TrimSpace(item.ImportStatus)) {
+	case trackedImportWaitingForSync:
+		return "waiting"
 	case "imported":
 		return "imported"
 	case "importing":
 		return "importing"
 	case "failed":
 		return "failed"
+	case trackedImportNeedsReview:
+		return "needs_review"
 	}
 
 	status := strings.ToLower(strings.TrimSpace(item.Status))
@@ -663,6 +668,23 @@ func trackedDownloadDisplayStatus(item models.TrackedDownload) string {
 		return "failed"
 	}
 	return status
+}
+
+func trackedDownloadPresentation(item models.TrackedDownload) (detail, visibleError string) {
+	lastError := strings.TrimSpace(item.LastError)
+	switch strings.ToLower(strings.TrimSpace(item.ImportStatus)) {
+	case trackedImportWaitingForSync:
+		if lastError == "local mount is temporarily unavailable" {
+			return "Waiting for local content; the local mount is temporarily unavailable", ""
+		}
+		return "Waiting for local content", ""
+	case trackedImportNeedsReview:
+		return "Import requires manual review", ""
+	}
+	if strings.HasPrefix(strings.ToLower(lastError), "temporary rtorrent connection error") {
+		return "Retryable connection error; preserving the last known torrent state", ""
+	}
+	return "", lastError
 }
 
 func mapSABStatus(status string) string {

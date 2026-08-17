@@ -247,6 +247,7 @@ const I18N = {
     status_paused: 'Paused/Stopped',
     status_waiting: 'Waiting for sync',
     status_ready_to_import: 'Ready to import',
+    status_needs_review: 'Needs review',
     status_failed: 'Failed',
     status_imported: 'Imported',
     // Download actions
@@ -500,6 +501,7 @@ const I18N = {
     status_searching: 'Поиск',
     status_importing: 'Импорт',
     status_retry_wait: 'Ожидание повтора',
+    status_needs_review: 'Требуется проверка',
     // Download actions
     download_started: 'Загрузка начата: {title}',
     download_complete: 'Загрузка завершена: {title}',
@@ -817,6 +819,7 @@ const STATUS_STYLES = {
 	 paused:      { bg: 'bg-slate-500/20', text: 'text-slate-300', border: 'border-slate-500/30', label: 'Paused/Stopped' },
 	 waiting:     { bg: 'bg-amber-500/20', text: 'text-amber-300', border: 'border-amber-500/30', label: 'Waiting for sync' },
 	 ready_to_import: { bg: 'bg-cyan-500/20', text: 'text-cyan-300', border: 'border-cyan-500/30', label: 'Ready to import' },
+	 needs_review: { bg: 'bg-amber-500/20', text: 'text-amber-300', border: 'border-amber-500/30', label: 'Needs review' },
 	 imported:    { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Imported' },
 	 failed:      { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', label: 'Failed' },
   completed:   { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Completed' },
@@ -2015,7 +2018,7 @@ function renderDownloadJob(job) {
         ${job.client_type ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(job.client_type)}${job.hash ? ` · ${escapeHtml(job.hash)}` : ''}</p>` : ''}
         ${job.remote_path ? `<p class="text-xs text-slate-500 mt-1 truncate" title="${escapeHtml(job.remote_path)}">Remote: ${escapeHtml(job.remote_path)}</p>` : ''}
         ${job.local_path ? `<p class="text-xs text-slate-500 truncate" title="${escapeHtml(job.local_path)}">Local: ${escapeHtml(job.local_path)}</p>` : ''}
-        ${job.import_status ? `<p class="text-xs text-slate-400 truncate">Import: ${escapeHtml(job.import_status)}</p>` : ''}
+        ${job.import_status ? `<p class="text-xs text-slate-400 truncate">Import: ${escapeHtml(formatTrackedImportStatus(job.import_status))}</p>` : ''}
         ${job.detail ? `<p class="text-xs text-slate-400 mt-1 truncate" title="${escapeHtml(job.detail)}">${escapeHtml(job.detail)}</p>` : ''}
         ${job.max_retries > 0 && job.retry_count > 0 ? `<p class="text-xs text-amber-400 mt-1">${escapeHtml(`Attempt ${Math.min(job.retry_count + 1, job.max_retries + 1)}/${job.max_retries + 1}`)}</p>` : ''}
         ${job.error ? `<p class="text-xs text-red-400 mt-1 truncate">${escapeHtml(job.error)}</p>` : ''}
@@ -2855,6 +2858,13 @@ function renderOnboardingChecklist(isAdmin = isAdminUser(), wanted = {}) {
 		</section>
 		${renderWantedDashboardPanel(wanted)}
   `;
+}
+
+function formatTrackedImportStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'waiting_for_sync') return 'waiting for sync';
+  if (normalized === 'needs_review') return 'needs review';
+  return normalized;
 }
 
 function openImportSettings() {

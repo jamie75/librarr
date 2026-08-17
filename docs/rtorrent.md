@@ -64,9 +64,19 @@ For `/downloads/rclone-mnt/downloads/example.epub`, map remote
    remote save path in `tracked_downloads`.
 3. The watcher polls that same client and hash after restart.
 4. The reported remote path is resolved with the client-scoped mapping.
-5. Missing synchronized content remains pending; it is never guessed by
-   scanning unrelated directories.
-6. Once present, the configured normalized import engine imports the content.
+5. Missing synchronized content is persisted as `waiting_for_sync`; it is
+   never guessed by scanning unrelated directories. Transient XML-RPC listing
+   failures retain the last known torrent state and retry on the next watcher
+   poll.
+6. Once present, Librarr observes supported content on two consecutive polls
+   before import. Temporary files (`.part`, `.partial`, `.tmp`, and browser
+   partials) keep the row waiting so rclone copies are not imported early.
+7. For a Wanted handoff, the durable `wanted:<id>` link supplies canonical
+   title, author, identifiers, and other catalog metadata before Librarr builds
+   the organized destination. Embedded audio metadata is the next fallback;
+   release-name inference is used only when neither is available.
+8. Once stable, the configured normalized import engine imports the content
+   with that same metadata override.
 
 ## Dogfood checklist
 

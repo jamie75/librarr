@@ -8,17 +8,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jamie75/librarr/internal/config"
 	"github.com/jamie75/librarr/internal/db"
 	"github.com/jamie75/librarr/internal/library"
 	libraryimport "github.com/jamie75/librarr/internal/library/import"
+	"github.com/jamie75/librarr/internal/models"
 	"github.com/jamie75/librarr/internal/organize"
 )
 
 type watcherReadOnlyStub struct {
 	downloads []ClientDownload
+	err       error
 }
 
 func (s *watcherReadOnlyStub) AddTorrent(string, string, string, string, string) error { return nil }
@@ -32,7 +37,138 @@ func (s *watcherReadOnlyStub) TestConnection(context.Context) (ClientInfo, error
 	return ClientInfo{}, nil
 }
 func (s *watcherReadOnlyStub) ListDownloads(context.Context) ([]ClientDownload, error) {
-	return s.downloads, nil
+	return s.downloads, s.err
+}
+
+func TestTrackedCompletionWaitsForMappedLocalContent(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	localRoot := t.TempDir()
+	item := models.TrackedDownload{
+		ID: "rtorrent:waiting", ClientID: "rtorrent", ClientType: "rtorrent", InfoHash: "hash",
+		Title: "A title with spaces & punctuation", MediaType: "audiobook", Status: "submitted", ImportStatus: "pending", CreatedAt: time.Now().UTC(),
+	}
+	if err := database.SaveTrackedDownload(&item); err != nil {
+		t.Fatal(err)
+	}
+	client := &watcherReadOnlyStub{downloads: []ClientDownload{{
+		InfoHash: "hash", Status: "completed", Progress: 1,
+		ContentPath: "/remote/downloads/A title with spaces & punctuation",
+	}}}
+	w := &Watcher{db: database, torrent: client, mappings: []RemotePathMapping{{ClientID: "rtorrent", RemotePath: "/remote/downloads", LocalPath: localRoot, Enabled: true}}}
+	w.checkTracked()
+	got, err := database.GetTrackedDownload(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImportStatus != trackedImportWaitingForSync || got.LocalPath != filepath.Join(localRoot, "A title with spaces & punctuation") {
+		t.Fatalf("tracked item = %+v, want durable waiting-for-sync mapped path", got)
+	}
+	if got.LastError != "waiting for local content" {
+		t.Fatalf("last error = %q, want waiting for local content", got.LastError)
+	}
+}
+
+func TestTrackedPollTimeoutPreservesLastKnownState(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	item := models.TrackedDownload{ID: "rtorrent:timeout", ClientID: "rtorrent", ClientType: "rtorrent", InfoHash: "hash", Title: "Book", MediaType: "audiobook", Status: "downloading", LastObservedStatus: "downloading", ImportStatus: "pending", CreatedAt: time.Now().UTC()}
+	if err := database.SaveTrackedDownload(&item); err != nil {
+		t.Fatal(err)
+	}
+	w := &Watcher{db: database, torrent: &watcherReadOnlyStub{err: context.DeadlineExceeded}}
+	w.checkTracked()
+	got, err := database.GetTrackedDownload(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "downloading" || got.ImportStatus != "pending" {
+		t.Fatalf("timeout changed tracked state: %+v", got)
+	}
+	if !strings.Contains(got.LastError, "temporary rTorrent connection error") {
+		t.Fatalf("last error = %q, want retryable connection context", got.LastError)
+	}
+}
+
+func TestLocalContentStabilityRequiresTwoMatchingObservations(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "Book.m4b")
+	if err := os.WriteFile(file, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := &Watcher{}
+	if stable, _ := w.localContentIsStable("download", file, "audiobook"); stable {
+		t.Fatal("first observation must wait")
+	}
+	if stable, reason := w.localContentIsStable("download", file, "audiobook"); !stable || reason != "" {
+		t.Fatalf("second unchanged observation = (%v, %q), want stable", stable, reason)
+	}
+	if err := os.WriteFile(file, []byte("changed content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if stable, _ := w.localContentIsStable("download", file, "audiobook"); stable {
+		t.Fatal("changed content must wait for another observation")
+	}
+}
+
+func TestWaitingForSyncStabilityGateRestartsSafely(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "Book.mp3")
+	if err := os.WriteFile(file, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstWatcher := &Watcher{}
+	if stable, _ := firstWatcher.localContentIsStable("tracked", file, "audiobook"); stable {
+		t.Fatal("first watcher must wait")
+	}
+	// The durable tracked state remains waiting_for_sync. A process restart does
+	// not trust an in-memory snapshot from before that restart, so it safely
+	// waits for one fresh observation before importing.
+	restartedWatcher := &Watcher{}
+	if stable, _ := restartedWatcher.localContentIsStable("tracked", file, "audiobook"); stable {
+		t.Fatal("restarted watcher must require a fresh stability observation")
+	}
+	if stable, _ := restartedWatcher.localContentIsStable("tracked", file, "audiobook"); !stable {
+		t.Fatal("restarted watcher must import after the second unchanged observation")
+	}
+}
+
+func TestLocalContentStabilityWaitsForTemporaryDirectoryFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "01.mp3"), []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "02.mp3.part"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := &Watcher{}
+	if stable, reason := w.localContentIsStable("download", root, "audiobook"); stable || reason != "waiting for local content" {
+		t.Fatalf("temporary directory = (%v, %q), want waiting", stable, reason)
+	}
+	if err := os.Remove(filepath.Join(root, "02.mp3.part")); err != nil {
+		t.Fatal(err)
+	}
+	if stable, _ := w.localContentIsStable("download", root, "audiobook"); stable {
+		t.Fatal("first complete directory observation must wait")
+	}
+	if stable, _ := w.localContentIsStable("download", root, "audiobook"); !stable {
+		t.Fatal("unchanged complete directory must become stable")
+	}
+}
+
+func TestLocalContentSignatureRejectsUnsupportedCompletedMedia(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "book.txt")
+	if err := os.WriteFile(file, []byte("not an audiobook"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localContentSignature(file, "audiobook"); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported completed media error = %v", err)
+	}
 }
 func (s *watcherReadOnlyStub) GetDownload(context.Context, string) (ClientDownload, error) {
 	return ClientDownload{}, errors.New("not found")
@@ -595,6 +731,98 @@ func TestWatcherUsesConfiguredImportEngine(t *testing.T) {
 	}
 	if got.RootPath != destFile || got.OriginalPath != sourceFile {
 		t.Fatalf("request paths = %+v", got)
+	}
+}
+
+func TestTrackedWantedMetadataOverridesReleaseNameBeforeAudiobookOrganization(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(filepath.Join(dir, "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	wanted, err := database.CreateWantedBook(models.WantedBook{
+		Title:     "Rediscovering Americanism - And the Tyranny of Progressivism",
+		Author:    "Mark R. Levin",
+		MediaType: "audiobook",
+		Monitored: true,
+		Status:    "wanted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "incoming", "Rediscovering Americanism")
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "01.mp3"), []byte("not an id3 fixture"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	engine := &watcherSpyImportEngine{result: &libraryimport.EngineResult{InsertedCount: 1}}
+	w := &Watcher{
+		db:       database,
+		importer: engine,
+		organizer: organize.NewOrganizer(&config.Config{
+			FileOrgEnabled: true,
+			AudiobookDir:   filepath.Join(dir, "books", "audiobooks"),
+		}),
+	}
+	tracked := models.TrackedDownload{Source: "wanted", SourceID: "wanted:" + strconv.FormatInt(wanted.ID, 10), MediaType: "audiobook"}
+	canonical := w.canonicalTrackedImportMetadata(tracked)
+	if canonical.source != "wanted_record" {
+		t.Fatalf("metadata source = %q, want wanted_record", canonical.source)
+	}
+	if err := w.importAudiobookWithMetadata(TorrentInfo{Name: "Rediscovering Americanism", Hash: "torrent-wanted"}, source, canonical); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.requests) != 1 {
+		t.Fatalf("engine requests = %d, want 1", len(engine.requests))
+	}
+	request := engine.requests[0]
+	wantRoot := filepath.Join(dir, "books", "audiobooks", "Mark R. Levin", "Rediscovering Americanism - And the Tyranny of Progressivism")
+	if request.RootPath != wantRoot {
+		t.Fatalf("organized root = %q, want %q", request.RootPath, wantRoot)
+	}
+	if request.TitleHint != wanted.Title || request.AuthorHint != wanted.Author {
+		t.Fatalf("import hints = (%q, %q), want (%q, %q)", request.TitleHint, request.AuthorHint, wanted.Title, wanted.Author)
+	}
+	if request.MetadataOverride.SelectedTitle != wanted.Title || request.MetadataOverride.SelectedAuthor != wanted.Author {
+		t.Fatalf("metadata override = %+v", request.MetadataOverride)
+	}
+}
+
+func TestTrackedWantedMetadataRequiresMatchingMediaType(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	wanted, err := database.CreateWantedBook(models.WantedBook{Title: "An Ebook", Author: "Author", MediaType: "ebook", Status: "wanted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Watcher{db: database}
+	metadata := w.canonicalTrackedImportMetadata(models.TrackedDownload{Source: "wanted", SourceID: "wanted:" + strconv.FormatInt(wanted.ID, 10), MediaType: "audiobook"})
+	if metadata.source != "" || metadata.override.SelectedTitle != "" {
+		t.Fatalf("mismatched Wanted record must not override tracked metadata: %+v", metadata)
+	}
+}
+
+func TestChooseTrackedAudiobookMetadataPriority(t *testing.T) {
+	embedded := &libraryimport.CandidateMetadata{SelectedTitle: "Embedded Title", SelectedAuthor: "Embedded Author"}
+	canonical := trackedImportMetadata{source: "wanted_record", override: libraryimport.CandidateMetadata{SelectedTitle: "Canonical Title", SelectedAuthor: "Canonical Author"}}
+	title, author, source := chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", embedded, canonical)
+	if title != "Canonical Title" || author != "Canonical Author" || source != "wanted_record" {
+		t.Fatalf("canonical choice = (%q, %q, %q)", title, author, source)
+	}
+	title, author, source = chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", embedded, trackedImportMetadata{})
+	if title != "Embedded Title" || author != "Embedded Author" || source != "embedded_audio_metadata" {
+		t.Fatalf("embedded choice = (%q, %q, %q)", title, author, source)
+	}
+	title, author, source = chooseTrackedAudiobookMetadata("Release Title by Release Author [MP3]", &libraryimport.CandidateMetadata{}, trackedImportMetadata{})
+	if title != "Release Title" || author != "Release Author" || source != "release_name" {
+		t.Fatalf("release-name choice = (%q, %q, %q)", title, author, source)
 	}
 }
 
