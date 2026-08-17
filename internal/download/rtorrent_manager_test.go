@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,25 @@ func TestGetDownloadsIncludesTrackedStatesAndExpiresOldImports(t *testing.T) {
 	}
 	if _, ok := byHash["old"]; ok {
 		t.Fatalf("old imported row should age out: %+v", got)
+	}
+}
+
+func TestTrackedDownloadPresentationKeepsWaitingAndTimeoutsRetryable(t *testing.T) {
+	waiting := models.TrackedDownload{Status: "completed", ImportStatus: trackedImportWaitingForSync, LastError: "local mount is temporarily unavailable"}
+	if status := trackedDownloadDisplayStatus(waiting); status != "waiting" {
+		t.Fatalf("waiting status = %q", status)
+	}
+	detail, visibleError := trackedDownloadPresentation(waiting)
+	if !strings.Contains(detail, "local mount") || visibleError != "" {
+		t.Fatalf("waiting presentation = (%q, %q)", detail, visibleError)
+	}
+	timeout := models.TrackedDownload{Status: "downloading", ImportStatus: "pending", LastError: "temporary rTorrent connection error: request timed out; retrying"}
+	if status := trackedDownloadDisplayStatus(timeout); status != "downloading" {
+		t.Fatalf("timeout changed status to %q", status)
+	}
+	detail, visibleError = trackedDownloadPresentation(timeout)
+	if !strings.Contains(detail, "Retryable") || visibleError != "" {
+		t.Fatalf("timeout presentation = (%q, %q)", detail, visibleError)
 	}
 }
 

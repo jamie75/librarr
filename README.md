@@ -62,7 +62,8 @@ Librarr 2.0 currently has:
 - rich connection diagnostics for Prowlarr and qBittorrent
 - rTorrent XML-RPC diagnostics, magnet/raw torrent submission, durable
   client/hash tracking, client-scoped Remote Path Mappings, and normalized
-  completion imports (cleanup/removal remains unsupported)
+  completion imports with durable waiting-for-sync and stability checks
+  (cleanup/removal remains unsupported)
 - normalized `/api/v1` read endpoints
 - `/api/v1` Wanted and Downloads endpoints for new UI/API consumers
 
@@ -399,13 +400,14 @@ server-side and reuse the same qBittorrent authentication, save path, category,
 and safe `.torrent` upload behavior as Discover downloads.
 
 Manual Wanted downloads move the item to `downloading` after qBittorrent accepts
-the handoff. The Wanted list also reconciles against the normalized Library: if
+the handoff. The durable Wanted link is carried through completion and into the
+import planner, so organization uses the selected canonical title and author
+before any torrent-release-name fallback. The Wanted list also reconciles against the normalized Library: if
 a non-final Wanted item now matches an imported book by normalized title,
 author, and media type, it is marked `imported` and moves to Completed. This is
 conservative and does not treat same-author different-title books as imported.
 
-Automatic grabbing, quality profiles, and deeper download-client completion
-linkage are intentionally still future work.
+Automatic grabbing and quality profiles are intentionally still future work.
 
 ## Architecture Overview
 

@@ -38,9 +38,15 @@ type Watcher struct {
 	imported   sync.Map // hash -> struct{}, tracks already-imported hashes
 	pending    sync.Map // hash/type -> reason signature, suppresses repeated pending INFO logs
 	pollErrors sync.Map // client/category -> error signature, suppresses repeated listing failures
+	stability  sync.Map // tracked download ID -> local content observation
 }
 
 var errTorrentContentPending = errors.New("torrent content pending synchronization")
+
+const (
+	trackedImportWaitingForSync = "waiting_for_sync"
+	trackedImportNeedsReview    = "needs_review"
+)
 
 type trackedTorrentPoll struct {
 	rowsReturned            int
@@ -158,7 +164,7 @@ func (w *Watcher) checkTracked() {
 	}
 	pollCache := make(map[string]trackedTorrentPoll)
 	for _, item := range tracked {
-		if item.ImportStatus == "imported" {
+		if item.ImportStatus == "imported" || item.ImportStatus == trackedImportNeedsReview {
 			continue
 		}
 		pollClient := activeClient
@@ -208,7 +214,10 @@ func (w *Watcher) checkTracked() {
 			slog.Debug("torrent watcher poll", fields...)
 		}
 		if result.err != nil {
-			item.LastError = result.err.Error()
+			// Listing failures are transport failures, not evidence that this
+			// torrent or its import failed. Keep its last observed status and let
+			// the bounded watcher cadence retry the shared client poll.
+			item.LastError = retryableTorrentPollError(result.err)
 			_ = w.db.UpdateTrackedDownload(&item)
 			continue
 		}
@@ -284,6 +293,8 @@ func (w *Watcher) checkTracked() {
 		if resolved.ResolvedPath != "" && !resolved.Exists && (resolved.Strategy == "reported_path_exists" || localPathMatchesClientMapping(item.ClientID, resolved.ResolvedPath, w.mappings)) {
 			if _, statErr := os.Stat(resolved.ResolvedPath); statErr == nil {
 				resolved.Exists = true
+			} else {
+				resolved.FailureReason = localContentAvailabilityReason(statErr)
 			}
 		}
 		// Preserve the established qBittorrent/Transmission fallback while
@@ -306,9 +317,28 @@ func (w *Watcher) checkTracked() {
 			"resolved_path", resolved.ResolvedPath, "exists", resolved.Exists,
 			"failure_reason", resolved.FailureReason)
 		if !resolved.Exists {
-			item.ImportStatus = "pending"
-			item.LastError = firstNonEmpty(resolved.FailureReason, "mapped local content is not available")
+			item.ImportStatus = trackedImportWaitingForSync
+			item.LastError = firstNonEmpty(resolved.FailureReason, "waiting for local content")
 			w.logTrackedSyncPending(item, resolved)
+			_ = w.db.UpdateTrackedDownload(&item)
+			continue
+		}
+		stable, reason := w.localContentIsStable(item.ID, resolved.ResolvedPath, item.MediaType)
+		if !stable {
+			if strings.Contains(reason, "unsupported") || strings.Contains(reason, "no supported") {
+				item.ImportStatus = trackedImportNeedsReview
+				item.LastError = reason
+				slog.Warn("tracked torrent content requires manual review", "torrent_hash", item.InfoHash, "local_path", item.LocalPath, "reason", reason)
+				_ = w.db.UpdateTrackedDownload(&item)
+				continue
+			}
+			item.ImportStatus = trackedImportWaitingForSync
+			item.LastError = reason
+			w.logTrackedSyncPending(item, PathResolution{
+				ClientID: item.ClientID, ReportedPath: resolved.ReportedPath,
+				MatchedRemote: resolved.MatchedRemote, ResolvedPath: resolved.ResolvedPath,
+				Exists: true, FailureReason: reason,
+			})
 			_ = w.db.UpdateTrackedDownload(&item)
 			continue
 		}
@@ -426,16 +456,36 @@ func (w *Watcher) importTracked(item models.TrackedDownload, torrent TorrentInfo
 	localPath := item.LocalPath
 	torrent.ContentPath = localPath
 	mediaType := item.MediaType
+	canonical := w.canonicalTrackedImportMetadata(item)
 	if err := func() error {
 		switch mediaType {
 		case "audiobook":
-			return w.importAudiobook(torrent, localPath)
+			return w.importAudiobookWithMetadata(torrent, localPath, canonical)
 		case "manga":
-			return w.importManga(torrent, localPath)
+			return w.importMangaWithMetadata(torrent, localPath, canonical)
 		default:
-			return w.importEbook(torrent, localPath)
+			return w.importEbookWithMetadata(torrent, localPath, canonical)
 		}
 	}(); err != nil {
+		if errors.Is(err, errTorrentContentPending) {
+			item.Status = "completed"
+			item.ImportStatus = trackedImportWaitingForSync
+			item.LastError = "waiting for local content"
+			slog.Info("tracked torrent import deferred", "torrent_hash", item.InfoHash, "local_path", item.LocalPath)
+			if updateErr := w.db.UpdateTrackedDownload(&item); updateErr != nil {
+				slog.Error("tracked torrent deferred state update failed", "torrent_hash", item.InfoHash, "error", updateErr)
+			}
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "manual review") {
+			item.ImportStatus = trackedImportNeedsReview
+			item.LastError = "import requires manual review"
+			slog.Warn("tracked torrent import requires manual review", "torrent_hash", item.InfoHash, "local_path", item.LocalPath)
+			if updateErr := w.db.UpdateTrackedDownload(&item); updateErr != nil {
+				slog.Error("tracked torrent review state update failed", "torrent_hash", item.InfoHash, "error", updateErr)
+			}
+			return
+		}
 		item.ImportStatus = "failed"
 		item.LastError = err.Error()
 		slog.Error("tracked torrent import failed", "torrent_hash", item.InfoHash, "local_path", item.LocalPath, "error", err)
@@ -747,6 +797,10 @@ func (w *Watcher) clearImportPending(hash, mediaType string) {
 }
 
 func (w *Watcher) importEbook(t TorrentInfo, savePath string) error {
+	return w.importEbookWithMetadata(t, savePath, trackedImportMetadata{})
+}
+
+func (w *Watcher) importEbookWithMetadata(t TorrentInfo, savePath string, canonical trackedImportMetadata) error {
 	bookFiles := findFilesByExt(savePath, []string{".epub", ".mobi", ".pdf", ".azw3"})
 	if len(bookFiles) == 0 {
 		return fmt.Errorf("%w: no ebook files found at %s", errTorrentContentPending, savePath)
@@ -754,14 +808,16 @@ func (w *Watcher) importEbook(t TorrentInfo, savePath string) error {
 
 	for _, bf := range bookFiles {
 		metadata := organize.ExtractEbookMetadata(bf)
-		title := firstNonEmpty(metadata.Title, t.Name)
-		author := metadata.Author
+		embeddedMetadata := organize.ExtractEmbeddedEbookMetadata(bf)
+		title := firstNonEmpty(canonical.override.SelectedTitle, metadata.Title, t.Name)
+		author := firstNonEmpty(canonical.override.SelectedAuthor, metadata.Author)
+		metadataSource := firstNonEmpty(canonical.source, ebookMetadataSource(embeddedMetadata))
 		destPath, err := w.organizer.OrganizeEbook(bf, title, author)
 		if err != nil {
 			return fmt.Errorf("%w: organize ebook %q: %v", errTorrentContentPending, bf, err)
 		}
 
-		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeEbook, bf, destPath, title, author, metadata.Title, metadata.Author, fileFormat(destPath), t.TotalSize)
+		inserted, err := w.importTorrentItemWithMetadata(context.Background(), t, library.MediaTypeEbook, bf, destPath, title, author, metadata.Title, metadata.Author, fileFormat(destPath), t.TotalSize, canonical.override, metadataSource)
 		if err != nil {
 			return err
 		}
@@ -785,29 +841,55 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (w *Watcher) importAudiobook(t TorrentInfo, savePath string) error {
+	return w.importAudiobookWithMetadata(t, savePath, trackedImportMetadata{})
+}
+
+func (w *Watcher) importAudiobookWithMetadata(t TorrentInfo, savePath string, canonical trackedImportMetadata) error {
 	// If the source path doesn't even exist, fail the import.
 	if _, statErr := os.Stat(savePath); os.IsNotExist(statErr) {
 		return fmt.Errorf("%w: source path does not exist: %s", errTorrentContentPending, savePath)
 	}
 
-	// Extract author from torrent name if possible.
-	author := ""
-	title := t.Name
-	if strings.Contains(title, " - ") {
-		parts := strings.SplitN(title, " - ", 2)
-		author = strings.TrimSpace(parts[0])
-		title = strings.TrimSpace(parts[1])
+	aggregate := organize.ExtractAudiobookMetadata(savePath)
+	embedded := libraryimport.CandidateMetadata{}
+	if aggregate != nil && aggregate.Embedded {
+		embedded.SelectedTitle = strings.TrimSpace(aggregate.Title)
+		embedded.SelectedAuthor = strings.TrimSpace(aggregate.Author)
+		embedded.Narrator = strings.TrimSpace(aggregate.Narrator)
+		embedded.DurationSeconds = aggregate.DurationSeconds
+		embedded.TrackCount = aggregate.TrackCount
+		embedded.ChapterCount = aggregate.ChapterCount
+		embedded.Abridged = aggregate.Abridged
 	}
-	if author == "" {
-		author = "Unknown"
+	title, author, metadataSource := chooseTrackedAudiobookMetadata(t.Name, &embedded, canonical)
+	override := canonical.override
+	if override.SelectedTitle == "" {
+		override.SelectedTitle = embedded.SelectedTitle
 	}
+	if override.SelectedAuthor == "" {
+		override.SelectedAuthor = embedded.SelectedAuthor
+	}
+	if override.Narrator == "" {
+		override.Narrator = embedded.Narrator
+	}
+	if override.DurationSeconds == 0 {
+		override.DurationSeconds = embedded.DurationSeconds
+	}
+	if override.TrackCount == 0 {
+		override.TrackCount = embedded.TrackCount
+	}
+	if override.ChapterCount == 0 {
+		override.ChapterCount = embedded.ChapterCount
+	}
+	override.Abridged = override.Abridged || embedded.Abridged
+	slog.Info("tracked audiobook metadata selected", append([]any{"torrent_hash", t.Hash}, trackedMetadataLogFields(canonical, title, author)...)...)
 
 	destPath, err := w.organizer.OrganizeAudiobook(savePath, title, author)
 	if err != nil {
 		return fmt.Errorf("organize audiobook %q: %w", savePath, err)
 	}
 
-	inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeAudiobook, savePath, destPath, title, author, title, author, fileFormat(destPath), t.TotalSize)
+	inserted, err := w.importTorrentItemWithMetadata(context.Background(), t, library.MediaTypeAudiobook, savePath, destPath, title, author, embedded.SelectedTitle, embedded.SelectedAuthor, fileFormat(destPath), t.TotalSize, override, metadataSource)
 	if err != nil {
 		return err
 	}
@@ -820,18 +902,23 @@ func (w *Watcher) importAudiobook(t TorrentInfo, savePath string) error {
 }
 
 func (w *Watcher) importManga(t TorrentInfo, savePath string) error {
+	return w.importMangaWithMetadata(t, savePath, trackedImportMetadata{})
+}
+
+func (w *Watcher) importMangaWithMetadata(t TorrentInfo, savePath string, canonical trackedImportMetadata) error {
 	mangaFiles := findFilesByExt(savePath, []string{".cbz", ".cbr", ".zip", ".pdf", ".epub"})
 	if len(mangaFiles) == 0 {
 		return fmt.Errorf("%w: no manga files found at %s", errTorrentContentPending, savePath)
 	}
 
 	for _, mf := range mangaFiles {
-		destPath, err := w.organizer.OrganizeManga(mf, t.Name)
+		title := firstNonEmpty(canonical.override.SelectedTitle, t.Name)
+		destPath, err := w.organizer.OrganizeManga(mf, title)
 		if err != nil {
 			return fmt.Errorf("%w: organize manga %q: %v", errTorrentContentPending, mf, err)
 		}
 
-		inserted, err := w.importTorrentItem(context.Background(), t, library.MediaTypeManga, mf, destPath, t.Name, "", t.Name, "", fileFormat(destPath), t.TotalSize)
+		inserted, err := w.importTorrentItemWithMetadata(context.Background(), t, library.MediaTypeManga, mf, destPath, title, "", title, "", fileFormat(destPath), t.TotalSize, canonical.override, firstNonEmpty(canonical.source, "torrent_name"))
 		if err != nil {
 			return err
 		}
@@ -845,6 +932,10 @@ func (w *Watcher) importManga(t TorrentInfo, savePath string) error {
 }
 
 func (w *Watcher) recordTorrentItem(t TorrentInfo, mediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format string, fileSize int64) (bool, error) {
+	return w.recordTorrentItemWithMetadata(t, mediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format, fileSize, "torrent_name")
+}
+
+func (w *Watcher) recordTorrentItemWithMetadata(t TorrentInfo, mediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format string, fileSize int64, metadataSource string) (bool, error) {
 	if info, err := os.Stat(destinationPath); err == nil && info.Mode().IsRegular() {
 		fileSize = info.Size()
 	}
@@ -871,6 +962,7 @@ func (w *Watcher) recordTorrentItem(t TorrentInfo, mediaType, sourcePath, destin
 		"detected_format", format,
 		"metadata_title", metadataTitle,
 		"metadata_author", metadataAuthor,
+		"metadata_source", metadataSource,
 		"content_hash", outcome.ContentHash,
 		"existing_record_id", outcome.ExistingID,
 		"duplicate_decision", outcome.Reason,
@@ -885,8 +977,12 @@ func (w *Watcher) recordTorrentItem(t TorrentInfo, mediaType, sourcePath, destin
 }
 
 func (w *Watcher) importTorrentItem(ctx context.Context, t TorrentInfo, mediaType library.MediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format string, fileSize int64) (bool, error) {
+	return w.importTorrentItemWithMetadata(ctx, t, mediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format, fileSize, libraryimport.CandidateMetadata{}, "torrent_name")
+}
+
+func (w *Watcher) importTorrentItemWithMetadata(ctx context.Context, t TorrentInfo, mediaType library.MediaType, sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format string, fileSize int64, metadataOverride libraryimport.CandidateMetadata, metadataSource string) (bool, error) {
 	if w.importer == nil {
-		return w.recordTorrentItem(t, string(mediaType), sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format, fileSize)
+		return w.recordTorrentItemWithMetadata(t, string(mediaType), sourcePath, destinationPath, title, author, metadataTitle, metadataAuthor, format, fileSize, metadataSource)
 	}
 
 	result, err := w.importer.Import(ctx, libraryimport.ImportRequest{
@@ -895,10 +991,11 @@ func (w *Watcher) importTorrentItem(ctx context.Context, t TorrentInfo, mediaTyp
 			SourceID:  t.Hash,
 			MediaType: mediaType,
 		},
-		RootPath:     destinationPath,
-		OriginalPath: sourcePath,
-		TitleHint:    title,
-		AuthorHint:   author,
+		RootPath:         destinationPath,
+		OriginalPath:     sourcePath,
+		TitleHint:        title,
+		AuthorHint:       author,
+		MetadataOverride: metadataOverride,
 	})
 	fields := []any{
 		"torrent_hash", t.Hash,
@@ -909,6 +1006,7 @@ func (w *Watcher) importTorrentItem(ctx context.Context, t TorrentInfo, mediaTyp
 		"detected_format", format,
 		"metadata_title", metadataTitle,
 		"metadata_author", metadataAuthor,
+		"metadata_source", metadataSource,
 	}
 	if err != nil {
 		slog.Error("torrent library import engine failure", append(fields, "error", err)...)
